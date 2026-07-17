@@ -1,5 +1,6 @@
-nombre,query_meli,precio_amazon_usd,peso_kg,categoria,arancel_pct,precio_meli_manual,link_amazon
-Auriculares inalambricos XYZ 123,auriculares bluetooth XYZ,45.0,0.3,electronica,0.16,,
-Teclado mecanico ABC RGB,teclado mecanico RGB,60.0,1.0,computacion,0.16,,
-Cafetera electrica DEF 800W,cafetera electrica 800w,80.0,2.5,hogar,0.20,,
-Smartwatch GHI Pro,smartwatch deportivo,55.0,0.2,electronica,0.16,180000,
+nombre,query_meli,precio_amazon_usd,peso_kg,categoria,arancel_pct,precio_meli_manual,precio_landed_usd,link_amazon
+Auriculares inalambricos XYZ 123,auriculares bluetooth XYZ,45.0,0.3,electronica,0.16,,,
+Teclado mecanico ABC RGB,teclado mecanico RGB,60.0,1.0,computacion,0.16,,,
+Cafetera electrica DEF 800W,cafetera electrica 800w,80.0,2.5,hogar,0.20,,,
+Smartwatch GHI Pro,smartwatch deportivo,55.0,0.2,electronica,0.16,180000,,
+AMD Ryzen 7 7700X,ryzen 7 7700x,234.59,0.4,computacion,0.0,580000,309.20,

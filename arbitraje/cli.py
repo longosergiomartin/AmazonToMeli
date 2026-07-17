@@ -45,7 +45,12 @@ def _imprimir_oportunidad(op: Oportunidad, cfg: Config) -> None:
             print(f"    {i}. {_fmt_ars(r.precio)} — {r.titulo}")
             if r.link:
                 print(f"       {r.link}")
-    print(f"\n  Precio Amazon:              USD {p.precio_amazon_usd:,.2f}  ({p.peso_kg} kg)")
+    if op.regimen == "landed":
+        print(f"\n  Costo puesto (Total de Amazon): USD {p.precio_landed_usd:,.2f}")
+    else:
+        print(f"\n  Precio Amazon:              USD {p.precio_amazon_usd:,.2f}  ({p.peso_kg} kg)")
+    print(f"  Dólar de compra (tarjeta):  ${cfg.tc_compra():,.0f}  "
+          f"(oficial ${cfg.tipo_cambio_oficial:,.0f} + {cfg.recargo_tarjeta_pct:.0%})")
     print(f"  Costo puesto en Argentina:  {_fmt_ars(op.costo.total_ars)}  "
           f"(USD {op.costo.total_usd:,.2f})")
     print(f"  Precio de venta MeLi (ref): {_fmt_ars(op.precio_venta_ars)}")
@@ -87,13 +92,17 @@ def main(argv: List[str] | None = None) -> int:
                         choices=["courier", "general"],
                         help="Régimen(es) de importación a calcular (default: courier)")
     parser.add_argument("--config", help="Archivo JSON con la config (tipo de cambio, alícuotas...)")
+    parser.add_argument("--recargo-tarjeta", type=float, default=None,
+                        help="Recargo del dólar tarjeta sobre la compra, ej: 0.30 (pisa la config)")
     parser.add_argument("--export", help="Exportar el ranking a un CSV")
     parser.add_argument("--sin-api", action="store_true",
                         help="No consultar la API de MeLi; usar solo precios manuales")
     parser.add_argument("--token", help="Access token OAuth de MercadoLibre (opcional)")
     args = parser.parse_args(argv)
 
-    cfg = Config.desde_json(args.config) if args.config else CONFIG_DEFAULT
+    cfg = Config.desde_json(args.config) if args.config else Config()
+    if args.recargo_tarjeta is not None:
+        cfg.recargo_tarjeta_pct = args.recargo_tarjeta
 
     if not args.csv:
         parser.error("Falta --csv con los productos a evaluar.")

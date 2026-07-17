@@ -56,6 +56,7 @@ class ManualProvider(AmazonProvider):
                     categoria=fila.get("categoria", "default").strip() or "default",
                     arancel_pct=_num(fila.get("arancel_pct", ""), 0.16),
                     precio_meli_manual=_opt_num(fila.get("precio_meli_manual", "")),
+                    precio_landed_usd=_opt_num(fila.get("precio_landed_usd", "")),
                     link_amazon=(fila.get("link_amazon", "").strip() or None),
                 ))
         return cls(productos)
