@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Config y datos locales (con tus números/keys reales)
+mi_config.json
+*.local.json
+resultados*.csv
+data/productos.csv
+
+# Secretos
+.env
+
+# OS / editores
+.DS_Store
+.idea/
+.vscode/

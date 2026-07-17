@@ -1,0 +1,9 @@
+# Núcleo (CLI + motor de cálculo + clientes de API)
+requests>=2.31
+
+# Tests
+pytest>=7.0
+
+# Dashboard web opcional (solo si usás app/dashboard.py)
+# streamlit>=1.30
+# pandas>=2.0
