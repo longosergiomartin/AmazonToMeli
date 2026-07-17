@@ -46,18 +46,23 @@ def _imprimir_oportunidad(op: Oportunidad, cfg: Config) -> None:
             if r.link:
                 print(f"       {r.link}")
     if op.regimen == "landed":
-        print(f"\n  Costo puesto (Total de Amazon): USD {p.precio_landed_usd:,.2f}")
+        print(f"\n  Costo puesto (Total de Amazon): USD {op.costo.total_usd:,.2f} por unidad")
     else:
         print(f"\n  Precio Amazon:              USD {p.precio_amazon_usd:,.2f}  ({p.peso_kg} kg)")
+    if p.cantidad > 1:
+        print(f"  Compra por lote:            {p.cantidad} unidades "
+              f"(envío repartido entre todas)")
     print(f"  Dólar de compra (tarjeta):  ${cfg.tc_compra():,.0f}  "
           f"(oficial ${cfg.tipo_cambio_oficial:,.0f} + {cfg.recargo_tarjeta_pct:.0%})")
     print(f"  Costo puesto en Argentina:  {_fmt_ars(op.costo.total_ars)}  "
-          f"(USD {op.costo.total_usd:,.2f})")
+          f"(USD {op.costo.total_usd:,.2f})  por unidad")
     print(f"  Precio de venta MeLi (ref): {_fmt_ars(op.precio_venta_ars)}")
     print(f"  Neto de la venta:           {_fmt_ars(op.venta.neto_ars)}")
     print(f"  {'-' * 50}")
     veredicto = op.veredicto(cfg.umbral_margen_bueno_pct)
-    print(f"  MARGEN NETO: {_fmt_ars(op.margen_ars)}  ({op.margen_pct:.1f}%)  >>> {veredicto}")
+    print(f"  MARGEN NETO x unidad: {_fmt_ars(op.margen_ars)}  ({op.margen_pct:.1f}%)  >>> {veredicto}")
+    if p.cantidad > 1:
+        print(f"  MARGEN TOTAL del lote ({p.cantidad}u): {_fmt_ars(op.margen_lote_ars)}")
 
 
 def _tabla_resumen(oportunidades: List[Oportunidad]) -> None:

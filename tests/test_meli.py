@@ -50,6 +50,18 @@ def test_evaluar_sin_precio_ni_api_devuelve_none():
     assert evaluar_producto(p, cfg=cfg, usar_api=False) is None
 
 
+def test_margen_lote_multiplica_por_cantidad():
+    cfg = Config()
+    p = Producto(
+        nombre="Kit", query_meli="kit", precio_amazon_usd=18.0,
+        categoria="default", cantidad=6, precio_landed_lote_usd=300.0,
+        precio_meli_manual=80000,
+    )
+    op = evaluar_producto(p, cfg=cfg, usar_api=False)
+    assert op is not None
+    assert op.margen_lote_ars == round(op.margen_ars * 6, 2)
+
+
 def test_evaluar_muchos_ordena_por_margen():
     cfg = Config()
     productos = [

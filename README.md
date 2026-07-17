@@ -66,6 +66,8 @@ python -m arbitraje.cli --csv data/productos.example.csv --sin-api
 | `arancel_pct` | arancel NCM (solo aplica en régimen general) |
 | `precio_meli_manual` | *(opcional)* precio de venta fijado a mano; tiene prioridad sobre la API |
 | `precio_landed_usd` | *(opcional)* costo total puesto en Argentina en USD según el checkout de Amazon (el "Total" con envío + importación). Si está, se usa directo y se saltea la estimación de aduana — es el dato más preciso. |
+| `cantidad` | *(opcional)* unidades que comprás juntas (default 1); reparte el envío entre todas |
+| `precio_landed_lote_usd` | *(opcional)* `Total` de Amazon al pedir `cantidad` unidades; el costo por unidad = este total / cantidad |
 | `link_amazon` | *(opcional)* link de referencia |
 
 ### Dólar tarjeta
@@ -84,6 +86,54 @@ python -m arbitraje.cli --csv data/productos.example.csv --sin-api --recargo-tar
 Si comprás por **AmazonGlobal**, el checkout te muestra el `Total` con envío e
 importación ya incluidos. Cargá ese número en `precio_landed_usd` y la app lo
 usa directo (modo `landed`), sin estimar aduana: es lo más preciso.
+
+### Compra por lote (amortizar el envío)
+
+Comprar varias unidades en un mismo envío reparte el costo fijo de envío entre
+todas y **baja el costo por unidad**. Se modela con dos columnas:
+
+- `cantidad`: cuántas unidades comprás juntas.
+- `precio_landed_lote_usd`: el `Total` que muestra Amazon al pedir esa cantidad
+  (con envío e importación del lote entero). El costo por unidad =
+  `precio_landed_lote_usd / cantidad`.
+
+La app muestra el margen **por unidad** y el **margen total del lote**. Ejemplo:
+un kit que solo daba USD 48/unidad comprando de a 1, comprando 6 baja a
+USD 27/unidad.
+
+> ⚠️ Verificá siempre que el producto de Amazon y el de MercadoLibre sean
+> **exactamente el mismo** (misma versión, mismo contenido). Comparar productos
+> distintos — p. ej. un accesorio barato contra el producto completo — da
+> márgenes falsos. Es el error más común del arbitraje.
+
+## API local — tu propio "Rainforest" personal
+
+Servicio self-hosted que junta datos de productos con **fuentes gratuitas y
+legítimas** y arma tu propio histórico de precios. En vez de scrapear Amazon
+(viola sus términos y requiere infraestructura carísima), automatiza la
+**captura**: vos navegás como siempre y un clic guarda lo que estás viendo.
+
+```bash
+python -m api.server     # abre http://localhost:8321
+```
+
+1. Entrá a `http://localhost:8321` y arrastrá el botón **"➜ Capturar producto"**
+   a tu barra de favoritos (una sola vez).
+2. Navegando **Amazon**, en la página de un producto tocá el botón: captura
+   ASIN, título y precio, y te pregunta el total puesto en Argentina (opcional).
+3. Navegando **MercadoLibre**, en la publicación equivalente tocá el botón:
+   captura el precio y te pregunta a qué ASIN corresponde.
+4. Cada captura queda fechada en SQLite → se arma solo tu **histórico de precios**.
+5. Exportá y evaluá todo con el motor de arbitraje:
+
+```bash
+curl http://localhost:8321/export.csv -o export.csv
+python -m arbitraje.cli --csv export.csv --sin-api
+```
+
+Endpoints: `/productos`, `/search?q=`, `/product/{asin}`, `/history/{asin}`,
+`/export.csv`. Mismo espíritu que Rainforest API, pero corriendo en tu PC,
+gratis y sin scraping.
 
 ## Dashboard web (opcional)
 

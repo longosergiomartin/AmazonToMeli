@@ -50,7 +50,8 @@ st.write("Cargá o editá los productos (precio y peso los ves en Amazon):")
 df_inicial = pd.DataFrame([
     {"nombre": "Auriculares XYZ 123", "query_meli": "auriculares bluetooth XYZ",
      "precio_amazon_usd": 45.0, "peso_kg": 0.3, "categoria": "electronica",
-     "arancel_pct": 0.16, "precio_meli_manual": 150000.0, "precio_landed_usd": None},
+     "arancel_pct": 0.16, "precio_meli_manual": 150000.0, "precio_landed_usd": None,
+     "cantidad": 1, "precio_landed_lote_usd": None},
 ])
 df = st.data_editor(df_inicial, num_rows="dynamic", use_container_width=True)
 
@@ -61,6 +62,8 @@ if st.button("Evaluar oportunidades", type="primary"):
             continue
         pm = fila.get("precio_meli_manual")
         landed = fila.get("precio_landed_usd")
+        lote = fila.get("precio_landed_lote_usd")
+        cant = fila.get("cantidad")
         productos.append(Producto(
             nombre=str(fila["nombre"]),
             query_meli=str(fila.get("query_meli") or fila["nombre"]),
@@ -70,6 +73,8 @@ if st.button("Evaluar oportunidades", type="primary"):
             arancel_pct=float(fila.get("arancel_pct") or 0.16),
             precio_meli_manual=(float(pm) if pm and not pd.isna(pm) else None),
             precio_landed_usd=(float(landed) if landed and not pd.isna(landed) else None),
+            cantidad=(int(cant) if cant and not pd.isna(cant) else 1),
+            precio_landed_lote_usd=(float(lote) if lote and not pd.isna(lote) else None),
         ))
 
     ops = evaluar_muchos(productos, regimenes=regimenes or ["courier"],

@@ -12,6 +12,8 @@ mi_config.json
 *.local.json
 resultados*.csv
 data/productos.csv
+data/*.db
+export.csv
 
 # Secretos
 .env

@@ -98,7 +98,7 @@ def evaluar_muchos(
     for p in productos:
         # Si Amazon ya dio el costo puesto (landed), el régimen no cambia el
         # resultado: evaluamos una sola vez para no duplicar filas.
-        regs = ["courier"] if p.precio_landed_usd is not None else regimenes
+        regs = ["courier"] if p.tiene_landed else regimenes
         for reg in regs:
             op = evaluar_producto(
                 p, regimen=reg, cfg=cfg,
