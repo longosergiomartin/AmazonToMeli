@@ -135,6 +135,19 @@ Endpoints: `/productos`, `/search?q=`, `/product/{asin}`, `/history/{asin}`,
 `/export.csv`. Mismo espíritu que Rainforest API, pero corriendo en tu PC,
 gratis y sin scraping.
 
+### Si no podés acceder a localhost
+
+1. Verificá que el servidor esté corriendo: la consola debe decir
+   `Uvicorn running on http://127.0.0.1:8321`.
+2. Probá `http://127.0.0.1:8321` en vez de `localhost` (los proxies
+   corporativos a veces resuelven mal el nombre `localhost`).
+3. Probá un puerto estándar: `python -m api.server --puerto 8080` y entrá a
+   `http://127.0.0.1:8080`. El bookmarklet se adapta solo al host/puerto con
+   el que entraste.
+4. Si estás en una **computadora del trabajo** y el bloqueo viene del firewall
+   o antivirus corporativo, no intentes desactivarlos: pedile la excepción al
+   área de IT, o usá la app en tu PC personal.
+
 ## Dashboard web (opcional)
 
 ```bash
