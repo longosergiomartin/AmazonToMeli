@@ -106,6 +106,35 @@ USD 27/unidad.
 > distintos — p. ej. un accesorio barato contra el producto completo — da
 > márgenes falsos. Es el error más común del arbitraje.
 
+## API local — tu propio "Rainforest" personal
+
+Servicio self-hosted que junta datos de productos con **fuentes gratuitas y
+legítimas** y arma tu propio histórico de precios. En vez de scrapear Amazon
+(viola sus términos y requiere infraestructura carísima), automatiza la
+**captura**: vos navegás como siempre y un clic guarda lo que estás viendo.
+
+```bash
+python -m api.server     # abre http://localhost:8321
+```
+
+1. Entrá a `http://localhost:8321` y arrastrá el botón **"➜ Capturar producto"**
+   a tu barra de favoritos (una sola vez).
+2. Navegando **Amazon**, en la página de un producto tocá el botón: captura
+   ASIN, título y precio, y te pregunta el total puesto en Argentina (opcional).
+3. Navegando **MercadoLibre**, en la publicación equivalente tocá el botón:
+   captura el precio y te pregunta a qué ASIN corresponde.
+4. Cada captura queda fechada en SQLite → se arma solo tu **histórico de precios**.
+5. Exportá y evaluá todo con el motor de arbitraje:
+
+```bash
+curl http://localhost:8321/export.csv -o export.csv
+python -m arbitraje.cli --csv export.csv --sin-api
+```
+
+Endpoints: `/productos`, `/search?q=`, `/product/{asin}`, `/history/{asin}`,
+`/export.csv`. Mismo espíritu que Rainforest API, pero corriendo en tu PC,
+gratis y sin scraping.
+
 ## Dashboard web (opcional)
 
 ```bash

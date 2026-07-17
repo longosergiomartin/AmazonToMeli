@@ -1,8 +1,13 @@
 # Núcleo (CLI + motor de cálculo + clientes de API)
 requests>=2.31
 
+# API local (python -m api.server) — tu propio "Rainforest" personal
+fastapi>=0.110
+uvicorn>=0.29
+
 # Tests
 pytest>=7.0
+httpx>=0.27
 
 # Dashboard web opcional (solo si usás app/dashboard.py)
 # streamlit>=1.30
