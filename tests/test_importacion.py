@@ -12,13 +12,14 @@ def _producto(**kw):
 
 
 def test_courier_por_debajo_de_franquicia_no_paga_impuesto():
-    cfg = Config()  # franquicia 400, tasa 50%, flete 55/kg, TC 1300
+    cfg = Config()  # franquicia 400, tasa 50%, flete 55/kg
     p = _producto(precio_amazon_usd=100.0, peso_kg=1.0)
     r = costo_courier(p, cfg)
     # 100 < 400 => sin impuesto. total = fob(100) + flete(55) = 155 USD
     assert r.detalle_usd["impuesto_50pct"] == 0.0
     assert r.total_usd == 155.0
-    assert r.total_ars == 155.0 * 1300
+    # La conversión usa el dólar de compra (oficial + recargo de tarjeta).
+    assert r.total_ars == 155.0 * cfg.tc_compra()
 
 
 def test_courier_sobre_franquicia_paga_50pct_del_excedente():
@@ -65,3 +66,26 @@ def test_dispatcher_regimen_invalido():
     import pytest
     with pytest.raises(ValueError):
         calcular_costo(_producto(), regimen="inexistente")
+
+
+def test_tc_compra_aplica_recargo():
+    cfg = Config(tipo_cambio_oficial=1000.0, recargo_tarjeta_pct=0.30)
+    assert cfg.tc_compra() == 1300.0
+    cfg2 = Config(tipo_cambio_oficial=1000.0, recargo_tarjeta_pct=0.0)
+    assert cfg2.tc_compra() == 1000.0
+
+
+def test_landed_usa_el_total_de_amazon_sin_aduana():
+    cfg = Config(tipo_cambio_oficial=1000.0, recargo_tarjeta_pct=0.30)
+    p = _producto(precio_amazon_usd=234.59, precio_landed_usd=309.20)
+    r = calcular_costo(p, regimen="courier", cfg=cfg)
+    assert r.regimen == "landed"
+    assert r.total_usd == 309.20
+    assert r.total_ars == round(309.20 * 1300.0, 2)  # ignora FOB y aduana
+
+
+def test_landed_tiene_prioridad_sobre_general():
+    cfg = Config()
+    p = _producto(precio_amazon_usd=234.59, precio_landed_usd=309.20)
+    # Aunque se pida 'general', si hay landed se usa ese dato.
+    assert calcular_costo(p, regimen="general", cfg=cfg).regimen == "landed"

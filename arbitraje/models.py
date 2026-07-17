@@ -22,6 +22,10 @@ class Producto:
     categoria: str = "default"      # categoría de comisión en MeLi
     arancel_pct: float = 0.16       # NCM específico (solo aplica en régimen general)
     precio_meli_manual: Optional[float] = None  # si querés fijar el precio de venta a mano
+    # Costo total puesto en Argentina (USD) según lo informa Amazon en el
+    # checkout ("Total" con envío + importación incluidos). Si está cargado, se
+    # usa directo y se saltea la estimación de aduana: es el dato más preciso.
+    precio_landed_usd: Optional[float] = None
     link_amazon: Optional[str] = None
 
     def a_dict(self) -> dict:

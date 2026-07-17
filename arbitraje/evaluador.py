@@ -74,7 +74,7 @@ def evaluar_producto(
 
     return Oportunidad(
         producto=producto,
-        regimen=regimen,
+        regimen=costo.regimen,  # puede ser "landed" si Amazon dio el total
         costo=costo,
         venta=venta,
         precio_venta_ars=precio_venta,
@@ -96,7 +96,10 @@ def evaluar_muchos(
     regimenes = regimenes or ["courier"]
     oportunidades: List[Oportunidad] = []
     for p in productos:
-        for reg in regimenes:
+        # Si Amazon ya dio el costo puesto (landed), el régimen no cambia el
+        # resultado: evaluamos una sola vez para no duplicar filas.
+        regs = ["courier"] if p.precio_landed_usd is not None else regimenes
+        for reg in regs:
             op = evaluar_producto(
                 p, regimen=reg, cfg=cfg,
                 access_token=access_token, usar_api=usar_api,

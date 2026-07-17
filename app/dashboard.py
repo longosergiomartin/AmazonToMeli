@@ -31,7 +31,9 @@ st.caption("Detecta productos con buen margen para traer de Amazon y revender en
 
 with st.sidebar:
     st.header("Parámetros")
-    tc = st.number_input("Tipo de cambio (ARS/USD)", value=1300.0, step=10.0)
+    tc = st.number_input("Tipo de cambio oficial (ARS/USD)", value=1300.0, step=10.0)
+    recargo = st.slider("Recargo dólar tarjeta (%)", 0, 60, 30,
+                        help="Percepciones sobre compras en USD con tarjeta argentina.") / 100
     regimenes = st.multiselect(
         "Régimen(es) de importación", ["courier", "general"], default=["courier"],
     )
@@ -39,7 +41,8 @@ with st.sidebar:
                            help="Si está apagado, usá la columna 'precio_meli_manual'.")
     umbral = st.slider("Umbral de 'buena oportunidad' (%)", 0, 100, 30)
 
-cfg = Config(tipo_cambio_oficial=tc, umbral_margen_bueno_pct=float(umbral))
+cfg = Config(tipo_cambio_oficial=tc, recargo_tarjeta_pct=float(recargo),
+             umbral_margen_bueno_pct=float(umbral))
 
 st.subheader("Productos a evaluar")
 st.write("Cargá o editá los productos (precio y peso los ves en Amazon):")
@@ -47,7 +50,7 @@ st.write("Cargá o editá los productos (precio y peso los ves en Amazon):")
 df_inicial = pd.DataFrame([
     {"nombre": "Auriculares XYZ 123", "query_meli": "auriculares bluetooth XYZ",
      "precio_amazon_usd": 45.0, "peso_kg": 0.3, "categoria": "electronica",
-     "arancel_pct": 0.16, "precio_meli_manual": 150000.0},
+     "arancel_pct": 0.16, "precio_meli_manual": 150000.0, "precio_landed_usd": None},
 ])
 df = st.data_editor(df_inicial, num_rows="dynamic", use_container_width=True)
 
@@ -57,6 +60,7 @@ if st.button("Evaluar oportunidades", type="primary"):
         if not str(fila.get("nombre", "")).strip():
             continue
         pm = fila.get("precio_meli_manual")
+        landed = fila.get("precio_landed_usd")
         productos.append(Producto(
             nombre=str(fila["nombre"]),
             query_meli=str(fila.get("query_meli") or fila["nombre"]),
@@ -65,6 +69,7 @@ if st.button("Evaluar oportunidades", type="primary"):
             categoria=str(fila.get("categoria") or "default"),
             arancel_pct=float(fila.get("arancel_pct") or 0.16),
             precio_meli_manual=(float(pm) if pm and not pd.isna(pm) else None),
+            precio_landed_usd=(float(landed) if landed and not pd.isna(landed) else None),
         ))
 
     ops = evaluar_muchos(productos, regimenes=regimenes or ["courier"],

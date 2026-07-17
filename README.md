@@ -65,7 +65,25 @@ python -m arbitraje.cli --csv data/productos.example.csv --sin-api
 | `categoria` | categoría de comisión MeLi (`electronica`, `computacion`, `hogar`, `default`) |
 | `arancel_pct` | arancel NCM (solo aplica en régimen general) |
 | `precio_meli_manual` | *(opcional)* precio de venta fijado a mano; tiene prioridad sobre la API |
+| `precio_landed_usd` | *(opcional)* costo total puesto en Argentina en USD según el checkout de Amazon (el "Total" con envío + importación). Si está, se usa directo y se saltea la estimación de aduana — es el dato más preciso. |
 | `link_amazon` | *(opcional)* link de referencia |
+
+### Dólar tarjeta
+
+Cuando comprás en Amazon con una tarjeta argentina no pagás el dólar oficial,
+sino **oficial + percepciones** ("dólar tarjeta"). Ese recargo se aplica solo a
+la compra (la venta en MeLi es en pesos). Se configura con `recargo_tarjeta_pct`
+(default `0.30`) o desde el CLI:
+
+```bash
+python -m arbitraje.cli --csv data/productos.example.csv --sin-api --recargo-tarjeta 0.30
+```
+
+### Costo puesto que informa Amazon (landed)
+
+Si comprás por **AmazonGlobal**, el checkout te muestra el `Total` con envío e
+importación ya incluidos. Cargá ese número en `precio_landed_usd` y la app lo
+usa directo (modo `landed`), sin estimar aduana: es lo más preciso.
 
 ## Dashboard web (opcional)
 
@@ -95,6 +113,7 @@ tocar código, creá un JSON y pasalo con `--config`:
 ```json
 {
   "tipo_cambio_oficial": 1350.0,
+  "recargo_tarjeta_pct": 0.30,
   "courier": { "flete_usd_por_kg": 60.0, "franquicia_anual_usd": 400.0 },
   "meli": { "iibb_pct": 0.035, "costo_envio_estimado_ars": 7000 }
 }

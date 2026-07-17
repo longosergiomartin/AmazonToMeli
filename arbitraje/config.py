@@ -96,10 +96,20 @@ class MeliConfig:
 @dataclass
 class Config:
     tipo_cambio_oficial: float = 1300.0    # ARS por USD — VERIFICAR cotización del día
+    # Recargo del "dólar tarjeta": cuando comprás en Amazon con una tarjeta
+    # argentina no pagás el dólar oficial, sino oficial + percepciones. Este
+    # recargo se suma al TC solo para la COMPRA (no para la venta en MeLi, que
+    # es en pesos). Es a cuenta de impuestos (recuperable) pero sale de tu
+    # bolsillo al momento de comprar. VERIFICAR alícuota vigente.
+    recargo_tarjeta_pct: float = 0.30
     umbral_margen_bueno_pct: float = 30.0  # a partir de acá lo marcamos como oportunidad
     courier: CourierConfig = field(default_factory=CourierConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
     meli: MeliConfig = field(default_factory=MeliConfig)
+
+    def tc_compra(self) -> float:
+        """Tipo de cambio efectivo al que comprás en el exterior con tarjeta."""
+        return self.tipo_cambio_oficial * (1 + self.recargo_tarjeta_pct)
 
     # ---- persistencia ----------------------------------------------------
     def a_dict(self) -> dict:
@@ -123,7 +133,8 @@ class Config:
             meli.comisiones = comisiones
 
         top = {k: v for k, v in data.items()
-               if k in {"tipo_cambio_oficial", "umbral_margen_bueno_pct"}}
+               if k in {"tipo_cambio_oficial", "recargo_tarjeta_pct",
+                        "umbral_margen_bueno_pct"}}
         return replace(base, courier=courier, general=general, meli=meli, **top)
 
     @classmethod

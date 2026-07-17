@@ -41,7 +41,7 @@ def costo_courier(
     impuesto = base_imponible * c.tasa_impuesto
 
     total_usd = fob + flete + impuesto
-    total_ars = total_usd * cfg.tipo_cambio_oficial
+    total_ars = total_usd * cfg.tc_compra()
 
     excede_tope = fob > c.tope_por_envio_usd
 
@@ -86,7 +86,7 @@ def costo_general(
     total_usd = (cif + derechos_importacion + tasa_estadistica + iva +
                  percepcion_iva + percepcion_ganancias + percepcion_iibb +
                  despachante + gastos_portuarios)
-    total_ars = total_usd * cfg.tipo_cambio_oficial
+    total_ars = total_usd * cfg.tc_compra()
 
     return ResultadoImportacion(
         regimen="general",
@@ -108,13 +108,44 @@ def costo_general(
     )
 
 
+def costo_landed(
+    producto: Producto,
+    cfg: Config = CONFIG_DEFAULT,
+) -> ResultadoImportacion:
+    """Usa el costo puesto en Argentina que Amazon informa en el checkout
+    (`precio_landed_usd`), sin estimar aduana. Es el dato más preciso cuando
+    comprás por AmazonGlobal, que entrega con impuestos incluidos.
+
+    El total en USD se paga a Amazon con tarjeta, así que se convierte al
+    dólar de compra (oficial + recargo de tarjeta)."""
+    if producto.precio_landed_usd is None:
+        raise ValueError("El producto no tiene 'precio_landed_usd' cargado.")
+    total_usd = producto.precio_landed_usd
+    total_ars = total_usd * cfg.tc_compra()
+    return ResultadoImportacion(
+        regimen="landed",
+        total_usd=round(total_usd, 2),
+        total_ars=round(total_ars, 2),
+        detalle_usd={
+            "landed_amazon": round(total_usd, 2),
+            "tc_compra": round(cfg.tc_compra(), 2),
+        },
+    )
+
+
 def calcular_costo(
     producto: Producto,
     regimen: str = "courier",
     cfg: Config = CONFIG_DEFAULT,
     **kwargs,
 ) -> ResultadoImportacion:
-    """Despachador: elige el régimen por nombre."""
+    """Despachador: elige el régimen por nombre.
+
+    Si el producto trae `precio_landed_usd`, ese dato tiene prioridad y se usa
+    el modo 'landed' cualquiera sea el régimen pedido (Amazon ya calculó todo).
+    """
+    if producto.precio_landed_usd is not None:
+        return costo_landed(producto, cfg)
     if regimen == "courier":
         return costo_courier(producto, cfg, **kwargs)
     if regimen == "general":
