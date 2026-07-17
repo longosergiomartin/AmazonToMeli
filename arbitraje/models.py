@@ -26,7 +26,19 @@ class Producto:
     # checkout ("Total" con envío + importación incluidos). Si está cargado, se
     # usa directo y se saltea la estimación de aduana: es el dato más preciso.
     precio_landed_usd: Optional[float] = None
+    # Compra por lote: si comprás varias unidades en un mismo envío, el envío y
+    # los gastos fijos se reparten entre todas y baja el costo por unidad.
+    cantidad: int = 1
+    # Costo total puesto en Argentina (USD) del LOTE ENTERO, según el checkout
+    # de Amazon al pedir `cantidad` unidades. Si está cargado, el costo por
+    # unidad = este total / cantidad (lo más preciso para compras por volumen).
+    precio_landed_lote_usd: Optional[float] = None
     link_amazon: Optional[str] = None
+
+    @property
+    def tiene_landed(self) -> bool:
+        return (self.precio_landed_usd is not None
+                or self.precio_landed_lote_usd is not None)
 
     def a_dict(self) -> dict:
         return asdict(self)
@@ -73,6 +85,11 @@ class Oportunidad:
     def es_oportunidad(self) -> bool:
         return self.margen_ars > 0
 
+    @property
+    def margen_lote_ars(self) -> float:
+        """Margen total si vendés todas las unidades del lote comprado."""
+        return round(self.margen_ars * max(1, self.producto.cantidad), 2)
+
     def veredicto(self, umbral_bueno_pct: float = 30.0) -> str:
         if self.margen_pct >= umbral_bueno_pct:
             return "OPORTUNIDAD"
@@ -90,7 +107,9 @@ class Oportunidad:
             "costo_puesto_ars": round(self.costo.total_ars, 2),
             "precio_venta_meli_ars": round(self.precio_venta_ars, 2),
             "neto_venta_ars": round(self.venta.neto_ars, 2),
+            "cantidad": self.producto.cantidad,
             "margen_ars": round(self.margen_ars, 2),
             "margen_pct": round(self.margen_pct, 1),
+            "margen_lote_ars": self.margen_lote_ars,
             "veredicto": self.veredicto(),
         }

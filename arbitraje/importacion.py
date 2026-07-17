@@ -112,22 +112,36 @@ def costo_landed(
     producto: Producto,
     cfg: Config = CONFIG_DEFAULT,
 ) -> ResultadoImportacion:
-    """Usa el costo puesto en Argentina que Amazon informa en el checkout
-    (`precio_landed_usd`), sin estimar aduana. Es el dato más preciso cuando
-    comprás por AmazonGlobal, que entrega con impuestos incluidos.
+    """Costo puesto en Argentina POR UNIDAD usando el total que informa Amazon
+    en el checkout, sin estimar aduana. Es el dato más preciso cuando comprás
+    por AmazonGlobal, que entrega con impuestos incluidos.
 
-    El total en USD se paga a Amazon con tarjeta, así que se convierte al
-    dólar de compra (oficial + recargo de tarjeta)."""
-    if producto.precio_landed_usd is None:
-        raise ValueError("El producto no tiene 'precio_landed_usd' cargado.")
-    total_usd = producto.precio_landed_usd
+    Dos formas de cargarlo:
+      - `precio_landed_lote_usd`: total del lote entero (para compras de varias
+        unidades). El costo por unidad = total / cantidad, así el envío y los
+        gastos fijos quedan repartidos entre todas las unidades.
+      - `precio_landed_usd`: total de una sola unidad.
+
+    El total se paga a Amazon con tarjeta, así que se convierte al dólar de
+    compra (oficial + recargo de tarjeta)."""
+    cantidad = max(1, producto.cantidad)
+    if producto.precio_landed_lote_usd is not None:
+        total_lote_usd = producto.precio_landed_lote_usd
+        total_usd = total_lote_usd / cantidad
+    elif producto.precio_landed_usd is not None:
+        total_usd = producto.precio_landed_usd
+        total_lote_usd = total_usd * cantidad
+    else:
+        raise ValueError("El producto no tiene costo 'landed' cargado.")
     total_ars = total_usd * cfg.tc_compra()
     return ResultadoImportacion(
         regimen="landed",
         total_usd=round(total_usd, 2),
         total_ars=round(total_ars, 2),
         detalle_usd={
-            "landed_amazon": round(total_usd, 2),
+            "landed_por_unidad": round(total_usd, 2),
+            "landed_lote": round(total_lote_usd, 2),
+            "cantidad": cantidad,
             "tc_compra": round(cfg.tc_compra(), 2),
         },
     )
@@ -144,7 +158,7 @@ def calcular_costo(
     Si el producto trae `precio_landed_usd`, ese dato tiene prioridad y se usa
     el modo 'landed' cualquiera sea el régimen pedido (Amazon ya calculó todo).
     """
-    if producto.precio_landed_usd is not None:
+    if producto.tiene_landed:
         return costo_landed(producto, cfg)
     if regimen == "courier":
         return costo_courier(producto, cfg, **kwargs)

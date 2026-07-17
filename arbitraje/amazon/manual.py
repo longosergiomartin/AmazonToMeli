@@ -57,6 +57,8 @@ class ManualProvider(AmazonProvider):
                     arancel_pct=_num(fila.get("arancel_pct", ""), 0.16),
                     precio_meli_manual=_opt_num(fila.get("precio_meli_manual", "")),
                     precio_landed_usd=_opt_num(fila.get("precio_landed_usd", "")),
+                    cantidad=int(_num(fila.get("cantidad", ""), 1)),
+                    precio_landed_lote_usd=_opt_num(fila.get("precio_landed_lote_usd", "")),
                     link_amazon=(fila.get("link_amazon", "").strip() or None),
                 ))
         return cls(productos)

@@ -89,3 +89,22 @@ def test_landed_tiene_prioridad_sobre_general():
     p = _producto(precio_amazon_usd=234.59, precio_landed_usd=309.20)
     # Aunque se pida 'general', si hay landed se usa ese dato.
     assert calcular_costo(p, regimen="general", cfg=cfg).regimen == "landed"
+
+
+def test_landed_lote_reparte_el_costo_entre_unidades():
+    cfg = Config(tipo_cambio_oficial=1000.0, recargo_tarjeta_pct=0.0)
+    p = _producto(precio_amazon_usd=18.0, cantidad=6, precio_landed_lote_usd=300.0)
+    r = calcular_costo(p, cfg=cfg)
+    assert r.regimen == "landed"
+    assert r.total_usd == 50.0            # 300 / 6 por unidad
+    assert r.total_ars == 50.0 * 1000.0
+    assert r.detalle_usd["landed_lote"] == 300.0
+    assert r.detalle_usd["cantidad"] == 6
+
+
+def test_landed_por_unidad_con_cantidad_calcula_el_lote():
+    cfg = Config(tipo_cambio_oficial=1000.0, recargo_tarjeta_pct=0.0)
+    p = _producto(precio_amazon_usd=18.0, cantidad=3, precio_landed_usd=48.0)
+    r = calcular_costo(p, cfg=cfg)
+    assert r.total_usd == 48.0            # por unidad
+    assert r.detalle_usd["landed_lote"] == 144.0  # 48 * 3
