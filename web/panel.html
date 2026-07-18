@@ -201,7 +201,12 @@
       if(v)api("PATCH","/api/catalogo/"+p.id+"/stock",{stock:parseInt(v,10)}).then(cargar).catch(err);});
     if(p.estado==="publicado") b("Pausar",function(){op(p.id,"pausar");});
     if(p.estado==="pausado") b("Reactivar",function(){op(p.id,"reactivar");});
+    b("Costo",function(){
+      var r=prompt("Cómo calcular el costo — escribí: landed (Total de Amazon), courier o general:",p.regimen);
+      if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
+    });
     b("Historial",function(){historial(p.id);});
+    b("Borrar",function(){ if(confirm("¿Borrar este producto del catálogo?")) api("DELETE","/api/catalogo/"+p.id).then(cargar).catch(err); });
   }
   function op(id,accion){ api("POST","/api/catalogo/"+id+"/"+accion,{}).then(cargar).catch(err); }
   function err(e){ alert("Error: "+(typeof e==="string"?e:JSON.stringify(e))); }
@@ -235,11 +240,25 @@
       (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
-      '<div class="kv"><span>Precio de venta</span><b>'+fmt(v.precio_ars)+' ARS</b></div>'+
-      '<div class="kv"><span>Costo puesto / Margen</span><b>'+fmt(v.costo_total_ars)+' · '+(v.margen_pct||0).toFixed(1)+'%</b></div>'+
+      '<div class="f"><label>Precio de venta en MercadoLibre (ARS)</label>'+
+        '<input id="ed-precio" type="number" step="1" value="'+Math.round(v.precio_ars||0)+'">'+
+        '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el margen se recalcula abajo.</span></div>'+
+      '<div class="kv"><span>Costo puesto</span><b>'+fmt(v.costo_total_ars)+'</b></div>'+
+      '<div class="kv"><span>Margen a ese precio</span><b id="ed-margen">—</b></div>'+
       (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
         :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
     var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
+    // Precio editable con margen en vivo (para publicar a precio competitivo).
+    function pintarMargen(pct,costo){ var m=$("ed-margen"); var ars=costo*pct/100;
+      m.textContent=fmt(ars)+"  ("+pct.toFixed(1)+"%)";
+      m.style.color = pct<0?"var(--bad)":(pct<30?"var(--warn)":"var(--good)"); }
+    pintarMargen(v.margen_pct||0, v.costo_total_ars);
+    $("ed-precio").addEventListener("change",function(){
+      var precio=parseFloat(this.value)||0;
+      api("PATCH","/api/catalogo/"+id+"/precio",{precio:precio}).then(function(p){
+        pintarMargen(p.margen_pct||0, p.costo_total_ars); cargar();
+      }).catch(err);
+    });
     var attrIds=obl.map(function(a){return a.id;});
     var f=$("dlg-f"); f.innerHTML="";
     addBtn(f,"Cerrar",function(){$("dlg").close();});

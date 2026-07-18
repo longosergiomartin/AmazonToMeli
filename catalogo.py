@@ -230,6 +230,22 @@ class Catalogo:
                   f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")
         return p
 
+    def eliminar(self, pid: int) -> None:
+        self.conn.execute("DELETE FROM catalogo WHERE id = ?", (pid,))
+        self.conn.execute("DELETE FROM catalogo_historial WHERE producto_id = ?", (pid,))
+        self.conn.commit()
+
+    def cambiar_regimen(self, pid: int, regimen: str) -> ProductoCatalogo:
+        p = self.obtener(pid)
+        if not p:
+            raise KeyError(pid)
+        anterior = p.regimen
+        p.regimen = regimen
+        self._calcular(p)
+        self._guardar(p)
+        self._log(pid, "regimen", "regimen", anterior, regimen)
+        return p
+
     def recalcular(self, pid: int) -> ProductoCatalogo:
         p = self.obtener(pid)
         if not p:

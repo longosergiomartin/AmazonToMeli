@@ -191,6 +191,20 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         _p(pid)
         return cat.historial(pid)
 
+    @app.delete("/api/catalogo/{pid}")
+    def eliminar(pid: int):
+        _p(pid)
+        cat.eliminar(pid)
+        return {"eliminado": pid}
+
+    @app.patch("/api/catalogo/{pid}/regimen")
+    def regimen(pid: int, body: dict):
+        _p(pid)
+        reg = (body or {}).get("regimen", "")
+        if reg not in ("landed", "courier", "general"):
+            raise HTTPException(400, "Régimen inválido (landed/courier/general).")
+        return _dict(cat.cambiar_regimen(pid, reg))
+
     # ---- borrador / vista previa / aprobación / publicación --------------
 
     @app.post("/api/catalogo/{pid}/borrador")
