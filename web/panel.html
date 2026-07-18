@@ -95,6 +95,12 @@
       <div class="f"><label>Costo de envío (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="49.06"></div>
       <div class="f"><label>Disponibilidad</label>
         <select id="disponibilidad"><option value="in_stock">En stock</option><option value="out_of_stock">Sin stock</option></select></div>
+      <div class="f"><label>Cómo calcular el costo</label>
+        <select id="regimen">
+          <option value="landed">Total de Amazon (recomendado)</option>
+          <option value="courier">Estimar courier (puerta a puerta)</option>
+          <option value="general">Régimen general (importador)</option>
+        </select></div>
       <div class="f"><label>Categoría (comisión)</label>
         <select id="categoria"><option value="default">Otra / default</option><option value="electronica">Electrónica</option><option value="computacion">Computación</option><option value="hogar">Hogar</option></select></div>
       <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="35"></div>
@@ -154,6 +160,7 @@
     var body={amazon_link:$("amazon_link").value,asin:$("asin").value,marca:$("marca").value,
       modelo:$("modelo").value,precio_usd:num("precio_usd"),peso_kg:num("peso_kg"),
       costo_envio_usd:num("costo_envio_usd"),disponibilidad:$("disponibilidad").value,
+      regimen:$("regimen").value,
       categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
       stock:Math.round(num("stock")),titulo_ml:$("titulo_ml").value};
     if(!body.modelo && !body.asin){ $("add-msg").textContent="Cargá al menos ASIN o modelo."; return; }

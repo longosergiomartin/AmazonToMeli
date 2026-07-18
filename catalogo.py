@@ -118,11 +118,16 @@ class Catalogo:
             precio_amazon_usd=base_usd, peso_kg=p.peso_kg, arancel_pct=p.arancel_pct,
         )
         cfg = self.cfg
-        if p.regimen == "courier":
+        regimen = p.regimen
+        if regimen == "landed":
+            # Amazon ya informó el Total puesto en Argentina (producto + envío +
+            # importación): se usa directo, sin estimar aduana ni sumar impuestos.
+            pa.precio_landed_usd = base_usd
+        elif regimen == "courier":
             # El costo de envío ya lo cargó el usuario: anulamos el flete estimado
             # para no contarlo dos veces.
             cfg = replace(self.cfg, courier=replace(self.cfg.courier, flete_usd_por_kg=0.0))
-        costo = calcular_costo(pa, regimen=p.regimen, cfg=cfg)
+        costo = calcular_costo(pa, regimen=regimen, cfg=cfg)
         p.costo_total_ars = costo.total_ars
         p.precio_sugerido_ars = precio_sugerido(
             costo.total_ars, p.margen_deseado, p.categoria, self.cfg)

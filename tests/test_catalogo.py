@@ -35,6 +35,21 @@ def test_alta_calcula_costo_y_precio_sugerido(cat):
     assert p.margen_pct == pytest.approx(35.0, abs=1.0)
 
 
+def test_regimen_landed_usa_total_de_amazon_sin_sumar_impuestos(cat):
+    # precio 839.97 + envío+import 530.36 = 1370.33 (Total real de Amazon).
+    p = cat.agregar(_prod(regimen="landed", precio_usd=839.97,
+                          costo_envio_usd=530.36, peso_kg=13.0))
+    tc = cat.cfg.tc_compra()
+    assert p.costo_total_ars == round(1370.33 * tc, 2)  # sin aduana extra
+
+
+def test_landed_mas_barato_que_courier_cuando_courier_dobla_impuesto(cat):
+    landed = cat.agregar(_prod(regimen="landed", precio_usd=839.97, costo_envio_usd=530.36))
+    courier = cat.agregar(_prod(regimen="courier", precio_usd=839.97, costo_envio_usd=530.36))
+    # Courier vuelve a estimar el 50% sobre el excedente → más caro que el Total real.
+    assert courier.costo_total_ars > landed.costo_total_ars
+
+
 def test_alta_registra_historial(cat):
     p = cat.agregar(_prod())
     h = cat.historial(p.id)
