@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel · Publicar en MercadoLibre</title>
+<style>
+  :root{
+    --bg:#F5F4EF; --surface:#FFFFFF; --surface-2:#EFEEE7; --line:#E0DED4;
+    --ink:#1B1E24; --muted:#616675; --accent:#0E7C66;
+    --good:#12805C; --warn:#9A6410; --bad:#C0392B;
+    --good-bg:#12805c1a; --warn-bg:#9a64101a; --bad-bg:#c0392b1a; --info-bg:#0e7c661a;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; --r:13px;
+  }
+  @media(prefers-color-scheme:dark){:root{
+    --bg:#13151B; --surface:#1C1F27; --surface-2:#23262F; --line:#2E323C;
+    --ink:#ECEDF2; --muted:#9AA0B0; --accent:#38C39B;
+    --good:#3FBE8E; --warn:#D6A24A; --bad:#E4695B;
+    --good-bg:#3fbe8e1f; --warn-bg:#d6a24a1f; --bad-bg:#e4695b1f; --info-bg:#38c39b1f;
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 64px}
+  h1{font-size:1.5rem;margin:0 0 2px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:.9rem}
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .ml{display:flex;align-items:center;gap:10px;font-size:.85rem}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad)}
+  .dot.on{background:var(--good)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 14px;font-weight:700}
+  .grid2{display:grid;grid-template-columns:1fr;gap:12px}
+  @media(min-width:620px){.grid2{grid-template-columns:1fr 1fr}}
+  .f{display:flex;flex-direction:column;gap:5px}
+  label{font-size:.82rem;font-weight:500}
+  input,select,textarea{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;font-size:.92rem;width:100%}
+  textarea{font-family:var(--mono);font-size:.82rem;resize:vertical}
+  input[type=number]{font-family:var(--mono)}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .dlg-b .f{margin-bottom:12px}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 14px;font-weight:600;font-size:.86rem}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent}
+  @media(prefers-color-scheme:dark){button.primary{color:#0d0f13}}
+  button:hover{filter:brightness(1.04)}
+  button.sm{padding:6px 10px;font-size:.8rem}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;min-width:720px}
+  th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  td.num{font-family:var(--mono);text-align:right}
+  tr:last-child td{border-bottom:0}
+  .pill{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 8px;border-radius:999px}
+  .pill.borrador{background:var(--info-bg);color:var(--accent)}
+  .pill.aprobado{background:var(--warn-bg);color:var(--warn)}
+  .pill.publicado{background:var(--good-bg);color:var(--good)}
+  .pill.pausado{background:var(--bad-bg);color:var(--bad)}
+  .warnflag{color:var(--bad);font-weight:700;font-size:.75rem}
+  .actions{display:flex;gap:5px;flex-wrap:wrap}
+  dialog{border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);max-width:520px;width:92%;padding:0}
+  dialog::backdrop{background:rgba(0,0,0,.45)}
+  .dlg-h{padding:16px 18px;border-bottom:1px solid var(--line);font-weight:700}
+  .dlg-b{padding:18px}
+  .dlg-f{padding:14px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  .kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+  .kv b{font-family:var(--mono)}
+  .flist{margin:10px 0 0;padding-left:18px;color:var(--bad);font-size:.85rem}
+  .msg{margin-top:12px;font-size:.85rem}
+  .empty{padding:24px;text-align:center;color:var(--muted);font-size:.9rem}
+  details summary{cursor:pointer;color:var(--muted);font-size:.82rem;font-weight:600;margin-top:8px}
+  .hist{margin-top:8px;font-size:.82rem;color:var(--muted)}
+  .hist div{padding:3px 0;border-bottom:1px dashed var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina</div></div>
+    <div class="ml">
+      <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
+      <button class="sm" id="ml-btn" type="button">Conectar</button>
+      <button class="sm" id="ml-code" type="button" title="Pegar el código del callback">Pegar código</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Registrar producto de Amazon</h2>
+    <div class="grid2">
+      <div class="f"><label>Link de Amazon</label><input id="amazon_link" placeholder="https://amazon.com/dp/..."></div>
+      <div class="f"><label>ASIN</label><input id="asin" placeholder="B0BBHHT8LY"></div>
+      <div class="f"><label>Marca</label><input id="marca" placeholder="HISEA"></div>
+      <div class="f"><label>Modelo</label><input id="modelo" placeholder="Waders neopreno con botas"></div>
+      <div class="f"><label>Precio en USD</label><input id="precio_usd" type="number" step="0.01" placeholder="118.99"></div>
+      <div class="f"><label>Peso (kg)</label><input id="peso_kg" type="number" step="0.1" value="0.5"></div>
+      <div class="f"><label>Costo de envío (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="49.06"></div>
+      <div class="f"><label>Disponibilidad</label>
+        <select id="disponibilidad"><option value="in_stock">En stock</option><option value="out_of_stock">Sin stock</option></select></div>
+      <div class="f"><label>Categoría (comisión)</label>
+        <select id="categoria"><option value="default">Otra / default</option><option value="electronica">Electrónica</option><option value="computacion">Computación</option><option value="hogar">Hogar</option></select></div>
+      <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="35"></div>
+      <div class="f"><label>Stock a publicar</label><input id="stock" type="number" step="1" value="1"></div>
+      <div class="f"><label>Título en MercadoLibre</label><input id="titulo_ml" placeholder="Waders HISEA neopreno con botas"></div>
+    </div>
+    <div style="margin-top:14px"><button class="primary" id="add" type="button">Registrar y calcular</button>
+      <span class="msg" id="add-msg"></span></div>
+  </div>
+
+  <div class="tablewrap">
+    <table id="tabla"><thead><tr>
+      <th>Producto</th><th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
+      <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th>Acciones</th>
+    </tr></thead><tbody id="tbody"></tbody></table>
+    <div class="empty" id="empty">Todavía no registraste productos.</div>
+  </div>
+
+  <p class="sub" style="margin-top:20px">Nada se publica solo: el borrador se muestra en vista previa y <b>publicar</b> requiere tu aprobación explícita. Los valores por defecto de impuestos y comisiones son estimaciones — verificalos.</p>
+</div>
+
+<dialog id="dlg"><div class="dlg-h" id="dlg-h">Vista previa</div>
+  <div class="dlg-b" id="dlg-b"></div>
+  <div class="dlg-f" id="dlg-f"></div></dialog>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(s){return document.getElementById(s);};
+  var fmt=function(v){return v==null?"—":"$"+Math.round(v).toLocaleString("es-AR");};
+  var api=function(m,u,b){return fetch(u,{method:m,headers:{"Content-Type":"application/json"},
+    body:b?JSON.stringify(b):undefined}).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(j){ if(!r.ok) throw (j.detail||j); return j; });});};
+
+  function mlStatus(){
+    api("GET","/oauth/status").then(function(s){
+      $("ml-dot").className="dot"+(s.conectado?" on":"");
+      $("ml-txt").textContent="MercadoLibre: "+(s.conectado?"conectado":(s.configurado?"sin conectar":"sin credenciales"));
+      $("ml-btn").textContent=s.conectado?"Desconectar":"Conectar";
+      $("ml-code").style.display=s.conectado?"none":"";
+      $("ml-btn").onclick=s.conectado
+        ? function(){ api("POST","/oauth/logout").then(mlStatus); }
+        : function(){ if(!s.configurado){alert("Falta configurar MELI_CLIENT_ID y MELI_CLIENT_SECRET en el servidor (ver README).");return;} window.open("/oauth/login","_blank"); };
+    });
+  }
+  function pegarCodigo(){
+    var v=prompt("Pegá el CÓDIGO del callback, o la URL completa de la barra de direcciones "
+      +"(la que empieza con https://127.0.0.1:8321/oauth/callback?code=...):");
+    if(!v) return;
+    var body = v.indexOf("http")===0 ? {url:v} : {code:v};
+    api("POST","/oauth/code",body).then(function(){ alert("✅ MercadoLibre conectado."); mlStatus(); })
+      .catch(function(e){ alert("No se pudo conectar: "+(typeof e==="string"?e:JSON.stringify(e))); });
+  }
+
+  function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:0;}
+  function add(){
+    var body={amazon_link:$("amazon_link").value,asin:$("asin").value,marca:$("marca").value,
+      modelo:$("modelo").value,precio_usd:num("precio_usd"),peso_kg:num("peso_kg"),
+      costo_envio_usd:num("costo_envio_usd"),disponibilidad:$("disponibilidad").value,
+      categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
+      stock:Math.round(num("stock")),titulo_ml:$("titulo_ml").value};
+    if(!body.modelo && !body.asin){ $("add-msg").textContent="Cargá al menos ASIN o modelo."; return; }
+    $("add-msg").textContent="Calculando...";
+    api("POST","/api/catalogo",body).then(function(){ $("add-msg").textContent="✓ Registrado";
+      ["amazon_link","asin","marca","modelo","precio_usd","costo_envio_usd","titulo_ml"].forEach(function(k){$(k).value="";});
+      cargar(); setTimeout(function(){$("add-msg").textContent="";},2000);
+    }).catch(function(e){ $("add-msg").textContent="Error: "+JSON.stringify(e); });
+  }
+
+  function cargar(){
+    api("GET","/api/catalogo").then(function(list){
+      var tb=$("tbody"); tb.innerHTML="";
+      $("empty").style.display=list.length?"none":"block";
+      list.forEach(function(p){
+        var tr=document.createElement("tr");
+        var flag=p.margen_insuficiente?' <span class="warnflag" title="Margen por debajo del umbral">⚠ bajo</span>':'';
+        tr.innerHTML='<td>'+esc(p.modelo||p.asin||"(sin nombre)")+'<div class="sub">'+esc(p.marca||"")+'</div></td>'+
+          '<td class="num">'+fmt(p.costo_total_ars)+'</td>'+
+          '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
+          '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
+          '<td class="num">'+(p.margen_pct||0).toFixed(0)+'%'+flag+'</td>'+
+          '<td><span class="pill '+p.estado+'">'+p.estado+'</span></td>'+
+          '<td class="actions" id="act-'+p.id+'"></td>';
+        tb.appendChild(tr);
+        acciones(p);
+      });
+    });
+  }
+
+  function acciones(p){
+    var c=document.getElementById("act-"+p.id); c.innerHTML="";
+    function b(txt,fn,cls){var el=document.createElement("button");el.className="sm"+(cls?" "+cls:"");el.textContent=txt;el.onclick=fn;c.appendChild(el);}
+    b("Vista previa",function(){previa(p.id);},"primary");
+    b("Precio",function(){var v=prompt("Nuevo precio de venta (ARS):",Math.round(p.precio_publicado_ars||p.precio_sugerido_ars));
+      if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
+    b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);
+      if(v)api("PATCH","/api/catalogo/"+p.id+"/stock",{stock:parseInt(v,10)}).then(cargar).catch(err);});
+    if(p.estado==="publicado") b("Pausar",function(){op(p.id,"pausar");});
+    if(p.estado==="pausado") b("Reactivar",function(){op(p.id,"reactivar");});
+    b("Historial",function(){historial(p.id);});
+  }
+  function op(id,accion){ api("POST","/api/catalogo/"+id+"/"+accion,{}).then(cargar).catch(err); }
+  function err(e){ alert("Error: "+(typeof e==="string"?e:JSON.stringify(e))); }
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+
+  function addBtn(parent,txt,fn,cls){var b=document.createElement("button");if(cls)b.className=cls;b.textContent=txt;b.onclick=fn;parent.appendChild(b);return b;}
+
+  function previa(id){
+    api("POST","/api/catalogo/"+id+"/borrador",{}).then(function(d){ editor(id,d); }).catch(err);
+  }
+
+  function editor(id,d){
+    var v=d.preview, faltan=d.faltantes||[], sug=d.categorias_sugeridas||[], obl=(d.atributos_obligatorios||[]);
+    obl=obl.filter(function(a){return a.id!=="BRAND"&&a.id!=="MODEL";});
+    $("dlg-h").textContent="Editar y publicar · "+(v.titulo||"(sin título)");
+    var catOpts=sug.map(function(c){var cid=c.category_id||c.id||""; var nm=c.category_name||c.domain_name||"";
+      return '<option value="'+esc(cid)+'"'+(v.categoria_id===cid?" selected":"")+'>'+esc(cid+" · "+nm)+'</option>';}).join("");
+    var attrInputs=obl.map(function(a){
+      var opts=(a.values||[]).map(function(val){return '<option value="'+esc(val)+'">';}).join("");
+      var cur=(v.atributos&&v.atributos[a.id])||"";
+      return '<div class="f"><label>'+esc(a.name||a.id)+' *</label>'+
+        '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
+        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist></div>';}).join("");
+    var fotos=(v.fotos||[]).join("\n");
+    $("dlg-b").innerHTML=
+      '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
+      '<div class="f"><label>Categoría de MercadoLibre *</label>'+
+        '<select id="ed-cat"><option value="">(elegí una)</option>'+catOpts+
+        '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
+        '<input id="ed-cat-manual" placeholder="MLAxxxxxx" style="display:none;margin-top:6px"></div>'+
+      (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
+      '<div class="f"><label>Fotos — una URL por línea *</label>'+
+        '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="kv"><span>Precio de venta</span><b>'+fmt(v.precio_ars)+' ARS</b></div>'+
+      '<div class="kv"><span>Costo puesto / Margen</span><b>'+fmt(v.costo_total_ars)+' · '+(v.margen_pct||0).toFixed(1)+'%</b></div>'+
+      (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
+        :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
+    var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
+    var attrIds=obl.map(function(a){return a.id;});
+    var f=$("dlg-f"); f.innerHTML="";
+    addBtn(f,"Cerrar",function(){$("dlg").close();});
+    addBtn(f,"Guardar",function(){ guardarPub(id,attrIds).then(function(){ previa(id); cargar(); }).catch(err); });
+    addBtn(f,"Aprobar y publicar",function(){ publicarFlow(id,attrIds); },"primary");
+    $("dlg").showModal();
+  }
+
+  function collectPub(attrIds){
+    var sel=$("ed-cat"); var cat=sel.value==="__manual__"?($("ed-cat-manual").value||"").trim():sel.value;
+    var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
+    var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos};
+  }
+  function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
+
+  function publicarFlow(id,attrIds){
+    if(!confirm("Esto va a APROBAR y PUBLICAR el producto en TU cuenta de MercadoLibre (queda visible a la venta). ¿Confirmás?")) return;
+    guardarPub(id,attrIds)
+      .then(function(){ return api("POST","/api/catalogo/"+id+"/borrador",{}); })
+      .then(function(d){ if((d.faltantes||[]).length){ alert("Todavía falta:\n• "+d.faltantes.join("\n• ")); throw "faltan"; }
+        return api("POST","/api/catalogo/"+id+"/aprobar",{}); })
+      .then(function(){ return api("POST","/api/catalogo/"+id+"/publicar",{}); })
+      .then(function(){ $("dlg").close(); cargar(); alert("✅ Publicado en MercadoLibre."); })
+      .catch(function(e){ if(e!=="faltan") alert("No se pudo publicar: "+(typeof e==="string"?e:JSON.stringify(e))); });
+  }
+
+  function historial(id){
+    api("GET","/api/catalogo/"+id+"/historial").then(function(h){
+      $("dlg-h").textContent="Historial de cambios";
+      $("dlg-b").innerHTML='<div class="hist">'+(h.length?h.map(function(x){
+        return '<div>'+x.ts.replace("T"," ").slice(0,16)+' · <b>'+esc(x.tipo)+'</b> '+
+          (x.campo?esc(x.campo)+" ":"")+(x.valor_anterior!=null?esc(x.valor_anterior)+" → ":"")+
+          (x.valor_nuevo!=null?esc(x.valor_nuevo):"")+' '+esc(x.nota||"")+'</div>';
+      }).join(""):"<div>Sin cambios registrados.</div>")+'</div>';
+      var f=$("dlg-f");f.innerHTML="";var c=document.createElement("button");c.textContent="Cerrar";c.onclick=function(){$("dlg").close();};f.appendChild(c);
+      $("dlg").showModal();
+    }).catch(err);
+  }
+
+  $("add").addEventListener("click",add);
+  $("ml-code").addEventListener("click",pegarCodigo);
+  mlStatus(); cargar();
+})();
+</script>
+</body>
+</html>

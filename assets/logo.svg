@@ -1,0 +1,32 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#12916F"/>
+      <stop offset="1" stop-color="#0C6B57"/>
+    </linearGradient>
+    <linearGradient id="box" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EDEFEF"/>
+    </linearGradient>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#003326" flood-opacity="0.35"/>
+    </filter>
+    <marker id="head" markerWidth="4.2" markerHeight="4.2" refX="1.6" refY="2.1" orient="auto">
+      <path d="M0 0 L4 2.1 L0 4.2 L1.4 2.1 Z" fill="#5AE9B9"/>
+    </marker>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+
+  <!-- flecha de margen / crecimiento -->
+  <path d="M146 200 Q252 104 360 156" fill="none" stroke="#5AE9B9"
+        stroke-width="24" stroke-linecap="round" marker-end="url(#head)"/>
+
+  <!-- caja / paquete -->
+  <g filter="url(#sh)">
+    <rect x="150" y="216" width="212" height="38" rx="10" fill="#E4E7E8"/>
+    <rect x="150" y="250" width="212" height="148" rx="15" fill="url(#box)"/>
+    <rect x="240" y="216" width="32" height="182" fill="#0E7C66"/>
+    <rect x="150" y="216" width="212" height="15" rx="7" fill="#0E7C66" opacity="0.85"/>
+  </g>
+</svg>

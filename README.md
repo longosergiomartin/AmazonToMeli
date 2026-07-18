@@ -135,6 +135,75 @@ Endpoints: `/productos`, `/search?q=`, `/product/{asin}`, `/history/{asin}`,
 `/export.csv`. Mismo espíritu que Rainforest API, pero corriendo en tu PC,
 gratis y sin scraping.
 
+### Si no podés acceder a localhost
+
+1. Verificá que el servidor esté corriendo: la consola debe decir
+   `Uvicorn running on http://127.0.0.1:8321`.
+2. Probá `http://127.0.0.1:8321` en vez de `localhost` (los proxies
+   corporativos a veces resuelven mal el nombre `localhost`).
+3. Probá un puerto estándar: `python -m api.server --puerto 8080` y entrá a
+   `http://127.0.0.1:8080`. El bookmarklet se adapta solo al host/puerto con
+   el que entraste.
+4. Si estás en una **computadora del trabajo** y el bloqueo viene del firewall
+   o antivirus corporativo, no intentes desactivarlos: pedile la excepción al
+   área de IT, o usá la app en tu PC personal.
+
+## Panel de publicación en MercadoLibre
+
+Convierte los productos identificados en Amazon en **publicaciones de tu cuenta
+de MercadoLibre**, con costo en pesos, precio sugerido por margen deseado,
+vista previa y **publicación solo tras tu aprobación manual**.
+
+```bash
+python -m api.server        # abrí http://localhost:8321/panel
+```
+
+Qué hace:
+
+- **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
+  peso, costo de envío, disponibilidad.
+- **Costo total en pesos** automático (tipo de cambio + dólar tarjeta + envío +
+  importación) reutilizando el motor de arbitraje.
+- **Precio sugerido** a partir de tu *margen deseado* (despeja comisión, IVA,
+  IIBB, Ganancias y envío de MeLi).
+- **Borrador local + vista previa** con categoría y atributos obligatorios; se
+  **publica recién cuando lo aprobás** (nunca en un solo paso).
+- **Editar precio y stock**, **pausar/reactivar**, **alerta de margen
+  insuficiente** e **historial de cambios** por producto.
+
+> La primera versión **no compra en Amazon** ni **publica sin aprobación**.
+
+### Conectar tu cuenta (OAuth)
+
+1. Creá una aplicación en https://developers.mercadolibre.com.ar/ y anotá el
+   **App ID** (client id) y la **Secret Key**.
+2. Configurá la app así:
+   - **Redirect URI**: `https://oauth.pstmn.io/v1/callback`
+     (MercadoLibre exige HTTPS y no acepta `localhost` ni IPs locales en el
+     authorize. Esta URL pública de callback solo sirve para leer el `?code=`;
+     después completás con **Pegar código**. En producción usá tu dominio.)
+   - **Flujos OAuth**: tildá **Authorization Code** y **Refresh Token**.
+   - **Negocios**: tildá **Mercado Libre**.
+   - **Permisos**: *Usuarios* y *Publicación y sincronización* → **Lectura y
+     escritura**. El resto podés dejarlo en *Sin acceso*.
+3. Antes de levantar el servidor, exportá tus credenciales (no se commitean):
+
+   ```bash
+   export MELI_CLIENT_ID="tu_app_id"
+   export MELI_CLIENT_SECRET="tu_secret_key"
+   export MELI_REDIRECT_URI="https://127.0.0.1:8321/oauth/callback"
+   python -m api.server
+   ```
+4. En el panel, tocá **Conectar** → autorizás en MercadoLibre. Como el redirect
+   es HTTPS y en local no hay servidor HTTPS, el navegador va a mostrar un
+   error al volver — **es normal**: copiá la URL completa de la barra de
+   direcciones (la que tiene `?code=...`), tocá **Pegar código** en el panel y
+   pegala. Listo, el token queda guardado y se renueva solo.
+
+Sin credenciales, el panel igual sirve para registrar productos, calcular
+costos, precios y márgenes y armar borradores; solo la publicación real y la
+predicción de categoría requieren la sesión de MercadoLibre.
+
 ## Dashboard web (opcional)
 
 ```bash
