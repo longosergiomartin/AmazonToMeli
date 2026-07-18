@@ -177,18 +177,26 @@ Qué hace:
 
 1. Creá una aplicación en https://developers.mercadolibre.com.ar/ y anotá el
    **App ID** (client id) y la **Secret Key**.
-2. En la app de MercadoLibre configurá la **Redirect URI**:
-   `http://localhost:8321/oauth/callback`.
+2. Configurá la app así:
+   - **Redirect URI**: `https://127.0.0.1:8321/oauth/callback`
+     (MercadoLibre exige HTTPS y **no acepta** `localhost`).
+   - **Flujos OAuth**: tildá **Authorization Code** y **Refresh Token**.
+   - **Negocios**: tildá **Mercado Libre**.
+   - **Permisos**: *Usuarios* y *Publicación y sincronización* → **Lectura y
+     escritura**. El resto podés dejarlo en *Sin acceso*.
 3. Antes de levantar el servidor, exportá tus credenciales (no se commitean):
 
    ```bash
    export MELI_CLIENT_ID="tu_app_id"
    export MELI_CLIENT_SECRET="tu_secret_key"
-   export MELI_REDIRECT_URI="http://localhost:8321/oauth/callback"
+   export MELI_REDIRECT_URI="https://127.0.0.1:8321/oauth/callback"
    python -m api.server
    ```
-4. En el panel, tocá **Conectar** → autorizás en MercadoLibre → volvés listo
-   para publicar. El token se guarda y se renueva solo.
+4. En el panel, tocá **Conectar** → autorizás en MercadoLibre. Como el redirect
+   es HTTPS y en local no hay servidor HTTPS, el navegador va a mostrar un
+   error al volver — **es normal**: copiá la URL completa de la barra de
+   direcciones (la que tiene `?code=...`), tocá **Pegar código** en el panel y
+   pegala. Listo, el token queda guardado y se renueva solo.
 
 Sin credenciales, el panel igual sirve para registrar productos, calcular
 costos, precios y márgenes y armar borradores; solo la publicación real y la

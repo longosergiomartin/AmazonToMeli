@@ -77,6 +77,7 @@
     <div class="ml">
       <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
       <button class="sm" id="ml-btn" type="button">Conectar</button>
+      <button class="sm" id="ml-code" type="button" title="Pegar el código del callback">Pegar código</button>
     </div>
   </div>
 
@@ -131,10 +132,19 @@
       $("ml-dot").className="dot"+(s.conectado?" on":"");
       $("ml-txt").textContent="MercadoLibre: "+(s.conectado?"conectado":(s.configurado?"sin conectar":"sin credenciales"));
       $("ml-btn").textContent=s.conectado?"Desconectar":"Conectar";
+      $("ml-code").style.display=s.conectado?"none":"";
       $("ml-btn").onclick=s.conectado
         ? function(){ api("POST","/oauth/logout").then(mlStatus); }
-        : function(){ if(!s.configurado){alert("Falta configurar MELI_CLIENT_ID y MELI_CLIENT_SECRET en el servidor (ver README).");return;} location.href="/oauth/login"; };
+        : function(){ if(!s.configurado){alert("Falta configurar MELI_CLIENT_ID y MELI_CLIENT_SECRET en el servidor (ver README).");return;} window.open("/oauth/login","_blank"); };
     });
+  }
+  function pegarCodigo(){
+    var v=prompt("Pegá el CÓDIGO del callback, o la URL completa de la barra de direcciones "
+      +"(la que empieza con https://127.0.0.1:8321/oauth/callback?code=...):");
+    if(!v) return;
+    var body = v.indexOf("http")===0 ? {url:v} : {code:v};
+    api("POST","/oauth/code",body).then(function(){ alert("✅ MercadoLibre conectado."); mlStatus(); })
+      .catch(function(e){ alert("No se pudo conectar: "+(typeof e==="string"?e:JSON.stringify(e))); });
   }
 
   function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:0;}
@@ -234,6 +244,7 @@
   }
 
   $("add").addEventListener("click",add);
+  $("ml-code").addEventListener("click",pegarCodigo);
   mlStatus(); cargar();
 })();
 </script>

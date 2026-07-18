@@ -44,8 +44,10 @@ class MeliCredenciales:
         """Lee MELI_CLIENT_ID / MELI_CLIENT_SECRET / MELI_REDIRECT_URI."""
         cid = os.environ.get("MELI_CLIENT_ID", "")
         sec = os.environ.get("MELI_CLIENT_SECRET", "")
+        # MercadoLibre exige HTTPS y no acepta "localhost"; usamos la IP local.
+        # Debe coincidir EXACTO con la Redirect URI registrada en la app.
         uri = os.environ.get("MELI_REDIRECT_URI",
-                             "http://localhost:8321/oauth/callback")
+                             "https://127.0.0.1:8321/oauth/callback")
         return cls(cid, sec, uri)
 
     @property

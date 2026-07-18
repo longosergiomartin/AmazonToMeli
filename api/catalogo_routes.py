@@ -55,6 +55,12 @@ class Borrador(BaseModel):
     listing_type_id: str = "gold_special"
 
 
+class CodigoOAuth(BaseModel):
+    # Se puede pegar el `code` suelto o la URL completa del callback.
+    code: str = ""
+    url: str = ""
+
+
 def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
                        cfg: Config = CONFIG_DEFAULT) -> None:
     cat = Catalogo(conn, cfg=cfg)
@@ -104,6 +110,26 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         oauth.intercambiar_codigo(code)
         return HTMLResponse("<h1>✅ MercadoLibre conectado</h1>"
                             "<p>Ya podés cerrar esta pestaña y volver al panel.</p>")
+
+    @app.post("/oauth/code")
+    def oauth_code(body: CodigoOAuth):
+        """Alta de sesión pegando el `code` (o la URL del callback) a mano.
+        Útil en local, donde el redirect HTTPS no llega al servidor: el usuario
+        copia el code de la barra de direcciones y lo pega acá."""
+        from urllib.parse import urlparse, parse_qs
+        code = body.code.strip()
+        if not code and body.url:
+            qs = parse_qs(urlparse(body.url.strip()).query)
+            code = (qs.get("code") or [""])[0]
+        if not code:
+            raise HTTPException(400, "Pegá el 'code' o la URL completa del callback.")
+        if not cred.configurado:
+            raise HTTPException(400, "Faltan credenciales de MercadoLibre.")
+        try:
+            oauth.intercambiar_codigo(code)
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        return {"conectado": True}
 
     @app.post("/oauth/logout")
     def oauth_logout():

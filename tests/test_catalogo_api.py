@@ -78,6 +78,16 @@ def test_oauth_status_sin_credenciales(client):
     assert s["configurado"] is False and s["conectado"] is False
 
 
+def test_oauth_code_sin_code_da_400(client):
+    assert client.post("/oauth/code", json={}).status_code == 400
+
+
+def test_oauth_code_sin_credenciales_da_400(client):
+    # Con code pero sin MELI_CLIENT_ID/SECRET configurados.
+    r = client.post("/oauth/code", json={"url": "https://127.0.0.1:8321/oauth/callback?code=ABC123"})
+    assert r.status_code == 400
+
+
 def test_pausar_sin_publicar_cambia_estado_local(client):
     pid = _alta(client).json()["id"]
     r = client.post(f"/api/catalogo/{pid}/pausar")
