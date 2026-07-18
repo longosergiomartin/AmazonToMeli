@@ -34,9 +34,11 @@
   @media(min-width:620px){.grid2{grid-template-columns:1fr 1fr}}
   .f{display:flex;flex-direction:column;gap:5px}
   label{font-size:.82rem;font-weight:500}
-  input,select{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;font-size:.92rem;width:100%}
+  input,select,textarea{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;font-size:.92rem;width:100%}
+  textarea{font-family:var(--mono);font-size:.82rem;resize:vertical}
   input[type=number]{font-family:var(--mono)}
-  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:1px}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .dlg-b .f{margin-bottom:12px}
   button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 14px;font-weight:600;font-size:.86rem}
   button.primary{background:var(--accent);color:#fff;border-color:transparent}
   @media(prefers-color-scheme:dark){button.primary{color:#0d0f13}}
@@ -198,36 +200,64 @@
   function err(e){ alert("Error: "+(typeof e==="string"?e:JSON.stringify(e))); }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 
+  function addBtn(parent,txt,fn,cls){var b=document.createElement("button");if(cls)b.className=cls;b.textContent=txt;b.onclick=fn;parent.appendChild(b);return b;}
+
   function previa(id){
-    var pics=prompt("URLs de fotos separadas por coma (podés dejar vacío para probar):","");
-    var pictures=(pics||"").split(",").map(function(s){return s.trim();}).filter(Boolean);
-    api("POST","/api/catalogo/"+id+"/borrador",{pictures:pictures}).then(function(d){
-      var v=d.preview, faltan=d.faltantes||[];
-      var cats=(d.categorias_sugeridas||[]).map(function(c){return c.category_id+" · "+(c.category_name||c.domain_name||"");});
-      $("dlg-h").textContent="Vista previa · "+(v.titulo||"(sin título)");
-      $("dlg-b").innerHTML=
-        '<div class="kv"><span>Categoría</span><b>'+esc(v.categoria_id||"(elegí una)")+'</b></div>'+
-        '<div class="kv"><span>Precio</span><b>'+fmt(v.precio_ars)+' '+v.moneda+'</b></div>'+
-        '<div class="kv"><span>Stock</span><b>'+v.stock+'</b></div>'+
-        '<div class="kv"><span>Marca / Modelo</span><b>'+esc((v.marca||"—")+" / "+(v.modelo||"—"))+'</b></div>'+
-        '<div class="kv"><span>Costo puesto</span><b>'+fmt(v.costo_total_ars)+'</b></div>'+
-        '<div class="kv"><span>Margen</span><b>'+(v.margen_pct||0).toFixed(1)+'%</b></div>'+
-        (cats.length?'<details open><summary>Categorías sugeridas por MercadoLibre</summary><div class="hist">'+cats.map(function(x){return '<div>'+esc(x)+'</div>';}).join("")+'</div></details>':"")+
-        (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>':'<p class="msg" style="color:var(--good)">✓ Listo para aprobar y publicar.</p>');
-      var f=$("dlg-f"); f.innerHTML="";
-      var cerrar=document.createElement("button");cerrar.textContent="Cerrar";cerrar.onclick=function(){$("dlg").close();};
-      var aprobar=document.createElement("button");aprobar.className="primary";aprobar.textContent="Aprobar y publicar";
-      aprobar.disabled=faltan.length>0;
-      aprobar.onclick=function(){
-        if(!confirm("Esto va a APROBAR y PUBLICAR el producto en tu cuenta de MercadoLibre. ¿Confirmás?"))return;
-        api("POST","/api/catalogo/"+id+"/aprobar",{}).then(function(){
-          return api("POST","/api/catalogo/"+id+"/publicar",{pictures:pictures});
-        }).then(function(){ $("dlg").close(); cargar(); alert("✅ Publicado en MercadoLibre."); })
-          .catch(function(e){ alert("No se pudo publicar: "+(typeof e==="string"?e:JSON.stringify(e))); });
-      };
-      f.appendChild(cerrar); f.appendChild(aprobar);
-      $("dlg").showModal();
-    }).catch(err);
+    api("POST","/api/catalogo/"+id+"/borrador",{}).then(function(d){ editor(id,d); }).catch(err);
+  }
+
+  function editor(id,d){
+    var v=d.preview, faltan=d.faltantes||[], sug=d.categorias_sugeridas||[], obl=(d.atributos_obligatorios||[]);
+    obl=obl.filter(function(a){return a.id!=="BRAND"&&a.id!=="MODEL";});
+    $("dlg-h").textContent="Editar y publicar · "+(v.titulo||"(sin título)");
+    var catOpts=sug.map(function(c){var cid=c.category_id||c.id||""; var nm=c.category_name||c.domain_name||"";
+      return '<option value="'+esc(cid)+'"'+(v.categoria_id===cid?" selected":"")+'>'+esc(cid+" · "+nm)+'</option>';}).join("");
+    var attrInputs=obl.map(function(a){
+      var opts=(a.values||[]).map(function(val){return '<option value="'+esc(val)+'">';}).join("");
+      var cur=(v.atributos&&v.atributos[a.id])||"";
+      return '<div class="f"><label>'+esc(a.name||a.id)+' *</label>'+
+        '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
+        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist></div>';}).join("");
+    var fotos=(v.fotos||[]).join("\n");
+    $("dlg-b").innerHTML=
+      '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
+      '<div class="f"><label>Categoría de MercadoLibre *</label>'+
+        '<select id="ed-cat"><option value="">(elegí una)</option>'+catOpts+
+        '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
+        '<input id="ed-cat-manual" placeholder="MLAxxxxxx" style="display:none;margin-top:6px"></div>'+
+      (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
+      '<div class="f"><label>Fotos — una URL por línea *</label>'+
+        '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="kv"><span>Precio de venta</span><b>'+fmt(v.precio_ars)+' ARS</b></div>'+
+      '<div class="kv"><span>Costo puesto / Margen</span><b>'+fmt(v.costo_total_ars)+' · '+(v.margen_pct||0).toFixed(1)+'%</b></div>'+
+      (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
+        :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
+    var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
+    var attrIds=obl.map(function(a){return a.id;});
+    var f=$("dlg-f"); f.innerHTML="";
+    addBtn(f,"Cerrar",function(){$("dlg").close();});
+    addBtn(f,"Guardar",function(){ guardarPub(id,attrIds).then(function(){ previa(id); cargar(); }).catch(err); });
+    addBtn(f,"Aprobar y publicar",function(){ publicarFlow(id,attrIds); },"primary");
+    $("dlg").showModal();
+  }
+
+  function collectPub(attrIds){
+    var sel=$("ed-cat"); var cat=sel.value==="__manual__"?($("ed-cat-manual").value||"").trim():sel.value;
+    var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
+    var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos};
+  }
+  function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
+
+  function publicarFlow(id,attrIds){
+    if(!confirm("Esto va a APROBAR y PUBLICAR el producto en TU cuenta de MercadoLibre (queda visible a la venta). ¿Confirmás?")) return;
+    guardarPub(id,attrIds)
+      .then(function(){ return api("POST","/api/catalogo/"+id+"/borrador",{}); })
+      .then(function(d){ if((d.faltantes||[]).length){ alert("Todavía falta:\n• "+d.faltantes.join("\n• ")); throw "faltan"; }
+        return api("POST","/api/catalogo/"+id+"/aprobar",{}); })
+      .then(function(){ return api("POST","/api/catalogo/"+id+"/publicar",{}); })
+      .then(function(){ $("dlg").close(); cargar(); alert("✅ Publicado en MercadoLibre."); })
+      .catch(function(e){ if(e!=="faltan") alert("No se pudo publicar: "+(typeof e==="string"?e:JSON.stringify(e))); });
   }
 
   function historial(id){

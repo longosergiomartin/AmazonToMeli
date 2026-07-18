@@ -61,6 +61,13 @@ class CodigoOAuth(BaseModel):
     url: str = ""
 
 
+class Publicacion(BaseModel):
+    titulo_ml: Optional[str] = None
+    ml_category_id: Optional[str] = None
+    ml_attributes: Optional[dict] = None
+    pictures: Optional[list[str]] = None
+
+
 def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
                        cfg: Config = CONFIG_DEFAULT) -> None:
     cat = Catalogo(conn, cfg=cfg)
@@ -190,6 +197,7 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
     def borrador(pid: int, body: Borrador):
         p = _p(pid)
         cat.cambiar_estado(pid, "borrador", "Generó borrador")
+        pics = body.pictures or p.pictures
         sugeridas, obligatorios = [], []
         if store.hay_sesion() and cred.configurado:
             try:
@@ -200,10 +208,16 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
                     obligatorios = cli.atributos_obligatorios(catid)
             except (MeliAPIError, HTTPException):
                 pass  # sin conexión seguimos con carga manual de categoría
-        preview = vista_previa(p, pictures=body.pictures)
-        faltan = faltantes_para_publicar(p, obligatorios, body.pictures)
+        preview = vista_previa(p, pictures=pics)
+        faltan = faltantes_para_publicar(p, obligatorios, pics)
         return {"preview": preview, "categorias_sugeridas": sugeridas,
                 "atributos_obligatorios": obligatorios, "faltantes": faltan}
+
+    @app.patch("/api/catalogo/{pid}/publicacion")
+    def editar_publicacion(pid: int, body: Publicacion):
+        _p(pid)
+        datos = {k: v for k, v in body.model_dump().items() if v is not None}
+        return _dict(cat.actualizar_publicacion(pid, **datos))
 
     @app.post("/api/catalogo/{pid}/aprobar")
     def aprobar(pid: int):
@@ -216,11 +230,12 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         if p.estado != "aprobado":
             raise HTTPException(409, "El producto debe estar APROBADO antes de "
                                 "publicar. Revisá la vista previa y aprobalo.")
-        faltan = faltantes_para_publicar(p, None, body.pictures)
+        pics = body.pictures or p.pictures
+        faltan = faltantes_para_publicar(p, None, pics)
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
         cli = _client()  # exige sesión OAuth
-        item = construir_item(p, pictures=body.pictures,
+        item = construir_item(p, pictures=pics,
                               listing_type_id=body.listing_type_id)
         try:
             creado = cli.publicar(item)

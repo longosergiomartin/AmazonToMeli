@@ -55,6 +55,7 @@ class ProductoCatalogo:
     titulo_ml: str = ""
     ml_category_id: str = ""
     ml_attributes: dict = field(default_factory=dict)
+    pictures: list = field(default_factory=list)
     # --- calculados / estado (los llena el servicio) ---
     id: Optional[int] = None
     costo_total_ars: float = 0.0
@@ -89,6 +90,7 @@ class Catalogo:
                 disponibilidad TEXT, regimen TEXT, arancel_pct REAL,
                 categoria TEXT, margen_deseado REAL, stock INTEGER,
                 titulo_ml TEXT, ml_category_id TEXT, ml_attributes TEXT,
+                pictures TEXT,
                 costo_total_ars REAL, precio_sugerido_ars REAL,
                 precio_publicado_ars REAL, margen_pct REAL,
                 estado TEXT, ml_item_id TEXT, ml_permalink TEXT
@@ -100,6 +102,10 @@ class Catalogo:
                 valor_anterior TEXT, valor_nuevo TEXT, nota TEXT
             );
         """)
+        # Migración para bases creadas antes de la columna pictures.
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(catalogo)").fetchall()]
+        if "pictures" not in cols:
+            self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
         self.conn.commit()
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
@@ -140,16 +146,19 @@ class Catalogo:
     def _fila_a_producto(self, row: sqlite3.Row) -> ProductoCatalogo:
         d = dict(row)
         attrs = json.loads(d.pop("ml_attributes") or "{}")
+        pics = json.loads(d.pop("pictures") or "[]")
         d.pop("creado", None); d.pop("actualizado", None)
-        return ProductoCatalogo(ml_attributes=attrs, **{k: d[k] for k in d})
+        return ProductoCatalogo(ml_attributes=attrs, pictures=pics,
+                                **{k: d[k] for k in d})
 
     def agregar(self, p: ProductoCatalogo) -> ProductoCatalogo:
         self._calcular(p)
         vals = [getattr(p, c) for c in self._CAMPOS]
         cur = self.conn.execute(
-            f"""INSERT INTO catalogo (creado, actualizado, ml_attributes, {','.join(self._CAMPOS)})
-                VALUES (?, ?, ?, {','.join('?' * len(self._CAMPOS))})""",
-            [_ahora(), _ahora(), json.dumps(p.ml_attributes)] + vals,
+            f"""INSERT INTO catalogo (creado, actualizado, ml_attributes, pictures, {','.join(self._CAMPOS)})
+                VALUES (?, ?, ?, ?, {','.join('?' * len(self._CAMPOS))})""",
+            [_ahora(), _ahora(), json.dumps(p.ml_attributes),
+             json.dumps(p.pictures)] + vals,
         )
         self.conn.commit()
         p.id = cur.lastrowid
@@ -168,8 +177,8 @@ class Catalogo:
         sets = ", ".join(f"{c} = ?" for c in self._CAMPOS)
         vals = [getattr(p, c) for c in self._CAMPOS]
         self.conn.execute(
-            f"UPDATE catalogo SET actualizado = ?, ml_attributes = ?, {sets} WHERE id = ?",
-            [_ahora(), json.dumps(p.ml_attributes)] + vals + [p.id],
+            f"UPDATE catalogo SET actualizado = ?, ml_attributes = ?, pictures = ?, {sets} WHERE id = ?",
+            [_ahora(), json.dumps(p.ml_attributes), json.dumps(p.pictures)] + vals + [p.id],
         )
         self.conn.commit()
 
@@ -195,6 +204,26 @@ class Catalogo:
         return [dict(r) for r in rows]
 
     # ---- operaciones de negocio -----------------------------------------
+
+    def actualizar_publicacion(self, pid: int, titulo_ml=None, ml_category_id=None,
+                               ml_attributes=None, pictures=None) -> ProductoCatalogo:
+        """Completa/edita los datos necesarios para publicar: título, categoría
+        de MercadoLibre, atributos obligatorios y fotos."""
+        p = self.obtener(pid)
+        if not p:
+            raise KeyError(pid)
+        if titulo_ml is not None:
+            p.titulo_ml = titulo_ml
+        if ml_category_id is not None:
+            p.ml_category_id = ml_category_id
+        if ml_attributes is not None:
+            p.ml_attributes = ml_attributes
+        if pictures is not None:
+            p.pictures = pictures
+        self._guardar(p)
+        self._log(pid, "publicacion", nota="Datos de publicación actualizados "
+                  f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")
+        return p
 
     def recalcular(self, pid: int) -> ProductoCatalogo:
         p = self.obtener(pid)

@@ -92,3 +92,31 @@ def test_pausar_sin_publicar_cambia_estado_local(client):
     pid = _alta(client).json()["id"]
     r = client.post(f"/api/catalogo/{pid}/pausar")
     assert r.status_code == 200 and r.json()["estado"] == "pausado"
+
+
+def test_editar_publicacion_completa_faltantes(client):
+    pid = _alta(client, titulo_ml="Waders HISEA").json()["id"]
+    # Faltan categoría, foto y atributos.
+    b0 = client.post(f"/api/catalogo/{pid}/borrador", json={}).json()
+    assert b0["faltantes"]
+    # Cargamos categoría, atributos y foto.
+    r = client.patch(f"/api/catalogo/{pid}/publicacion", json={
+        "ml_category_id": "MLA66238",
+        "ml_attributes": {"GENDER": "Hombre", "COLOR": "Camuflado", "SIZE": "44"},
+        "pictures": ["https://img/1.jpg"],
+    })
+    assert r.status_code == 200
+    p = client.get(f"/api/catalogo/{pid}").json()
+    assert p["ml_category_id"] == "MLA66238" and p["pictures"] == ["https://img/1.jpg"]
+    # Sin sesión ML no hay atributos obligatorios remotos: los básicos ya están.
+    b1 = client.post(f"/api/catalogo/{pid}/borrador", json={}).json()
+    assert not b1["faltantes"]
+
+
+def test_pictures_persisten_para_publicar(client):
+    pid = _alta(client, titulo_ml="Waders", ml_category_id="MLA1").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["https://img/1.jpg"]})
+    client.post(f"/api/catalogo/{pid}/aprobar")
+    # Publicar sin pasar pictures en el body: usa las guardadas → llega a pedir sesión ML.
+    r = client.post(f"/api/catalogo/{pid}/publicar", json={})
+    assert r.status_code in (400, 401)  # faltaría solo la sesión de ML, no las fotos
