@@ -28,6 +28,9 @@
   .ml{display:flex;align-items:center;gap:10px;font-size:.85rem}
   .dot{width:9px;height:9px;border-radius:50%;background:var(--bad)}
   .dot.on{background:var(--good)}
+  .cotiz{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 14px;margin-bottom:18px;font-size:.86rem}
+  .cotiz b{font-family:var(--mono)}
+  .cotiz .muted{color:var(--muted);font-size:.78rem}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
   h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 14px;font-weight:700}
   .grid2{display:grid;grid-template-columns:1fr;gap:12px}
@@ -83,10 +86,20 @@
     </div>
   </div>
 
+  <div class="cotiz" id="cotiz">
+    <span>💵 Cargando cotización del dólar…</span>
+    <button class="sm" id="cotiz-refrescar" type="button">↻ Actualizar</button>
+  </div>
+
   <div class="card">
     <h2>Registrar producto de Amazon</h2>
     <div class="grid2">
-      <div class="f"><label>Link de Amazon</label><input id="amazon_link" placeholder="https://amazon.com/dp/..."></div>
+      <div class="f"><label>Link de Amazon</label>
+        <div style="display:flex;gap:8px">
+          <input id="amazon_link" placeholder="https://amazon.com/dp/..." style="flex:1">
+          <button type="button" id="traer" class="sm" style="white-space:nowrap">Traer datos</button>
+        </div>
+        <span class="hint" id="traer-msg"></span></div>
       <div class="f"><label>ASIN</label><input id="asin" placeholder="B0BBHHT8LY"></div>
       <div class="f"><label>Marca</label><input id="marca" placeholder="HISEA"></div>
       <div class="f"><label>Modelo</label><input id="modelo" placeholder="Waders neopreno con botas"></div>
@@ -155,6 +168,39 @@
       .catch(function(e){ alert("No se pudo conectar: "+(typeof e==="string"?e:JSON.stringify(e))); });
   }
 
+  function renderCotiz(c){
+    var hora=(c.actualizado||"").replace("T"," ").slice(11,16);
+    $("cotiz").querySelector("span").innerHTML=
+      "💵 Dólar oficial <b>$"+Math.round(c.oficial).toLocaleString("es-AR")+"</b> · "+
+      "tarjeta <b>$"+Math.round(c.tarjeta).toLocaleString("es-AR")+"</b> "+
+      "<span class='muted'>("+esc(c.fuente)+(c.online?"":" — offline")+" "+hora+" UTC)</span>";
+  }
+  function cargarCotiz(refrescar){
+    api(refrescar?"POST":"GET", refrescar?"/api/cotizacion/refrescar":"/api/cotizacion")
+      .then(function(c){ renderCotiz(c); if(refrescar) cargar(); }).catch(function(){});
+  }
+  function traerDatos(){
+    var url=($("amazon_link").value||"").trim();
+    if(!url){ $("traer-msg").textContent="Pegá el link de Amazon primero."; return; }
+    $("traer-msg").textContent="Buscando en Amazon…";
+    api("POST","/api/amazon/importar",{url:url}).then(function(d){
+      if(d.asin) $("asin").value=d.asin;
+      if(d.marca) $("marca").value=d.marca;
+      if(d.modelo){ $("modelo").value=d.modelo; if(!$("titulo_ml").value)$("titulo_ml").value=d.modelo; }
+      if(d.precio_usd) $("precio_usd").value=d.precio_usd;
+      if(d.peso_kg) $("peso_kg").value=d.peso_kg;
+      $("traer-msg").textContent=d.mensaje||"";
+    }).catch(function(e){ $("traer-msg").textContent="No se pudo: "+(typeof e==="string"?e:JSON.stringify(e)); });
+  }
+  function renderComp(comp,into){
+    if(!comp||!into){ if(into)into.innerHTML=""; return; }
+    function fila(nombre,o){ var cls=o.margen_pct<0?"bad":(o.margen_pct<30?"warn":"good");
+      return '<div class="kv"><span>'+nombre+' <span class="muted">(TC $'+Math.round(o.tc).toLocaleString("es-AR")+')</span></span>'+
+        '<b style="color:var(--'+cls+')">'+fmt(o.costo_ars)+' · '+o.margen_pct.toFixed(1)+'%</b></div>'; }
+    into.innerHTML='<div style="margin-top:10px;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Comparación de dólar (costo · margen)</div>'+
+      fila("Dólar tarjeta",comp.tarjeta)+fila("Dólar oficial",comp.oficial);
+  }
+
   function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:0;}
   function add(){
     var body={amazon_link:$("amazon_link").value,asin:$("asin").value,marca:$("marca").value,
@@ -214,11 +260,14 @@
 
   function addBtn(parent,txt,fn,cls){var b=document.createElement("button");if(cls)b.className=cls;b.textContent=txt;b.onclick=fn;parent.appendChild(b);return b;}
 
-  function previa(id){
-    api("POST","/api/catalogo/"+id+"/borrador",{}).then(function(d){ editor(id,d); }).catch(err);
+  function previa(pid){
+    api("GET","/api/catalogo/"+pid).then(function(p){
+      return api("POST","/api/catalogo/"+pid+"/borrador",{}).then(function(d){ editor(p,d); });
+    }).catch(err);
   }
 
-  function editor(id,d){
+  function editor(p,d){
+    var id=p.id;
     var v=d.preview, faltan=d.faltantes||[], sug=d.categorias_sugeridas||[], obl=(d.atributos_obligatorios||[]);
     obl=obl.filter(function(a){return a.id!=="BRAND"&&a.id!=="MODEL";});
     $("dlg-h").textContent="Editar y publicar · "+(v.titulo||"(sin título)");
@@ -245,6 +294,7 @@
         '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el margen se recalcula abajo.</span></div>'+
       '<div class="kv"><span>Costo puesto</span><b>'+fmt(v.costo_total_ars)+'</b></div>'+
       '<div class="kv"><span>Margen a ese precio</span><b id="ed-margen">—</b></div>'+
+      '<div id="ed-comp"></div>'+
       (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
         :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
     var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
@@ -253,10 +303,12 @@
       m.textContent=fmt(ars)+"  ("+pct.toFixed(1)+"%)";
       m.style.color = pct<0?"var(--bad)":(pct<30?"var(--warn)":"var(--good)"); }
     pintarMargen(v.margen_pct||0, v.costo_total_ars);
+    renderComp(p.comparacion, $("ed-comp"));
     $("ed-precio").addEventListener("change",function(){
       var precio=parseFloat(this.value)||0;
-      api("PATCH","/api/catalogo/"+id+"/precio",{precio:precio}).then(function(p){
-        pintarMargen(p.margen_pct||0, p.costo_total_ars); cargar();
+      api("PATCH","/api/catalogo/"+id+"/precio",{precio:precio}).then(function(pr){
+        pintarMargen(pr.margen_pct||0, pr.costo_total_ars);
+        renderComp(pr.comparacion, $("ed-comp")); cargar();
       }).catch(err);
     });
     var attrIds=obl.map(function(a){return a.id;});
@@ -301,7 +353,9 @@
 
   $("add").addEventListener("click",add);
   $("ml-code").addEventListener("click",pegarCodigo);
-  mlStatus(); cargar();
+  $("traer").addEventListener("click",traerDatos);
+  $("cotiz-refrescar").addEventListener("click",function(){cargarCotiz(true);});
+  mlStatus(); cargarCotiz(false); cargar();
 })();
 </script>
 </body>

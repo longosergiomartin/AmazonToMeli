@@ -19,6 +19,8 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
 from arbitraje.config import Config, CONFIG_DEFAULT
+from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
+from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError
@@ -70,10 +72,16 @@ class Publicacion(BaseModel):
 
 def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
                        cfg: Config = CONFIG_DEFAULT) -> None:
-    cat = Catalogo(conn, cfg=cfg)
+    cat = Catalogo(conn, cfg=cfg, cotizacion=obtener_cotizaciones(cfg))
     cred = MeliCredenciales.desde_entorno()
     store = TokenStore(conn)
     oauth = MeliOAuth(cred, store)
+
+    def _cotizacion(refrescar: bool = False) -> dict:
+        if refrescar:
+            invalidar_cache()
+        cat.cotizacion = obtener_cotizaciones(cfg)
+        return cat.cotizacion
 
     def _client() -> MeliClient:
         if not cred.configurado:
@@ -93,6 +101,7 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
     def _dict(p: ProductoCatalogo) -> dict:
         d = p.__dict__.copy()
         d["margen_insuficiente"] = cat.margen_insuficiente(p)
+        d["comparacion"] = cat.comparacion_dolar(p)
         return d
 
     # ---- OAuth -----------------------------------------------------------
@@ -142,6 +151,23 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
     def oauth_logout():
         store.borrar()
         return {"conectado": False}
+
+    # ---- cotización del dólar --------------------------------------------
+
+    @app.get("/api/cotizacion")
+    def cotizacion():
+        return _cotizacion()
+
+    @app.post("/api/cotizacion/refrescar")
+    def cotizacion_refrescar():
+        return _cotizacion(refrescar=True)
+
+    # ---- importar datos desde un link de Amazon --------------------------
+
+    @app.post("/api/amazon/importar")
+    def amazon_importar(body: dict):
+        url = (body or {}).get("url", "")
+        return importar_desde_url(url)
 
     # ---- catálogo --------------------------------------------------------
 
@@ -245,10 +271,21 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             raise HTTPException(409, "El producto debe estar APROBADO antes de "
                                 "publicar. Revisá la vista previa y aprobalo.")
         pics = body.pictures or p.pictures
+        # 1) Datos básicos (título/categoría/precio/foto): no requieren ML.
         faltan = faltantes_para_publicar(p, None, pics)
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
         cli = _client()  # exige sesión OAuth
+        # 2) Atributos obligatorios reales de la categoría (GTIN, cantidad de
+        #    piezas, etc.) para no mandar algo que ML va a rechazar.
+        obligatorios = []
+        try:
+            obligatorios = cli.atributos_obligatorios(p.ml_category_id)
+        except MeliAPIError:
+            pass
+        faltan = faltantes_para_publicar(p, obligatorios, pics)
+        if faltan:
+            raise HTTPException(422, {"faltantes": faltan})
         item = construir_item(p, pictures=pics,
                               listing_type_id=body.listing_type_id)
         try:

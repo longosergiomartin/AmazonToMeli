@@ -35,6 +35,19 @@ def test_alta_calcula_costo_y_precio_sugerido(cat):
     assert p.margen_pct == pytest.approx(35.0, abs=1.0)
 
 
+def test_comparacion_dolar_oficial_vs_tarjeta():
+    conn = sqlite3.connect(":memory:")
+    c = Catalogo(conn, cfg=Config(), cotizacion={"oficial": 1000.0, "tarjeta": 1300.0})
+    p = c.agregar(_prod(regimen="landed", precio_usd=839.97, costo_envio_usd=530.36))
+    comp = c.comparacion_dolar(p)
+    assert set(comp) == {"oficial", "tarjeta"}
+    # El costo al oficial es más barato que al tarjeta, en proporción 1000/1300.
+    assert comp["oficial"]["costo_ars"] < comp["tarjeta"]["costo_ars"]
+    assert comp["oficial"]["margen_pct"] > comp["tarjeta"]["margen_pct"]
+    # El costo del producto se calculó con el dólar tarjeta (1300).
+    assert p.costo_total_ars == round(1370.33 * 1300.0, 2)
+
+
 def test_regimen_landed_usa_total_de_amazon_sin_sumar_impuestos(cat):
     # precio 839.97 + envío+import 530.36 = 1370.33 (Total real de Amazon).
     p = cat.agregar(_prod(regimen="landed", precio_usd=839.97,
