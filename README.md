@@ -178,8 +178,10 @@ Qué hace:
 1. Creá una aplicación en https://developers.mercadolibre.com.ar/ y anotá el
    **App ID** (client id) y la **Secret Key**.
 2. Configurá la app así:
-   - **Redirect URI**: `https://127.0.0.1:8321/oauth/callback`
-     (MercadoLibre exige HTTPS y **no acepta** `localhost`).
+   - **Redirect URI**: `https://oauth.pstmn.io/v1/callback`
+     (MercadoLibre exige HTTPS y no acepta `localhost` ni IPs locales en el
+     authorize. Esta URL pública de callback solo sirve para leer el `?code=`;
+     después completás con **Pegar código**. En producción usá tu dominio.)
    - **Flujos OAuth**: tildá **Authorization Code** y **Refresh Token**.
    - **Negocios**: tildá **Mercado Libre**.
    - **Permisos**: *Usuarios* y *Publicación y sincronización* → **Lectura y
