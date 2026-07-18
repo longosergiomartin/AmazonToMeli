@@ -1,0 +1,96 @@
+"""Tests del cliente de MercadoLibre y OAuth con una sesión HTTP falsa."""
+
+import sqlite3
+import time
+
+import pytest
+
+from mercadolibre.client import MeliClient, MeliAPIError
+from mercadolibre.oauth import TokenStore
+
+
+class _FakeResp:
+    def __init__(self, status, data):
+        self.status_code = status
+        self._data = data
+        self.text = str(data)
+
+    def json(self):
+        return self._data
+
+
+class _FakeSession:
+    """Sesión que registra las llamadas y devuelve respuestas programadas."""
+    def __init__(self, respuestas):
+        self.respuestas = respuestas   # lista de (status, data)
+        self.llamadas = []
+
+    def request(self, metodo, url, **kw):
+        self.llamadas.append((metodo, url, kw))
+        status, data = self.respuestas.pop(0)
+        return _FakeResp(status, data)
+
+
+def _client(respuestas):
+    ses = _FakeSession(respuestas)
+    c = MeliClient(token_provider=lambda: "TOKEN", session=ses)
+    return c, ses
+
+
+def test_publicar_manda_post_con_token():
+    c, ses = _client([(201, {"id": "MLA999", "permalink": "http://ml/x"})])
+    item = {"title": "Test", "price": 1000}
+    r = c.publicar(item)
+    assert r["id"] == "MLA999"
+    metodo, url, kw = ses.llamadas[0]
+    assert metodo == "POST" and url.endswith("/items")
+    assert kw["headers"]["Authorization"] == "Bearer TOKEN"
+    assert kw["json"] == item
+
+
+def test_pausar_usa_put_status():
+    c, ses = _client([(200, {"id": "MLA1", "status": "paused"})])
+    c.pausar("MLA1")
+    metodo, url, kw = ses.llamadas[0]
+    assert metodo == "PUT" and url.endswith("/items/MLA1")
+    assert kw["json"] == {"status": "paused"}
+
+
+def test_actualizar_precio_y_stock():
+    c, ses = _client([(200, {}), (200, {})])
+    c.actualizar_precio("MLA1", 5000)
+    c.actualizar_stock("MLA1", 3)
+    assert ses.llamadas[0][2]["json"] == {"price": 5000}
+    assert ses.llamadas[1][2]["json"] == {"available_quantity": 3}
+
+
+def test_atributos_obligatorios_filtra_requeridos():
+    attrs = [
+        {"id": "BRAND", "name": "Marca", "value_type": "string",
+         "tags": {"required": True}, "values": []},
+        {"id": "COLOR", "name": "Color", "value_type": "string",
+         "tags": {}, "values": []},
+    ]
+    c, ses = _client([(200, attrs)])
+    req = c.atributos_obligatorios("MLA1")
+    assert len(req) == 1 and req[0]["id"] == "BRAND"
+
+
+def test_error_http_se_convierte_en_excepcion():
+    c, ses = _client([(400, {"message": "invalid", "cause": []})])
+    with pytest.raises(MeliAPIError) as e:
+        c.publicar({})
+    assert e.value.status == 400
+
+
+def test_token_store_guarda_y_expira():
+    conn = sqlite3.connect(":memory:")
+    store = TokenStore(conn)
+    assert store.hay_sesion() is False
+    store.guardar({"access_token": "A", "refresh_token": "R",
+                   "user_id": 1, "expires_in": 21600})
+    row = store.leer()
+    assert row["access_token"] == "A"
+    assert row["expires_at"] > time.time() + 21000
+    store.borrar()
+    assert store.hay_sesion() is False

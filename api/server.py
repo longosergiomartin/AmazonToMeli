@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import io
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -72,6 +73,7 @@ _PAGINA_INICIO = """<!doctype html>
 </style></head><body>
 <h1>🛒 Tu API de arbitraje</h1>
 <p>Estado: <strong>funcionando</strong> · {n} producto(s) capturado(s)</p>
+<p><a class="btn" href="/panel">📋 Panel de publicación en MercadoLibre</a></p>
 <h2>El botón mágico</h2>
 <p>Arrastrá este botón a tu <strong>barra de favoritos</strong> (una sola vez):</p>
 <p><a class="btn" href="{bm}">➜ Capturar producto</a></p>
@@ -179,6 +181,16 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         for fila in filas:
             writer.writerow(fila)
         return buf.getvalue()
+
+    # Catálogo + OAuth de MercadoLibre + publicación (comparte la misma base).
+    from .catalogo_routes import registrar_catalogo
+    from arbitraje.config import CONFIG_DEFAULT
+    registrar_catalogo(app, almacen.conn, CONFIG_DEFAULT)
+
+    @app.get("/panel", response_class=HTMLResponse)
+    def panel():
+        ruta = Path(__file__).resolve().parent.parent / "web" / "panel.html"
+        return ruta.read_text(encoding="utf-8")
 
     return app
 

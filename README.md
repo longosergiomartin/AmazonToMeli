@@ -148,6 +148,52 @@ gratis y sin scraping.
    o antivirus corporativo, no intentes desactivarlos: pedile la excepción al
    área de IT, o usá la app en tu PC personal.
 
+## Panel de publicación en MercadoLibre
+
+Convierte los productos identificados en Amazon en **publicaciones de tu cuenta
+de MercadoLibre**, con costo en pesos, precio sugerido por margen deseado,
+vista previa y **publicación solo tras tu aprobación manual**.
+
+```bash
+python -m api.server        # abrí http://localhost:8321/panel
+```
+
+Qué hace:
+
+- **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
+  peso, costo de envío, disponibilidad.
+- **Costo total en pesos** automático (tipo de cambio + dólar tarjeta + envío +
+  importación) reutilizando el motor de arbitraje.
+- **Precio sugerido** a partir de tu *margen deseado* (despeja comisión, IVA,
+  IIBB, Ganancias y envío de MeLi).
+- **Borrador local + vista previa** con categoría y atributos obligatorios; se
+  **publica recién cuando lo aprobás** (nunca en un solo paso).
+- **Editar precio y stock**, **pausar/reactivar**, **alerta de margen
+  insuficiente** e **historial de cambios** por producto.
+
+> La primera versión **no compra en Amazon** ni **publica sin aprobación**.
+
+### Conectar tu cuenta (OAuth)
+
+1. Creá una aplicación en https://developers.mercadolibre.com.ar/ y anotá el
+   **App ID** (client id) y la **Secret Key**.
+2. En la app de MercadoLibre configurá la **Redirect URI**:
+   `http://localhost:8321/oauth/callback`.
+3. Antes de levantar el servidor, exportá tus credenciales (no se commitean):
+
+   ```bash
+   export MELI_CLIENT_ID="tu_app_id"
+   export MELI_CLIENT_SECRET="tu_secret_key"
+   export MELI_REDIRECT_URI="http://localhost:8321/oauth/callback"
+   python -m api.server
+   ```
+4. En el panel, tocá **Conectar** → autorizás en MercadoLibre → volvés listo
+   para publicar. El token se guarda y se renueva solo.
+
+Sin credenciales, el panel igual sirve para registrar productos, calcular
+costos, precios y márgenes y armar borradores; solo la publicación real y la
+predicción de categoría requieren la sesión de MercadoLibre.
+
 ## Dashboard web (opcional)
 
 ```bash
