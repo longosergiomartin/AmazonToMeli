@@ -204,6 +204,37 @@ Sin credenciales, el panel igual sirve para registrar productos, calcular
 costos, precios y márgenes y armar borradores; solo la publicación real y la
 predicción de categoría requieren la sesión de MercadoLibre.
 
+## Acceder al panel desde otra máquina (ej: el trabajo)
+
+El panel es un servidor: corre en tu PC de casa y desde otra máquina se accede
+por una **URL pública** vía túnel. **Antes de exponerlo a internet, ponele
+contraseña** (controla tu cuenta de MercadoLibre):
+
+```bash
+set PANEL_PASSWORD=una_clave_larga_y_secreta   # Windows (cmd)
+# export PANEL_PASSWORD=...                     # Mac/Linux
+python -m api.server
+```
+
+Con eso, el panel pide usuario/contraseña (cualquier usuario; la clave es la de
+`PANEL_PASSWORD`).
+
+### Túnel con Cloudflare (gratis, sin abrir puertos)
+
+1. Descargá `cloudflared` (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+2. Con el server corriendo, en otra terminal:
+   ```bash
+   cloudflared tunnel --url http://localhost:8321
+   ```
+3. Te da una URL `https://algo.trycloudflare.com`. Abrila desde el trabajo,
+   ingresás la contraseña y usás el panel normalmente.
+
+> Requisitos: tu PC de casa tiene que quedar **encendida y con el server (y el
+> túnel) corriendo**. La URL es pública: mantené la contraseña fuerte y privada.
+> Tu Secret Key de MercadoLibre nunca sale de la PC que corre el server.
+> Si tu red laboral filtra dominios, puede bloquear también el túnel; en ese
+> caso conviene un deploy en la nube (Render/Railway) con la misma contraseña.
+
 ## Dashboard web (opcional)
 
 ```bash
