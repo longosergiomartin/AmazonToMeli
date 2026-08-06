@@ -71,11 +71,14 @@ class MeliClient:
         return self._req("GET", f"/categories/{category_id}/attributes")
 
     def atributos_obligatorios(self, category_id: str) -> list[dict]:
-        """Solo los atributos marcados como requeridos para publicar."""
+        """Atributos que MercadoLibre exige para publicar en la categoría:
+        required, catalog_required y conditional_required (ej: GTIN / código de
+        barras, que ML pide como condicional en muchas categorías)."""
         req = []
         for a in self.atributos(category_id):
             tags = a.get("tags", {}) or {}
-            if tags.get("required") or tags.get("catalog_required"):
+            if (tags.get("required") or tags.get("catalog_required")
+                    or tags.get("conditional_required")):
                 req.append({
                     "id": a.get("id"), "name": a.get("name"),
                     "value_type": a.get("value_type"),

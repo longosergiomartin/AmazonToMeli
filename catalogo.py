@@ -74,11 +74,23 @@ def _ahora() -> str:
 class Catalogo:
     """Almacenamiento + lógica de negocio del catálogo."""
 
-    def __init__(self, conn: sqlite3.Connection, cfg: Config = CONFIG_DEFAULT):
+    def __init__(self, conn: sqlite3.Connection, cfg: Config = CONFIG_DEFAULT,
+                 cotizacion: Optional[dict] = None):
         self.conn = conn
         self.conn.row_factory = sqlite3.Row
         self.cfg = cfg
+        # Cotización en vivo {oficial, tarjeta}. Si está, manda sobre la config.
+        self.cotizacion = cotizacion
         self._crear_tablas()
+
+    def _cfg_efectivo(self) -> Config:
+        """Config con el tipo de cambio en vivo (si hay cotización cargada)."""
+        c = self.cotizacion
+        if c and c.get("oficial") and c.get("tarjeta"):
+            recargo = c["tarjeta"] / c["oficial"] - 1
+            return replace(self.cfg, tipo_cambio_oficial=c["oficial"],
+                           recargo_tarjeta_pct=recargo)
+        return self.cfg
 
     def _crear_tablas(self) -> None:
         self.conn.executescript("""
@@ -117,7 +129,7 @@ class Catalogo:
             nombre=p.modelo or p.asin or "producto", query_meli=p.modelo or "",
             precio_amazon_usd=base_usd, peso_kg=p.peso_kg, arancel_pct=p.arancel_pct,
         )
-        cfg = self.cfg
+        cfg = self._cfg_efectivo()
         regimen = p.regimen
         if regimen == "landed":
             # Amazon ya informó el Total puesto en Argentina (producto + envío +
@@ -126,18 +138,34 @@ class Catalogo:
         elif regimen == "courier":
             # El costo de envío ya lo cargó el usuario: anulamos el flete estimado
             # para no contarlo dos veces.
-            cfg = replace(self.cfg, courier=replace(self.cfg.courier, flete_usd_por_kg=0.0))
+            cfg = replace(cfg, courier=replace(cfg.courier, flete_usd_por_kg=0.0))
         costo = calcular_costo(pa, regimen=regimen, cfg=cfg)
         p.costo_total_ars = costo.total_ars
         p.precio_sugerido_ars = precio_sugerido(
-            costo.total_ars, p.margen_deseado, p.categoria, self.cfg)
+            costo.total_ars, p.margen_deseado, p.categoria, self._cfg_efectivo())
         # margen real al precio que efectivamente se usará (publicado o sugerido)
         precio_ref = p.precio_publicado_ars or p.precio_sugerido_ars
         p.margen_pct = margen_real_al_precio(
-            costo.total_ars, precio_ref, p.categoria, self.cfg)["margen_pct"]
+            costo.total_ars, precio_ref, p.categoria, self._cfg_efectivo())["margen_pct"]
 
     def margen_insuficiente(self, p: ProductoCatalogo) -> bool:
         return p.margen_pct < self.cfg.umbral_margen_bueno_pct
+
+    def comparacion_dolar(self, p: ProductoCatalogo) -> dict:
+        """Costo y margen del producto bajo dólar oficial y dólar tarjeta, para
+        comparar. El costo escala lineal con el tipo de cambio."""
+        cfg_ef = self._cfg_efectivo()
+        tarjeta = cfg_ef.tc_compra()
+        oficial = cfg_ef.tipo_cambio_oficial
+        total_usd = (p.costo_total_ars / tarjeta) if tarjeta else 0.0
+        precio = p.precio_publicado_ars or p.precio_sugerido_ars
+        out = {}
+        for nombre, tc in (("oficial", oficial), ("tarjeta", tarjeta)):
+            costo = round(total_usd * tc, 2)
+            m = margen_real_al_precio(costo, precio, p.categoria, cfg_ef)
+            out[nombre] = {"tc": round(tc, 2), "costo_ars": costo,
+                           "margen_ars": m["margen_ars"], "margen_pct": m["margen_pct"]}
+        return out
 
     # ---- persistencia ----------------------------------------------------
 
@@ -228,6 +256,22 @@ class Catalogo:
         self._guardar(p)
         self._log(pid, "publicacion", nota="Datos de publicación actualizados "
                   f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")
+        return p
+
+    def eliminar(self, pid: int) -> None:
+        self.conn.execute("DELETE FROM catalogo WHERE id = ?", (pid,))
+        self.conn.execute("DELETE FROM catalogo_historial WHERE producto_id = ?", (pid,))
+        self.conn.commit()
+
+    def cambiar_regimen(self, pid: int, regimen: str) -> ProductoCatalogo:
+        p = self.obtener(pid)
+        if not p:
+            raise KeyError(pid)
+        anterior = p.regimen
+        p.regimen = regimen
+        self._calcular(p)
+        self._guardar(p)
+        self._log(pid, "regimen", "regimen", anterior, regimen)
         return p
 
     def recalcular(self, pid: int) -> ProductoCatalogo:

@@ -86,5 +86,6 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         "atributos": producto.ml_attributes,
         "fotos": pictures or [],
         "costo_total_ars": producto.costo_total_ars,
+        "precio_sugerido_ars": producto.precio_sugerido_ars,
         "margen_pct": producto.margen_pct,
     }

@@ -73,6 +73,34 @@ def test_margen_insuficiente_en_respuesta(client):
     assert "margen_insuficiente" in p
 
 
+def test_borrar_producto(client):
+    pid = _alta(client).json()["id"]
+    assert client.delete(f"/api/catalogo/{pid}").status_code == 200
+    assert client.get(f"/api/catalogo/{pid}").status_code == 404
+
+
+def test_cambiar_regimen_recalcula_costo(client):
+    # Alta courier vs cambio a landed: landed usa el total sin re-sumar impuesto.
+    pid = _alta(client, regimen="courier", precio_usd=839.97, costo_envio_usd=530.36).json()["id"]
+    costo_courier = client.get(f"/api/catalogo/{pid}").json()["costo_total_ars"]
+    p = client.patch(f"/api/catalogo/{pid}/regimen", json={"regimen": "landed"}).json()
+    assert p["regimen"] == "landed"
+    assert p["costo_total_ars"] < costo_courier
+
+
+def test_cambiar_regimen_invalido(client):
+    pid = _alta(client).json()["id"]
+    assert client.patch(f"/api/catalogo/{pid}/regimen", json={"regimen": "x"}).status_code == 400
+
+
+def test_precio_competitivo_muestra_margen(client):
+    # Precio por debajo del sugerido: la app igual calcula el margen (aunque sea bajo).
+    pid = _alta(client, regimen="landed", precio_usd=839.97, costo_envio_usd=530.36).json()["id"]
+    p = client.patch(f"/api/catalogo/{pid}/precio", json={"precio": 3000000}).json()
+    assert p["precio_publicado_ars"] == 3000000
+    assert "margen_pct" in p and "margen_insuficiente" in p
+
+
 def test_oauth_status_sin_credenciales(client):
     s = client.get("/oauth/status").json()
     assert s["configurado"] is False and s["conectado"] is False
