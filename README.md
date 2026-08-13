@@ -243,6 +243,37 @@ Con eso, el panel pide usuario/contraseña (cualquier usuario; la clave es la de
 > Si tu red laboral filtra dominios, puede bloquear también el túnel; en ese
 > caso conviene un deploy en la nube (Render/Railway) con la misma contraseña.
 
+## Usar el panel desde la web (deploy en la nube)
+
+Si querés usar el panel **desde cualquier navegador sin instalar nada** (ej: una
+PC del trabajo sin Python), subilo a la nube. Todo el deploy se hace **desde el
+navegador** en [Render](https://render.com) (plan gratis para probar).
+
+1. Entrá a https://render.com y creá una cuenta (podés usar tu cuenta de GitHub).
+2. **New → Web Service** → conectá el repo `longosergiomartin/AmazonToMeli`.
+   (El repo ya trae `render.yaml`, así que Render detecta la configuración.)
+3. En **Environment / Variables**, cargá:
+   - `PANEL_PASSWORD` = una clave fuerte (**obligatoria**: sin ella el panel
+     queda abierto a cualquiera).
+   - `MELI_CLIENT_ID` = tu App ID.
+   - `MELI_CLIENT_SECRET` = tu Secret Key.
+   - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
+4. **Create Web Service** → esperá a que termine el build.
+5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
+   donde quieras, ingresás la contraseña y usás el panel. Para conectar
+   MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
+
+> Notas del plan gratis:
+> - El servicio **se duerme** tras un rato sin uso; la primera carga puede
+>   tardar ~30-60 s en despertar.
+> - El disco es **efímero**: si Render reinicia el servicio, se pierde la base
+>   local (tenés que reconectar MercadoLibre y recargar productos). Para uso
+>   serio, un plan pago con disco persistente (o una base Postgres) lo resuelve.
+> - Tu Secret Key queda guardada como variable en Render, no en el código.
+
+Alternativa sin nube: dejar el panel en tu PC y exponerlo por un **túnel**
+(ver la sección anterior).
+
 ## Dashboard web (opcional)
 
 ```bash
