@@ -284,9 +284,13 @@
     var attrInputs=obl.map(function(a){
       var opts=(a.values||[]).map(function(val){return '<option value="'+esc(val)+'">';}).join("");
       var cur=(v.atributos&&v.atributos[a.id])||"";
+      var hint=(a.id==="GTIN")
+        ? '<span class="hint">Código de barras EAN/UPC (solo números) de la caja. <b>No es el ASIN.</b>'
+          +(p.asin?' <a href="https://www.google.com/search?q='+encodeURIComponent(p.asin+" EAN UPC barcode")+'" target="_blank" rel="noopener">Buscar GTIN del ASIN '+esc(p.asin)+' ↗</a>':'')
+          +'</span>' : '';
       return '<div class="f"><label>'+esc(a.name||a.id)+' *</label>'+
         '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
-        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist></div>';}).join("");
+        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist>'+hint+'</div>';}).join("");
     var fotos=(v.fotos||[]).join("\n");
     $("dlg-b").innerHTML=
       '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
@@ -342,6 +346,14 @@
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 
   function publicarFlow(id,attrIds){
+    // GTIN debe ser el código de barras (solo números), no el ASIN de Amazon.
+    var g=$("ed-attr-GTIN");
+    if(g && g.value.trim() && !/^[0-9]{8,14}$/.test(g.value.trim())){
+      alert("El GTIN debe ser el código de barras (8 a 14 números, ej: 673419281423).\n"
+        +"Lo que pusiste ("+g.value.trim()+") parece un ASIN u otro dato.\n"
+        +"Usá el link 'Buscar GTIN' debajo del campo para encontrarlo.");
+      return;
+    }
     if(!confirm("Esto va a APROBAR y PUBLICAR el producto en TU cuenta de MercadoLibre (queda visible a la venta). ¿Confirmás?")) return;
     guardarPub(id,attrIds)
       .then(function(){ return api("POST","/api/catalogo/"+id+"/borrador",{}); })
