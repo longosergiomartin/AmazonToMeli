@@ -239,11 +239,22 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         consulta = (q or p.titulo_ml or p.modelo or p.asin or "").strip()
         if not consulta:
             raise HTTPException(400, "El producto no tiene título/modelo para buscar.")
+        from urllib.parse import quote_plus
+        link_manual = ("https://listado.mercadolibre.com.ar/"
+                       + quote_plus(consulta).replace("+", "-"))
         cli = _client()  # requiere sesión OAuth
         try:
-            items = cli.buscar_listados(consulta, limit=10)
+            res = cli.buscar_listados(consulta, limit=10)
         except MeliAPIError as e:
-            raise HTTPException(502, f"No se pudo buscar en MercadoLibre: {e}")
+            # MercadoLibre restringió la búsqueda pública: devolvemos el link
+            # para mirarla a mano en vez de romper la pantalla.
+            return {"consulta": consulta, "items": [], "stats": {},
+                    "mi_precio": p.precio_publicado_ars or p.precio_sugerido_ars or 0,
+                    "veredicto": "", "via": "", "producto": "",
+                    "link_manual": link_manual,
+                    "error": f"MercadoLibre no permitió la búsqueda automática ({e}). "
+                             "Abrí el link para comparar a mano."}
+        items = res["items"]
         precios = sorted(i["precio"] for i in items)
         stats = {}
         if precios:
@@ -263,7 +274,9 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             else:
                 veredicto = "Estás por encima de la mediana: te va a costar competir."
         return {"consulta": consulta, "items": items, "stats": stats,
-                "mi_precio": mi_precio, "veredicto": veredicto}
+                "mi_precio": mi_precio, "veredicto": veredicto,
+                "via": res.get("via", ""), "producto": res.get("producto", ""),
+                "link_manual": link_manual, "error": ""}
 
     # ---- desglose de margen a un precio dado -----------------------------
 

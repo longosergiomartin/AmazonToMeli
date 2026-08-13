@@ -109,25 +109,89 @@ class MeliClient:
     def reactivar(self, item_id: str) -> dict:
         return self.actualizar(item_id, {"status": "active"})
 
-    def buscar_listados(self, query: str, limit: int = 10) -> list[dict]:
-        """Busca publicaciones existentes en el sitio (para comparar precios de
-        la competencia antes de publicar). Usa la sesión OAuth del usuario."""
-        data = self._req("GET", f"/sites/{self.site}/search",
-                         params={"q": query, "limit": limit})
+    # ---- competencia: precios de publicaciones existentes ----------------
+
+    @staticmethod
+    def _item_desde_oferta(r: dict) -> Optional[dict]:
+        precio = r.get("price")
+        if precio is None:
+            return None
+        envio = (r.get("shipping") or {}).get("free_shipping", False)
+        return {
+            "titulo": r.get("title") or r.get("name") or "",
+            "precio": float(precio),
+            "link": r.get("permalink") or "",
+            "envio_gratis": bool(envio),
+            "vendidos": r.get("sold_quantity") or 0,
+        }
+
+    def buscar_productos_catalogo(self, query: str, limit: int = 5) -> list[dict]:
+        """Busca productos del CATÁLOGO de MercadoLibre (no publicaciones).
+        Devuelve [{id, nombre}]. Endpoint habilitado para apps normales."""
+        data = self._req("GET", "/products/search",
+                         params={"site_id": self.site, "q": query,
+                                 "status": "active", "limit": limit})
+        out = []
+        for r in (data.get("results") or []):
+            pid = r.get("id")
+            if pid:
+                out.append({"id": pid, "nombre": r.get("name", "")})
+        return out
+
+    def ofertas_de_producto(self, product_id: str, limit: int = 10) -> list[dict]:
+        """Publicaciones (ofertas) que compiten por un producto del catálogo:
+        es exactamente la competencia de precio de ese producto."""
+        data = self._req("GET", f"/products/{product_id}/items",
+                         params={"limit": limit})
         items = []
         for r in (data.get("results") or []):
-            precio = r.get("price")
-            if precio is None:
-                continue
-            envio = (r.get("shipping") or {}).get("free_shipping", False)
-            items.append({
-                "titulo": r.get("title", ""),
-                "precio": float(precio),
-                "link": r.get("permalink", ""),
-                "envio_gratis": bool(envio),
-                "vendidos": (r.get("sold_quantity") or 0),
-            })
+            it = self._item_desde_oferta(r)
+            if it:
+                items.append(it)
         return items
+
+    def buscar_listados(self, query: str, limit: int = 10) -> dict:
+        """Busca publicaciones existentes para comparar precios, probando en
+        orden las vías que MercadoLibre habilita:
+
+          1. Catálogo: producto del catálogo + sus ofertas (la más precisa;
+             es la competencia real por el mismo producto).
+          2. Búsqueda de sitio (/sites/{site}/search): MercadoLibre la
+             restringió (403) para la mayoría de las apps, queda como intento.
+
+        Devuelve {"items": [...], "via": "catalogo"|"busqueda", "producto": str}.
+        Lanza MeliAPIError solo si ninguna vía funcionó.
+        """
+        errores = []
+        # 1) Catálogo
+        try:
+            productos = self.buscar_productos_catalogo(query, limit=3)
+            for prod in productos:
+                try:
+                    items = self.ofertas_de_producto(prod["id"], limit=limit)
+                except MeliAPIError as e:
+                    errores.append(str(e))
+                    continue
+                if items:
+                    return {"items": items, "via": "catalogo",
+                            "producto": prod.get("nombre", "")}
+        except MeliAPIError as e:
+            errores.append(str(e))
+
+        # 2) Búsqueda clásica del sitio (suele dar 403 hoy)
+        try:
+            data = self._req("GET", f"/sites/{self.site}/search",
+                             params={"q": query, "limit": limit})
+            items = [i for i in (self._item_desde_oferta(r)
+                                 for r in (data.get("results") or [])) if i]
+            if items:
+                return {"items": items, "via": "busqueda", "producto": ""}
+        except MeliAPIError as e:
+            errores.append(str(e))
+
+        raise MeliAPIError(
+            "MercadoLibre no permitió buscar publicaciones "
+            f"({'; '.join(errores[:2]) or 'sin resultados'})")
 
     def poner_descripcion(self, item_id: str, texto: str) -> dict:
         """Setea la descripción del ítem (endpoint aparte de la creación)."""

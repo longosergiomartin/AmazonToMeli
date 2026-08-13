@@ -76,20 +76,37 @@ def test_atributos_obligatorios_filtra_requeridos():
     assert len(req) == 1 and req[0]["id"] == "BRAND"
 
 
-def test_buscar_listados_mapea_precios_y_envio():
-    resultados = {"results": [
+def test_buscar_listados_usa_catalogo_primero():
+    catalogo = {"results": [{"id": "MLA123", "name": "Lego Simba 43243"}]}
+    ofertas = {"results": [
         {"title": "Lego Simba", "price": 590000, "permalink": "http://ml/1",
          "shipping": {"free_shipping": True}, "sold_quantity": 3},
-        {"title": "Lego Simba usado", "price": 400000, "permalink": "http://ml/2",
+        {"title": "Lego Simba otro", "price": 400000, "permalink": "http://ml/2",
          "shipping": {}},
         {"title": "Sin precio", "permalink": "http://ml/3"},
     ]}
-    c, ses = _client([(200, resultados)])
-    items = c.buscar_listados("lego simba")
-    assert len(items) == 2  # descarta el que no tiene precio
-    assert items[0]["precio"] == 590000 and items[0]["envio_gratis"] is True
-    metodo, url, kw = ses.llamadas[0]
-    assert "/sites/MLA/search" in url and kw["params"]["q"] == "lego simba"
+    c, ses = _client([(200, catalogo), (200, ofertas)])
+    res = c.buscar_listados("lego simba")
+    assert res["via"] == "catalogo" and res["producto"] == "Lego Simba 43243"
+    assert len(res["items"]) == 2  # descarta el que no tiene precio
+    assert res["items"][0]["precio"] == 590000
+    assert "/products/search" in ses.llamadas[0][1]
+    assert "/products/MLA123/items" in ses.llamadas[1][1]
+
+
+def test_buscar_listados_cae_a_busqueda_si_catalogo_falla():
+    busqueda = {"results": [{"title": "Lego", "price": 500000,
+                             "permalink": "http://ml/9", "shipping": {}}]}
+    # catálogo 403 → intenta /sites/MLA/search
+    c, ses = _client([(403, {"message": "forbidden"}), (200, busqueda)])
+    res = c.buscar_listados("lego simba")
+    assert res["via"] == "busqueda" and res["items"][0]["precio"] == 500000
+
+
+def test_buscar_listados_error_si_todo_bloqueado():
+    c, ses = _client([(403, {"message": "forbidden"}), (403, {"message": "forbidden"})])
+    with pytest.raises(MeliAPIError):
+        c.buscar_listados("lego simba")
 
 
 def test_error_http_se_convierte_en_excepcion():
