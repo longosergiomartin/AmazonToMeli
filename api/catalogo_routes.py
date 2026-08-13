@@ -40,6 +40,7 @@ class AltaProducto(BaseModel):
     categoria: str = "default"
     margen_deseado: float = 0.35
     stock: int = 1
+    dias_preparacion: int = 25
     titulo_ml: str = ""
     ml_category_id: str = ""
 
@@ -68,6 +69,7 @@ class Publicacion(BaseModel):
     ml_category_id: Optional[str] = None
     ml_attributes: Optional[dict] = None
     pictures: Optional[list[str]] = None
+    dias_preparacion: Optional[int] = None
 
 
 def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,

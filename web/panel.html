@@ -118,6 +118,8 @@
         <select id="categoria"><option value="default">Otra / default</option><option value="electronica">Electrónica</option><option value="computacion">Computación</option><option value="hogar">Hogar</option></select></div>
       <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="35"></div>
       <div class="f"><label>Stock a publicar</label><input id="stock" type="number" step="1" value="1"></div>
+      <div class="f"><label>Días de preparación (entrega)</label><input id="dias_preparacion" type="number" step="1" value="25">
+        <span class="hint">Se muestra en la publicación: "el vendedor necesita N días para tener listo el producto".</span></div>
       <div class="f"><label>Título en MercadoLibre</label><input id="titulo_ml" placeholder="Waders HISEA neopreno con botas"></div>
     </div>
     <div style="margin-top:14px"><button class="primary" id="add" type="button">Registrar y calcular</button>
@@ -208,7 +210,8 @@
       costo_envio_usd:num("costo_envio_usd"),disponibilidad:$("disponibilidad").value,
       regimen:$("regimen").value,
       categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
-      stock:Math.round(num("stock")),titulo_ml:$("titulo_ml").value};
+      stock:Math.round(num("stock")),dias_preparacion:Math.round(num("dias_preparacion")),
+      titulo_ml:$("titulo_ml").value};
     if(!body.modelo && !body.asin){ $("add-msg").textContent="Cargá al menos ASIN o modelo."; return; }
     $("add-msg").textContent="Calculando...";
     api("POST","/api/catalogo",body).then(function(){ $("add-msg").textContent="✓ Registrado";
@@ -289,6 +292,9 @@
       (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="f"><label>Días de preparación (entrega)</label>'+
+        '<input id="ed-dias" type="number" step="1" value="'+(v.dias_preparacion||25)+'">'+
+        '<span class="hint">Se muestra como "el vendedor necesita N días para tener listo el producto".</span></div>'+
       '<div class="f"><label>Precio de venta en MercadoLibre (ARS)</label>'+
         '<input id="ed-precio" type="number" step="1" value="'+Math.round(v.precio_ars||0)+'">'+
         '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el margen se recalcula abajo.</span></div>'+
@@ -323,7 +329,8 @@
     var sel=$("ed-cat"); var cat=sel.value==="__manual__"?($("ed-cat-manual").value||"").trim():sel.value;
     var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
     var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
-    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos};
+    var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos, dias_preparacion:dias};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 

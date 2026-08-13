@@ -170,6 +170,10 @@ Qué hace:
   **publica recién cuando lo aprobás** (nunca en un solo paso).
 - **Editar precio y stock**, **pausar/reactivar**, **alerta de margen
   insuficiente** e **historial de cambios** por producto.
+- **Días de preparación** (default **25**): se publican como tiempo de
+  disponibilidad (`MANUFACTURING_TIME`), y MercadoLibre los suma a la fecha de
+  entrega ("el vendedor necesita N días para tener listo el producto"). Ideal
+  para dropshipping. Editable por producto.
 
 > La primera versión **no compra en Amazon** ni **publica sin aprobación**.
 
