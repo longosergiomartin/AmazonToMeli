@@ -101,6 +101,33 @@ def test_precio_competitivo_muestra_margen(client):
     assert "margen_pct" in p and "margen_insuficiente" in p
 
 
+def test_competencia_sin_sesion_ml_da_error_claro(client):
+    pid = _alta(client, titulo_ml="Lego Simba").json()["id"]
+    r = client.get(f"/api/catalogo/{pid}/competencia")
+    assert r.status_code in (400, 401)  # sin credenciales/sesión de ML
+
+
+def test_competencia_sin_titulo_da_400(client):
+    pid = _alta(client, modelo="", asin="", titulo_ml="").json()["id"]
+    assert client.get(f"/api/catalogo/{pid}/competencia").status_code == 400
+
+
+def test_desglose_devuelve_ambas_variantes(client):
+    pid = _alta(client, regimen="landed", precio_usd=126.0,
+                costo_envio_usd=34.36).json()["id"]
+    d = client.get(f"/api/catalogo/{pid}/desglose", params={"precio": 590000}).json()
+    det = d["detalle"]
+    # El neto estilo ML no descuenta las retenciones; el conservador sí.
+    assert d["neto_estilo_ml"] == pytest.approx(
+        d["neto_conservador"] + det["retenciones_iibb_ganancias"], abs=0.5)
+    assert d["estilo_ml"]["margen_ars"] > d["conservador"]["margen_ars"]
+    # El margen es neto - costo.
+    assert d["conservador"]["margen_ars"] == pytest.approx(
+        d["neto_conservador"] - d["costo_puesto_ars"], abs=0.5)
+    for k in ("comision", "iva_sobre_comision", "envio"):
+        assert det[k] > 0
+
+
 def test_oauth_status_sin_credenciales(client):
     s = client.get("/oauth/status").json()
     assert s["configurado"] is False and s["conectado"] is False

@@ -109,6 +109,26 @@ class MeliClient:
     def reactivar(self, item_id: str) -> dict:
         return self.actualizar(item_id, {"status": "active"})
 
+    def buscar_listados(self, query: str, limit: int = 10) -> list[dict]:
+        """Busca publicaciones existentes en el sitio (para comparar precios de
+        la competencia antes de publicar). Usa la sesión OAuth del usuario."""
+        data = self._req("GET", f"/sites/{self.site}/search",
+                         params={"q": query, "limit": limit})
+        items = []
+        for r in (data.get("results") or []):
+            precio = r.get("price")
+            if precio is None:
+                continue
+            envio = (r.get("shipping") or {}).get("free_shipping", False)
+            items.append({
+                "titulo": r.get("title", ""),
+                "precio": float(precio),
+                "link": r.get("permalink", ""),
+                "envio_gratis": bool(envio),
+                "vendidos": (r.get("sold_quantity") or 0),
+            })
+        return items
+
     def poner_descripcion(self, item_id: str, texto: str) -> dict:
         """Setea la descripción del ítem (endpoint aparte de la creación)."""
         return self._req("POST", f"/items/{item_id}/description",

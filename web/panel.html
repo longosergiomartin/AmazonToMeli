@@ -309,8 +309,11 @@
         '<span class="hint">Se muestra como "el vendedor necesita N días para tener listo el producto".</span></div>'+
       '<div class="f"><label>Precio de venta en MercadoLibre (ARS)</label>'+
         '<input id="ed-precio" type="number" step="1" value="'+Math.round(v.precio_ars||0)+'">'+
-        '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el margen se recalcula abajo.</span></div>'+
+        '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el desglose se recalcula abajo.</span></div>'+
+      '<div class="f"><button type="button" class="sm" id="btn-competencia">🔍 Comparar con la competencia en MercadoLibre</button>'+
+        '<div id="ed-competencia" class="hist"></div></div>'+
       '<div class="kv"><span>Costo puesto</span><b>'+fmt(v.costo_total_ars)+'</b></div>'+
+      '<div id="ed-desglose"></div>'+
       '<div class="kv"><span>Margen a ese precio</span><b id="ed-margen">—</b></div>'+
       '<div id="ed-comp"></div>'+
       (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
@@ -336,13 +339,56 @@
       m.style.color = pct<0?"var(--bad)":(pct<30?"var(--warn)":"var(--good)"); }
     pintarMargen(v.margen_pct||0, v.costo_total_ars);
     renderComp(p.comparacion, $("ed-comp"));
+
+    // ---- desglose de margen en vivo mientras se escribe el precio ----
+    function renderDesglose(d){
+      var el=$("ed-desglose"); if(!el) return;
+      function fila(k,val,extra){return '<div class="kv"><span>'+k+'</span><b'+(extra||'')+'>'+val+'</b></div>';}
+      var cCons=d.conservador, cMl=d.estilo_ml;
+      function colr(m){return m.margen_pct<0?'var(--bad)':(m.margen_pct<30?'var(--warn)':'var(--good)');}
+      el.innerHTML=
+        fila("Comisión + IVA","−"+fmt(d.detalle.comision+d.detalle.iva_sobre_comision))+
+        (d.detalle.costo_fijo?fila("Costo fijo","−"+fmt(d.detalle.costo_fijo)):"")+
+        fila("Envío","−"+fmt(d.detalle.envio))+
+        fila("Retenciones IIBB+Gan. (recuperables)","−"+fmt(d.detalle.retenciones_iibb_ganancias))+
+        fila("Neto (estilo \"Recibís\" de ML)",fmt(d.neto_estilo_ml)+' · <span style="color:'+colr(cMl)+'">'+cMl.margen_pct.toFixed(1)+'%</span>')+
+        fila("Neto conservador (con retenciones)",fmt(d.neto_conservador)+' · <span style="color:'+colr(cCons)+'">'+cCons.margen_pct.toFixed(1)+'%</span>');
+      pintarMargen(cCons.margen_pct, d.costo_puesto_ars);
+    }
+    var _t=null;
+    function pedirDesglose(precio){
+      if(!precio||precio<=0) return;
+      api("GET","/api/catalogo/"+id+"/desglose?precio="+encodeURIComponent(precio))
+        .then(renderDesglose).catch(function(){});
+    }
+    pedirDesglose(Math.round(v.precio_ars||0));
+    $("ed-precio").addEventListener("input",function(){
+      var precio=parseFloat(this.value)||0;
+      clearTimeout(_t); _t=setTimeout(function(){ pedirDesglose(precio); },400);
+    });
     $("ed-precio").addEventListener("change",function(){
       var precio=parseFloat(this.value)||0;
       api("PATCH","/api/catalogo/"+id+"/precio",{precio:precio}).then(function(pr){
-        pintarMargen(pr.margen_pct||0, pr.costo_total_ars);
-        renderComp(pr.comparacion, $("ed-comp")); cargar();
+        renderComp(pr.comparacion, $("ed-comp")); cargar(); pedirDesglose(precio);
       }).catch(err);
     });
+
+    // ---- competencia: qué precios ya publican este producto ----
+    var bc=$("btn-competencia");
+    if(bc) bc.onclick=function(){
+      var cont=$("ed-competencia"); cont.innerHTML="Buscando publicaciones…"; bc.disabled=true;
+      api("GET","/api/catalogo/"+id+"/competencia").then(function(r){
+        bc.disabled=false;
+        if(!r.items.length){ cont.innerHTML="No encontré publicaciones parecidas (probá ajustar el título)."; return; }
+        var s=r.stats;
+        var filas=r.items.slice(0,6).map(function(i){
+          return '<div>'+fmt(i.precio)+(i.envio_gratis?' 🚚':'')+' — <a href="'+esc(i.link)+'" target="_blank" rel="noopener">'+esc(i.titulo.slice(0,55))+'</a></div>';
+        }).join("");
+        cont.innerHTML='<div><b>'+s.cantidad+' publicaciones</b> · min '+fmt(s.minimo)+' · mediana '+fmt(s.mediana)+' · max '+fmt(s.maximo)+'</div>'
+          +(r.veredicto?'<div style="margin:4px 0;font-weight:600">'+esc(r.veredicto)+' (tu precio: '+fmt(r.mi_precio)+')</div>':'')
+          +filas;
+      }).catch(function(e){ bc.disabled=false; $("ed-competencia").innerHTML="Error: "+(typeof e==="string"?esc(e):esc(JSON.stringify(e))); });
+    };
     var attrIds=obl.map(function(a){return a.id;});
     var f=$("dlg-f"); f.innerHTML="";
     addBtn(f,"Cerrar",function(){$("dlg").close();});
