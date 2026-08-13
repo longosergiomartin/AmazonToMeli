@@ -107,6 +107,33 @@ def test_competencia_sin_sesion_ml_da_error_claro(client):
     assert r.status_code in (400, 401)  # sin credenciales/sesión de ML
 
 
+def test_competencia_bloqueada_devuelve_link_manual(client, monkeypatch, tmp_path):
+    """Si MercadoLibre bloquea la búsqueda (403), la pantalla no se rompe:
+    devuelve el link para comparar a mano."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    pid = _alta(client, titulo_ml="Lego Simba 43243").json()["id"]
+
+    class _CliFalso:
+        def buscar_listados(self, *a, **k):
+            raise MeliAPIError("MercadoLibre GET /sites/MLA/search → 403")
+
+    # Inyectamos un cliente que simula el bloqueo de ML.
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    app = crear_app(db_path=str(tmp_path / "t2.db"))
+    c2 = TestClient(app)
+    pid2 = _alta(c2, titulo_ml="Lego Simba 43243").json()["id"]
+    r = c2.get(f"/api/catalogo/{pid2}/competencia")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["items"] == [] and data["error"]
+    assert "listado.mercadolibre.com.ar" in data["link_manual"]
+
+
 def test_competencia_sin_titulo_da_400(client):
     pid = _alta(client, modelo="", asin="", titulo_ml="").json()["id"]
     assert client.get(f"/api/catalogo/{pid}/competencia").status_code == 400

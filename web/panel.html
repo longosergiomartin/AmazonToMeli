@@ -379,14 +379,17 @@
       var cont=$("ed-competencia"); cont.innerHTML="Buscando publicaciones…"; bc.disabled=true;
       api("GET","/api/catalogo/"+id+"/competencia").then(function(r){
         bc.disabled=false;
-        if(!r.items.length){ cont.innerHTML="No encontré publicaciones parecidas (probá ajustar el título)."; return; }
+        var manual=r.link_manual?'<div style="margin-top:6px"><a href="'+esc(r.link_manual)+'" target="_blank" rel="noopener">Ver la búsqueda en MercadoLibre ↗</a></div>':"";
+        if(r.error){ cont.innerHTML='<div>'+esc(r.error)+'</div>'+manual; return; }
+        if(!r.items.length){ cont.innerHTML='<div>No encontré publicaciones del mismo producto (probá ajustar el título).</div>'+manual; return; }
         var s=r.stats;
         var filas=r.items.slice(0,6).map(function(i){
-          return '<div>'+fmt(i.precio)+(i.envio_gratis?' 🚚':'')+' — <a href="'+esc(i.link)+'" target="_blank" rel="noopener">'+esc(i.titulo.slice(0,55))+'</a></div>';
+          return '<div>'+fmt(i.precio)+(i.envio_gratis?' 🚚':'')+' — <a href="'+esc(i.link)+'" target="_blank" rel="noopener">'+esc((i.titulo||"publicación").slice(0,55))+'</a></div>';
         }).join("");
-        cont.innerHTML='<div><b>'+s.cantidad+' publicaciones</b> · min '+fmt(s.minimo)+' · mediana '+fmt(s.mediana)+' · max '+fmt(s.maximo)+'</div>'
+        cont.innerHTML='<div><b>'+s.cantidad+' publicaciones</b> · min '+fmt(s.minimo)+' · mediana '+fmt(s.mediana)+' · max '+fmt(s.maximo)
+          +(r.via==="catalogo"?' <span class="muted">(ofertas del catálogo'+(r.producto?": "+esc(r.producto.slice(0,40)):"")+')</span>':'')+'</div>'
           +(r.veredicto?'<div style="margin:4px 0;font-weight:600">'+esc(r.veredicto)+' (tu precio: '+fmt(r.mi_precio)+')</div>':'')
-          +filas;
+          +filas+manual;
       }).catch(function(e){ bc.disabled=false; $("ed-competencia").innerHTML="Error: "+(typeof e==="string"?esc(e):esc(JSON.stringify(e))); });
     };
     var attrIds=obl.map(function(a){return a.id;});
