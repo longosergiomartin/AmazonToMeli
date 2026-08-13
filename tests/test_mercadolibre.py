@@ -76,6 +76,22 @@ def test_atributos_obligatorios_filtra_requeridos():
     assert len(req) == 1 and req[0]["id"] == "BRAND"
 
 
+def test_buscar_listados_mapea_precios_y_envio():
+    resultados = {"results": [
+        {"title": "Lego Simba", "price": 590000, "permalink": "http://ml/1",
+         "shipping": {"free_shipping": True}, "sold_quantity": 3},
+        {"title": "Lego Simba usado", "price": 400000, "permalink": "http://ml/2",
+         "shipping": {}},
+        {"title": "Sin precio", "permalink": "http://ml/3"},
+    ]}
+    c, ses = _client([(200, resultados)])
+    items = c.buscar_listados("lego simba")
+    assert len(items) == 2  # descarta el que no tiene precio
+    assert items[0]["precio"] == 590000 and items[0]["envio_gratis"] is True
+    metodo, url, kw = ses.llamadas[0]
+    assert "/sites/MLA/search" in url and kw["params"]["q"] == "lego simba"
+
+
 def test_error_http_se_convierte_en_excepcion():
     c, ses = _client([(400, {"message": "invalid", "cause": []})])
     with pytest.raises(MeliAPIError) as e:

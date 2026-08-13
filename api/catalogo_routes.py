@@ -229,6 +229,78 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         _p(pid)
         return cat.historial(pid)
 
+    # ---- competencia: precios ya publicados del mismo producto -----------
+
+    @app.get("/api/catalogo/{pid}/competencia")
+    def competencia(pid: int, q: Optional[str] = None):
+        """Busca publicaciones existentes en MercadoLibre del mismo producto y
+        compara sus precios con el tuyo, para entrar con precio competitivo."""
+        p = _p(pid)
+        consulta = (q or p.titulo_ml or p.modelo or p.asin or "").strip()
+        if not consulta:
+            raise HTTPException(400, "El producto no tiene título/modelo para buscar.")
+        cli = _client()  # requiere sesión OAuth
+        try:
+            items = cli.buscar_listados(consulta, limit=10)
+        except MeliAPIError as e:
+            raise HTTPException(502, f"No se pudo buscar en MercadoLibre: {e}")
+        precios = sorted(i["precio"] for i in items)
+        stats = {}
+        if precios:
+            stats = {
+                "cantidad": len(precios),
+                "minimo": precios[0],
+                "mediana": precios[len(precios) // 2],
+                "maximo": precios[-1],
+            }
+        mi_precio = p.precio_publicado_ars or p.precio_sugerido_ars or 0
+        veredicto = ""
+        if precios and mi_precio:
+            if mi_precio <= precios[0]:
+                veredicto = "Sos el más barato: entrás competitivo."
+            elif mi_precio <= stats["mediana"]:
+                veredicto = "Estás por debajo de la mediana: razonable."
+            else:
+                veredicto = "Estás por encima de la mediana: te va a costar competir."
+        return {"consulta": consulta, "items": items, "stats": stats,
+                "mi_precio": mi_precio, "veredicto": veredicto}
+
+    # ---- desglose de margen a un precio dado -----------------------------
+
+    @app.get("/api/catalogo/{pid}/desglose")
+    def desglose(pid: int, precio: float):
+        """Desglose completo del margen a un precio dado: comisión, costo fijo,
+        envío, retenciones (recuperables) y neto en las dos variantes — la
+        conservadora y la estilo 'Recibís' del simulador de MercadoLibre."""
+        from arbitraje.meli import calcular_neto_venta_meli
+        p = _p(pid)
+        cfg_ef = cat._cfg_efectivo()
+        venta = calcular_neto_venta_meli(precio, p.categoria, cfg_ef)
+        d = venta.detalle_ars
+        retenciones = d["iibb"] + d["ganancias"]
+        neto_estilo_ml = venta.neto_ars + retenciones  # ML no descuenta retenciones en "Recibís"
+        costo = p.costo_total_ars
+        def _m(neto):
+            m = neto - costo
+            return {"margen_ars": round(m, 2),
+                    "margen_pct": round(m / costo * 100, 1) if costo else 0.0}
+        return {
+            "precio": precio,
+            "costo_puesto_ars": costo,
+            "detalle": {
+                "comision": d["comision"],
+                "costo_fijo": d["costo_fijo"],
+                "iva_sobre_comision": d["iva_sobre_comision"],
+                "envio": d["envio_estimado"],
+                "retenciones_iibb_ganancias": round(retenciones, 2),
+            },
+            "neto_conservador": venta.neto_ars,
+            "conservador": _m(venta.neto_ars),
+            "neto_estilo_ml": round(neto_estilo_ml, 2),
+            "estilo_ml": _m(neto_estilo_ml),
+            "comparacion_dolar": cat.comparacion_dolar(p),
+        }
+
     @app.delete("/api/catalogo/{pid}")
     def eliminar(pid: int):
         _p(pid)
