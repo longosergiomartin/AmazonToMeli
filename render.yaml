@@ -1,0 +1,20 @@
+# Deploy en Render (https://render.com) — "blueprint".
+# Corre el panel en la nube para usarlo desde cualquier navegador, sin instalar
+# nada. Las variables marcadas sync:false se cargan a mano en el panel de Render
+# (son secretas). PANEL_PASSWORD es OBLIGATORIA: sin ella el panel queda abierto.
+services:
+  - type: web
+    name: arbitraje-meli
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.server:crear_app --factory --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PANEL_PASSWORD
+        sync: false
+      - key: MELI_CLIENT_ID
+        sync: false
+      - key: MELI_CLIENT_SECRET
+        sync: false
+      - key: MELI_REDIRECT_URI
+        value: https://oauth.pstmn.io/v1/callback

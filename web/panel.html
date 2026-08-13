@@ -118,6 +118,8 @@
         <select id="categoria"><option value="default">Otra / default</option><option value="electronica">Electrónica</option><option value="computacion">Computación</option><option value="hogar">Hogar</option></select></div>
       <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="35"></div>
       <div class="f"><label>Stock a publicar</label><input id="stock" type="number" step="1" value="1"></div>
+      <div class="f"><label>Días de preparación (entrega)</label><input id="dias_preparacion" type="number" step="1" value="25">
+        <span class="hint">Se muestra en la publicación: "el vendedor necesita N días para tener listo el producto".</span></div>
       <div class="f"><label>Título en MercadoLibre</label><input id="titulo_ml" placeholder="Waders HISEA neopreno con botas"></div>
     </div>
     <div style="margin-top:14px"><button class="primary" id="add" type="button">Registrar y calcular</button>
@@ -179,6 +181,7 @@
     api(refrescar?"POST":"GET", refrescar?"/api/cotizacion/refrescar":"/api/cotizacion")
       .then(function(c){ renderCotiz(c); if(refrescar) cargar(); }).catch(function(){});
   }
+  var traido={descripcion:"",imagenes:[]};  // descripción y fotos de Amazon
   function traerDatos(){
     var url=($("amazon_link").value||"").trim();
     if(!url){ $("traer-msg").textContent="Pegá el link de Amazon primero."; return; }
@@ -189,6 +192,8 @@
       if(d.modelo){ $("modelo").value=d.modelo; if(!$("titulo_ml").value)$("titulo_ml").value=d.modelo; }
       if(d.precio_usd) $("precio_usd").value=d.precio_usd;
       if(d.peso_kg) $("peso_kg").value=d.peso_kg;
+      traido.descripcion=d.descripcion||"";
+      traido.imagenes=d.imagenes||[];
       $("traer-msg").textContent=d.mensaje||"";
     }).catch(function(e){ $("traer-msg").textContent="No se pudo: "+(typeof e==="string"?e:JSON.stringify(e)); });
   }
@@ -208,11 +213,14 @@
       costo_envio_usd:num("costo_envio_usd"),disponibilidad:$("disponibilidad").value,
       regimen:$("regimen").value,
       categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
-      stock:Math.round(num("stock")),titulo_ml:$("titulo_ml").value};
+      stock:Math.round(num("stock")),dias_preparacion:Math.round(num("dias_preparacion")),
+      titulo_ml:$("titulo_ml").value,
+      descripcion:traido.descripcion,pictures:traido.imagenes};
     if(!body.modelo && !body.asin){ $("add-msg").textContent="Cargá al menos ASIN o modelo."; return; }
     $("add-msg").textContent="Calculando...";
     api("POST","/api/catalogo",body).then(function(){ $("add-msg").textContent="✓ Registrado";
       ["amazon_link","asin","marca","modelo","precio_usd","costo_envio_usd","titulo_ml"].forEach(function(k){$(k).value="";});
+      traido={descripcion:"",imagenes:[]}; $("traer-msg").textContent="";
       cargar(); setTimeout(function(){$("add-msg").textContent="";},2000);
     }).catch(function(e){ $("add-msg").textContent="Error: "+JSON.stringify(e); });
   }
@@ -276,9 +284,14 @@
     var attrInputs=obl.map(function(a){
       var opts=(a.values||[]).map(function(val){return '<option value="'+esc(val)+'">';}).join("");
       var cur=(v.atributos&&v.atributos[a.id])||"";
+      var hint=(a.id==="GTIN")
+        ? '<span class="hint">Código de barras EAN/UPC (solo números) de la caja. <b>No es el ASIN.</b> '
+          +(p.asin?'<button type="button" class="sm" id="btn-gtin-auto">🔎 Buscar GTIN automáticamente</button> '
+            +'<a href="https://www.google.com/search?q='+encodeURIComponent(p.asin+" EAN UPC barcode")+'" target="_blank" rel="noopener">o buscar a mano ↗</a>':'')
+          +' <span id="gtin-msg"></span></span>' : '';
       return '<div class="f"><label>'+esc(a.name||a.id)+' *</label>'+
         '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
-        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist></div>';}).join("");
+        '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist>'+hint+'</div>';}).join("");
     var fotos=(v.fotos||[]).join("\n");
     $("dlg-b").innerHTML=
       '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
@@ -287,8 +300,13 @@
         '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
         '<input id="ed-cat-manual" placeholder="MLAxxxxxx" style="display:none;margin-top:6px"></div>'+
       (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
+      '<div class="f"><label>Descripción</label>'+
+        '<textarea id="ed-desc" rows="4" placeholder="Descripción de la publicación">'+esc(v.descripcion||"")+'</textarea></div>'+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="f"><label>Días de preparación (entrega)</label>'+
+        '<input id="ed-dias" type="number" step="1" value="'+(v.dias_preparacion||25)+'">'+
+        '<span class="hint">Se muestra como "el vendedor necesita N días para tener listo el producto".</span></div>'+
       '<div class="f"><label>Precio de venta en MercadoLibre (ARS)</label>'+
         '<input id="ed-precio" type="number" step="1" value="'+Math.round(v.precio_ars||0)+'">'+
         '<span class="hint">Sugerido para tu margen: '+fmt(v.precio_sugerido_ars)+'. Bajalo para competir; el margen se recalcula abajo.</span></div>'+
@@ -298,6 +316,20 @@
       (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
         :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
     var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
+    // Búsqueda automática del GTIN a partir del ASIN (la hace el servidor).
+    var bg=$("btn-gtin-auto");
+    if(bg) bg.onclick=function(){
+      $("gtin-msg").textContent="Buscando…"; bg.disabled=true;
+      api("POST","/api/gtin",{asin:p.asin}).then(function(r){
+        bg.disabled=false;
+        if(r.ok && r.gtin){
+          var inp=$("ed-attr-GTIN"); if(inp) inp.value=r.gtin;
+          $("gtin-msg").textContent="✓ "+r.gtin+(r.candidatos.length>1?" (otros: "+r.candidatos.slice(1).join(", ")+")":"")+" — confirmalo.";
+        } else {
+          $("gtin-msg").textContent=r.mensaje||"No encontrado; cargalo a mano.";
+        }
+      }).catch(function(){ bg.disabled=false; $("gtin-msg").textContent="Error de búsqueda; probá el link manual."; });
+    };
     // Precio editable con margen en vivo (para publicar a precio competitivo).
     function pintarMargen(pct,costo){ var m=$("ed-margen"); var ars=costo*pct/100;
       m.textContent=fmt(ars)+"  ("+pct.toFixed(1)+"%)";
@@ -323,11 +355,20 @@
     var sel=$("ed-cat"); var cat=sel.value==="__manual__"?($("ed-cat-manual").value||"").trim():sel.value;
     var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
     var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
-    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos};
+    var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 
   function publicarFlow(id,attrIds){
+    // GTIN debe ser el código de barras (solo números), no el ASIN de Amazon.
+    var g=$("ed-attr-GTIN");
+    if(g && g.value.trim() && !/^[0-9]{8,14}$/.test(g.value.trim())){
+      alert("El GTIN debe ser el código de barras (8 a 14 números, ej: 673419281423).\n"
+        +"Lo que pusiste ("+g.value.trim()+") parece un ASIN u otro dato.\n"
+        +"Usá el link 'Buscar GTIN' debajo del campo para encontrarlo.");
+      return;
+    }
     if(!confirm("Esto va a APROBAR y PUBLICAR el producto en TU cuenta de MercadoLibre (queda visible a la venta). ¿Confirmás?")) return;
     guardarPub(id,attrIds)
       .then(function(){ return api("POST","/api/catalogo/"+id+"/borrador",{}); })

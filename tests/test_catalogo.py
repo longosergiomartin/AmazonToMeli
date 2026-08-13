@@ -114,6 +114,33 @@ def test_registrar_publicacion(cat):
     assert p.precio_publicado_ars is not None
 
 
+def test_descripcion_persiste_y_se_edita(cat):
+    p = cat.agregar(_prod(descripcion="Descripción de Amazon"))
+    assert cat.obtener(p.id).descripcion == "Descripción de Amazon"
+    p2 = cat.actualizar_publicacion(p.id, descripcion="Editada")
+    assert cat.obtener(p.id).descripcion == "Editada"
+
+
+def test_item_incluye_dias_de_preparacion(cat):
+    p = cat.agregar(_prod(titulo_ml="Waders", ml_category_id="MLA1", dias_preparacion=25))
+    item = construir_item(p, pictures=["http://img/1.jpg"])
+    terms = {t["id"]: t["value_name"] for t in item.get("sale_terms", [])}
+    assert terms.get("MANUFACTURING_TIME") == "25 días"
+
+
+def test_dias_preparacion_cero_no_agrega_sale_term(cat):
+    p = cat.agregar(_prod(titulo_ml="Waders", ml_category_id="MLA1", dias_preparacion=0))
+    item = construir_item(p, pictures=["http://img/1.jpg"])
+    assert "sale_terms" not in item
+
+
+def test_editar_dias_preparacion_persiste(cat):
+    p = cat.agregar(_prod())
+    p2 = cat.actualizar_publicacion(p.id, dias_preparacion=30)
+    assert p2.dias_preparacion == 30
+    assert cat.obtener(p.id).dias_preparacion == 30
+
+
 def test_construir_item_mapea_marca_y_modelo(cat):
     p = cat.agregar(_prod(titulo_ml="Waders HISEA neopreno con botas",
                           ml_category_id="MLA1234"))

@@ -46,6 +46,12 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
         "pictures": [{"source": u} for u in (pictures or []) if u],
         "attributes": attrs,
     }
+    # Días de preparación: se muestran en la entrega (MercadoLibre los suma a la
+    # fecha estimada). Es el "El vendedor necesita N días para tener listo el
+    # producto" que se ve en la publicación.
+    dias = int(getattr(producto, "dias_preparacion", 0) or 0)
+    if dias > 0:
+        item["sale_terms"] = [{"id": "MANUFACTURING_TIME", "value_name": f"{dias} días"}]
     return item
 
 
@@ -80,9 +86,11 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         "precio_ars": round(_precio(producto), 2),
         "moneda": "ARS",
         "stock": producto.stock,
+        "dias_preparacion": int(getattr(producto, "dias_preparacion", 0) or 0),
         "condicion": "nuevo",
         "marca": producto.marca,
         "modelo": producto.modelo,
+        "descripcion": getattr(producto, "descripcion", "") or "",
         "atributos": producto.ml_attributes,
         "fotos": pictures or [],
         "costo_total_ars": producto.costo_total_ars,

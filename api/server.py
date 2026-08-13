@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -116,6 +117,32 @@ def _num(v: Optional[str]) -> Optional[float]:
 def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
     app = FastAPI(title="API de arbitraje Amazon→MeLi", version="0.1.0")
     almacen = Almacen(db_path)
+
+    # Protección por contraseña (opcional). Si definís PANEL_PASSWORD, todo el
+    # panel queda detrás de un login. Es IMPRESCINDIBLE si exponés el panel a
+    # internet (túnel o nube), porque controla tu cuenta de MercadoLibre. En
+    # localhost podés dejarlo sin contraseña.
+    _password = os.environ.get("PANEL_PASSWORD")
+    if _password:
+        import base64
+        import secrets as _secrets
+        from starlette.responses import Response as _Response
+
+        @app.middleware("http")
+        async def _auth(request: Request, call_next):
+            enviado = ""
+            header = request.headers.get("authorization", "")
+            if header.startswith("Basic "):
+                try:
+                    enviado = base64.b64decode(header[6:]).decode().partition(":")[2]
+                except Exception:
+                    enviado = ""
+            if not _secrets.compare_digest(enviado, _password):
+                return _Response(
+                    "Ingresá la contraseña del panel.", status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Arbitraje"'},
+                )
+            return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
     def inicio(request: Request):

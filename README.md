@@ -162,6 +162,10 @@ Qué hace:
 
 - **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
   peso, costo de envío, disponibilidad.
+- **Traer datos desde el link de Amazon**: con un botón se autocompletan ASIN,
+  título, marca, precio, peso, **descripción y fotos** (mejor desde una PC
+  hogareña; el "Total landed" con envío+importación se agrega del checkout).
+  Queda casi todo listo para revisar y publicar.
 - **Costo total en pesos** automático (tipo de cambio + dólar tarjeta + envío +
   importación) reutilizando el motor de arbitraje.
 - **Precio sugerido** a partir de tu *margen deseado* (despeja comisión, IVA,
@@ -170,6 +174,10 @@ Qué hace:
   **publica recién cuando lo aprobás** (nunca en un solo paso).
 - **Editar precio y stock**, **pausar/reactivar**, **alerta de margen
   insuficiente** e **historial de cambios** por producto.
+- **Días de preparación** (default **25**): se publican como tiempo de
+  disponibilidad (`MANUFACTURING_TIME`), y MercadoLibre los suma a la fecha de
+  entrega ("el vendedor necesita N días para tener listo el producto"). Ideal
+  para dropshipping. Editable por producto.
 
 > La primera versión **no compra en Amazon** ni **publica sin aprobación**.
 
@@ -203,6 +211,68 @@ Qué hace:
 Sin credenciales, el panel igual sirve para registrar productos, calcular
 costos, precios y márgenes y armar borradores; solo la publicación real y la
 predicción de categoría requieren la sesión de MercadoLibre.
+
+## Acceder al panel desde otra máquina (ej: el trabajo)
+
+El panel es un servidor: corre en tu PC de casa y desde otra máquina se accede
+por una **URL pública** vía túnel. **Antes de exponerlo a internet, ponele
+contraseña** (controla tu cuenta de MercadoLibre):
+
+```bash
+set PANEL_PASSWORD=una_clave_larga_y_secreta   # Windows (cmd)
+# export PANEL_PASSWORD=...                     # Mac/Linux
+python -m api.server
+```
+
+Con eso, el panel pide usuario/contraseña (cualquier usuario; la clave es la de
+`PANEL_PASSWORD`).
+
+### Túnel con Cloudflare (gratis, sin abrir puertos)
+
+1. Descargá `cloudflared` (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+2. Con el server corriendo, en otra terminal:
+   ```bash
+   cloudflared tunnel --url http://localhost:8321
+   ```
+3. Te da una URL `https://algo.trycloudflare.com`. Abrila desde el trabajo,
+   ingresás la contraseña y usás el panel normalmente.
+
+> Requisitos: tu PC de casa tiene que quedar **encendida y con el server (y el
+> túnel) corriendo**. La URL es pública: mantené la contraseña fuerte y privada.
+> Tu Secret Key de MercadoLibre nunca sale de la PC que corre el server.
+> Si tu red laboral filtra dominios, puede bloquear también el túnel; en ese
+> caso conviene un deploy en la nube (Render/Railway) con la misma contraseña.
+
+## Usar el panel desde la web (deploy en la nube)
+
+Si querés usar el panel **desde cualquier navegador sin instalar nada** (ej: una
+PC del trabajo sin Python), subilo a la nube. Todo el deploy se hace **desde el
+navegador** en [Render](https://render.com) (plan gratis para probar).
+
+1. Entrá a https://render.com y creá una cuenta (podés usar tu cuenta de GitHub).
+2. **New → Web Service** → conectá el repo `longosergiomartin/AmazonToMeli`.
+   (El repo ya trae `render.yaml`, así que Render detecta la configuración.)
+3. En **Environment / Variables**, cargá:
+   - `PANEL_PASSWORD` = una clave fuerte (**obligatoria**: sin ella el panel
+     queda abierto a cualquiera).
+   - `MELI_CLIENT_ID` = tu App ID.
+   - `MELI_CLIENT_SECRET` = tu Secret Key.
+   - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
+4. **Create Web Service** → esperá a que termine el build.
+5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
+   donde quieras, ingresás la contraseña y usás el panel. Para conectar
+   MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
+
+> Notas del plan gratis:
+> - El servicio **se duerme** tras un rato sin uso; la primera carga puede
+>   tardar ~30-60 s en despertar.
+> - El disco es **efímero**: si Render reinicia el servicio, se pierde la base
+>   local (tenés que reconectar MercadoLibre y recargar productos). Para uso
+>   serio, un plan pago con disco persistente (o una base Postgres) lo resuelve.
+> - Tu Secret Key queda guardada como variable en Render, no en el código.
+
+Alternativa sin nube: dejar el panel en tu PC y exponerlo por un **túnel**
+(ver la sección anterior).
 
 ## Dashboard web (opcional)
 

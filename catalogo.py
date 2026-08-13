@@ -51,8 +51,12 @@ class ProductoCatalogo:
     categoria: str = "default"         # categoría de comisión de MeLi
     margen_deseado: float = 0.35       # fracción sobre el costo
     stock: int = 1
+    # Días de preparación/disponibilidad que se muestran en la entrega de la
+    # publicación (ML los suma a la fecha estimada). Clave para dropshipping.
+    dias_preparacion: int = 25
     # --- MercadoLibre ---
     titulo_ml: str = ""
+    descripcion: str = ""              # descripción de la publicación (de Amazon)
     ml_category_id: str = ""
     ml_attributes: dict = field(default_factory=dict)
     pictures: list = field(default_factory=list)
@@ -101,7 +105,9 @@ class Catalogo:
                 precio_usd REAL, peso_kg REAL, costo_envio_usd REAL,
                 disponibilidad TEXT, regimen TEXT, arancel_pct REAL,
                 categoria TEXT, margen_deseado REAL, stock INTEGER,
-                titulo_ml TEXT, ml_category_id TEXT, ml_attributes TEXT,
+                dias_preparacion INTEGER,
+                titulo_ml TEXT, descripcion TEXT,
+                ml_category_id TEXT, ml_attributes TEXT,
                 pictures TEXT,
                 costo_total_ars REAL, precio_sugerido_ars REAL,
                 precio_publicado_ars REAL, margen_pct REAL,
@@ -114,10 +120,14 @@ class Catalogo:
                 valor_anterior TEXT, valor_nuevo TEXT, nota TEXT
             );
         """)
-        # Migración para bases creadas antes de la columna pictures.
+        # Migración para bases creadas antes de columnas nuevas.
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(catalogo)").fetchall()]
         if "pictures" not in cols:
             self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
+        if "dias_preparacion" not in cols:
+            self.conn.execute("ALTER TABLE catalogo ADD COLUMN dias_preparacion INTEGER DEFAULT 25")
+        if "descripcion" not in cols:
+            self.conn.execute("ALTER TABLE catalogo ADD COLUMN descripcion TEXT")
         self.conn.commit()
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
@@ -171,7 +181,8 @@ class Catalogo:
 
     _CAMPOS = ["amazon_link", "asin", "marca", "modelo", "precio_usd", "peso_kg",
                "costo_envio_usd", "disponibilidad", "regimen", "arancel_pct",
-               "categoria", "margen_deseado", "stock", "titulo_ml",
+               "categoria", "margen_deseado", "stock", "dias_preparacion",
+               "titulo_ml", "descripcion",
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
                "ml_permalink"]
@@ -239,9 +250,10 @@ class Catalogo:
     # ---- operaciones de negocio -----------------------------------------
 
     def actualizar_publicacion(self, pid: int, titulo_ml=None, ml_category_id=None,
-                               ml_attributes=None, pictures=None) -> ProductoCatalogo:
+                               ml_attributes=None, pictures=None,
+                               dias_preparacion=None, descripcion=None) -> ProductoCatalogo:
         """Completa/edita los datos necesarios para publicar: título, categoría
-        de MercadoLibre, atributos obligatorios y fotos."""
+        de MercadoLibre, atributos obligatorios, fotos y días de preparación."""
         p = self.obtener(pid)
         if not p:
             raise KeyError(pid)
@@ -253,6 +265,10 @@ class Catalogo:
             p.ml_attributes = ml_attributes
         if pictures is not None:
             p.pictures = pictures
+        if dias_preparacion is not None:
+            p.dias_preparacion = int(dias_preparacion)
+        if descripcion is not None:
+            p.descripcion = descripcion
         self._guardar(p)
         self._log(pid, "publicacion", nota="Datos de publicación actualizados "
                   f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")

@@ -109,5 +109,10 @@ class MeliClient:
     def reactivar(self, item_id: str) -> dict:
         return self.actualizar(item_id, {"status": "active"})
 
+    def poner_descripcion(self, item_id: str, texto: str) -> dict:
+        """Setea la descripción del ítem (endpoint aparte de la creación)."""
+        return self._req("POST", f"/items/{item_id}/description",
+                         json={"plain_text": texto})
+
     def obtener(self, item_id: str) -> dict:
         return self._req("GET", f"/items/{item_id}")
