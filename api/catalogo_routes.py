@@ -174,6 +174,13 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         url = (body or {}).get("url", "")
         return importar_desde_url(url)
 
+    # ---- búsqueda automática del GTIN por ASIN ---------------------------
+
+    @app.post("/api/gtin")
+    def gtin(body: dict):
+        from gtin_lookup import buscar_gtin
+        return buscar_gtin((body or {}).get("asin", ""))
+
     # ---- catálogo --------------------------------------------------------
 
     @app.get("/api/catalogo")
