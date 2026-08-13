@@ -65,7 +65,13 @@ def test_importar_parsea_pagina(monkeypatch):
     html = ('<span id="productTitle"> LEGO Star Wars Millennium Falcon </span>'
             '<span id="bylineInfo">Visita la tienda de LEGO</span>'
             '"priceAmount":839.97,'
-            'Item Weight 28.76 pounds')
+            'Item Weight 28.76 pounds'
+            '<div id="feature-bullets"><ul>'
+            '<li><span class="a-list-item">7541 piezas de coleccion</span></li>'
+            '<li><span class="a-list-item">Incluye minifiguras</span></li>'
+            '</ul></div></div>'
+            '<img id="landingImage" src="https://m.media-amazon.com/images/I/91abc.jpg">'
+            '"hiRes":"https://m.media-amazon.com/images/I/91abc.jpg"')
 
     class _Resp:
         status_code = 200
@@ -77,3 +83,5 @@ def test_importar_parsea_pagina(monkeypatch):
     assert d["marca"] == "LEGO"
     assert d["precio_usd"] == 839.97
     assert d["peso_kg"] == round(28.76 * 0.453592, 2)
+    assert "7541 piezas" in d["descripcion"] and "minifiguras" in d["descripcion"]
+    assert d["imagenes"] == ["https://m.media-amazon.com/images/I/91abc.jpg"]

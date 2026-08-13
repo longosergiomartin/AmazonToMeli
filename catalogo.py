@@ -56,6 +56,7 @@ class ProductoCatalogo:
     dias_preparacion: int = 25
     # --- MercadoLibre ---
     titulo_ml: str = ""
+    descripcion: str = ""              # descripción de la publicación (de Amazon)
     ml_category_id: str = ""
     ml_attributes: dict = field(default_factory=dict)
     pictures: list = field(default_factory=list)
@@ -105,7 +106,8 @@ class Catalogo:
                 disponibilidad TEXT, regimen TEXT, arancel_pct REAL,
                 categoria TEXT, margen_deseado REAL, stock INTEGER,
                 dias_preparacion INTEGER,
-                titulo_ml TEXT, ml_category_id TEXT, ml_attributes TEXT,
+                titulo_ml TEXT, descripcion TEXT,
+                ml_category_id TEXT, ml_attributes TEXT,
                 pictures TEXT,
                 costo_total_ars REAL, precio_sugerido_ars REAL,
                 precio_publicado_ars REAL, margen_pct REAL,
@@ -124,6 +126,8 @@ class Catalogo:
             self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
         if "dias_preparacion" not in cols:
             self.conn.execute("ALTER TABLE catalogo ADD COLUMN dias_preparacion INTEGER DEFAULT 25")
+        if "descripcion" not in cols:
+            self.conn.execute("ALTER TABLE catalogo ADD COLUMN descripcion TEXT")
         self.conn.commit()
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
@@ -177,7 +181,8 @@ class Catalogo:
 
     _CAMPOS = ["amazon_link", "asin", "marca", "modelo", "precio_usd", "peso_kg",
                "costo_envio_usd", "disponibilidad", "regimen", "arancel_pct",
-               "categoria", "margen_deseado", "stock", "dias_preparacion", "titulo_ml",
+               "categoria", "margen_deseado", "stock", "dias_preparacion",
+               "titulo_ml", "descripcion",
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
                "ml_permalink"]
@@ -246,7 +251,7 @@ class Catalogo:
 
     def actualizar_publicacion(self, pid: int, titulo_ml=None, ml_category_id=None,
                                ml_attributes=None, pictures=None,
-                               dias_preparacion=None) -> ProductoCatalogo:
+                               dias_preparacion=None, descripcion=None) -> ProductoCatalogo:
         """Completa/edita los datos necesarios para publicar: título, categoría
         de MercadoLibre, atributos obligatorios, fotos y días de preparación."""
         p = self.obtener(pid)
@@ -262,6 +267,8 @@ class Catalogo:
             p.pictures = pictures
         if dias_preparacion is not None:
             p.dias_preparacion = int(dias_preparacion)
+        if descripcion is not None:
+            p.descripcion = descripcion
         self._guardar(p)
         self._log(pid, "publicacion", nota="Datos de publicación actualizados "
                   f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")

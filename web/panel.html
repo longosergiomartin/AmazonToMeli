@@ -181,6 +181,7 @@
     api(refrescar?"POST":"GET", refrescar?"/api/cotizacion/refrescar":"/api/cotizacion")
       .then(function(c){ renderCotiz(c); if(refrescar) cargar(); }).catch(function(){});
   }
+  var traido={descripcion:"",imagenes:[]};  // descripción y fotos de Amazon
   function traerDatos(){
     var url=($("amazon_link").value||"").trim();
     if(!url){ $("traer-msg").textContent="Pegá el link de Amazon primero."; return; }
@@ -191,6 +192,8 @@
       if(d.modelo){ $("modelo").value=d.modelo; if(!$("titulo_ml").value)$("titulo_ml").value=d.modelo; }
       if(d.precio_usd) $("precio_usd").value=d.precio_usd;
       if(d.peso_kg) $("peso_kg").value=d.peso_kg;
+      traido.descripcion=d.descripcion||"";
+      traido.imagenes=d.imagenes||[];
       $("traer-msg").textContent=d.mensaje||"";
     }).catch(function(e){ $("traer-msg").textContent="No se pudo: "+(typeof e==="string"?e:JSON.stringify(e)); });
   }
@@ -211,11 +214,13 @@
       regimen:$("regimen").value,
       categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
       stock:Math.round(num("stock")),dias_preparacion:Math.round(num("dias_preparacion")),
-      titulo_ml:$("titulo_ml").value};
+      titulo_ml:$("titulo_ml").value,
+      descripcion:traido.descripcion,pictures:traido.imagenes};
     if(!body.modelo && !body.asin){ $("add-msg").textContent="Cargá al menos ASIN o modelo."; return; }
     $("add-msg").textContent="Calculando...";
     api("POST","/api/catalogo",body).then(function(){ $("add-msg").textContent="✓ Registrado";
       ["amazon_link","asin","marca","modelo","precio_usd","costo_envio_usd","titulo_ml"].forEach(function(k){$(k).value="";});
+      traido={descripcion:"",imagenes:[]}; $("traer-msg").textContent="";
       cargar(); setTimeout(function(){$("add-msg").textContent="";},2000);
     }).catch(function(e){ $("add-msg").textContent="Error: "+JSON.stringify(e); });
   }
@@ -290,6 +295,8 @@
         '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
         '<input id="ed-cat-manual" placeholder="MLAxxxxxx" style="display:none;margin-top:6px"></div>'+
       (attrInputs?'<div class="grid2">'+attrInputs+'</div>':'')+
+      '<div class="f"><label>Descripción</label>'+
+        '<textarea id="ed-desc" rows="4" placeholder="Descripción de la publicación">'+esc(v.descripcion||"")+'</textarea></div>'+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
       '<div class="f"><label>Días de preparación (entrega)</label>'+
@@ -330,7 +337,7 @@
     var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
     var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
     var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
-    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos, dias_preparacion:dias};
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 

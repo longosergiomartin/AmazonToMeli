@@ -42,6 +42,8 @@ class AltaProducto(BaseModel):
     stock: int = 1
     dias_preparacion: int = 25
     titulo_ml: str = ""
+    descripcion: str = ""
+    pictures: list[str] = []
     ml_category_id: str = ""
 
 
@@ -70,6 +72,7 @@ class Publicacion(BaseModel):
     ml_attributes: Optional[dict] = None
     pictures: Optional[list[str]] = None
     dias_preparacion: Optional[int] = None
+    descripcion: Optional[str] = None
 
 
 def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
@@ -294,8 +297,14 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             creado = cli.publicar(item)
         except MeliAPIError as e:
             raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e.cuerpo}")
-        p = cat.registrar_publicacion(pid, creado.get("id", ""),
-                                      creado.get("permalink", ""))
+        item_id = creado.get("id", "")
+        # La descripción va en un endpoint aparte, después de crear el ítem.
+        if item_id and (p.descripcion or "").strip():
+            try:
+                cli.poner_descripcion(item_id, p.descripcion)
+            except MeliAPIError:
+                pass  # el ítem ya se publicó; la descripción se puede reintentar
+        p = cat.registrar_publicacion(pid, item_id, creado.get("permalink", ""))
         return _dict(p)
 
     @app.post("/api/catalogo/{pid}/pausar")

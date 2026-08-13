@@ -114,6 +114,13 @@ def test_registrar_publicacion(cat):
     assert p.precio_publicado_ars is not None
 
 
+def test_descripcion_persiste_y_se_edita(cat):
+    p = cat.agregar(_prod(descripcion="Descripción de Amazon"))
+    assert cat.obtener(p.id).descripcion == "Descripción de Amazon"
+    p2 = cat.actualizar_publicacion(p.id, descripcion="Editada")
+    assert cat.obtener(p.id).descripcion == "Editada"
+
+
 def test_item_incluye_dias_de_preparacion(cat):
     p = cat.agregar(_prod(titulo_ml="Waders", ml_category_id="MLA1", dias_preparacion=25))
     item = construir_item(p, pictures=["http://img/1.jpg"])

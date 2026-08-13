@@ -90,6 +90,7 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         "condicion": "nuevo",
         "marca": producto.marca,
         "modelo": producto.modelo,
+        "descripcion": getattr(producto, "descripcion", "") or "",
         "atributos": producto.ml_attributes,
         "fotos": pictures or [],
         "costo_total_ars": producto.costo_total_ars,

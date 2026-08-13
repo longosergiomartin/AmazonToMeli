@@ -162,6 +162,10 @@ Qué hace:
 
 - **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
   peso, costo de envío, disponibilidad.
+- **Traer datos desde el link de Amazon**: con un botón se autocompletan ASIN,
+  título, marca, precio, peso, **descripción y fotos** (mejor desde una PC
+  hogareña; el "Total landed" con envío+importación se agrega del checkout).
+  Queda casi todo listo para revisar y publicar.
 - **Costo total en pesos** automático (tipo de cambio + dólar tarjeta + envío +
   importación) reutilizando el motor de arbitraje.
 - **Precio sugerido** a partir de tu *margen deseado* (despeja comisión, IVA,
