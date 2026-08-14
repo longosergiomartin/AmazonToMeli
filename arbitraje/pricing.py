@@ -26,24 +26,15 @@ def precio_sugerido(costo_ars: float, margen_deseado: float,
     Queremos neto(P) = costo·(1 + margen_deseado).
     """
     m = cfg.meli
-    com = m.comisiones.get(categoria, m.comisiones["default"])
     objetivo_neto = costo_ars * (1 + margen_deseado)
 
-    # Pendiente del neto respecto del precio (parte proporcional).
-    k = 1 - com.comision_pct * (1 + m.iva_sobre_comision) - m.iibb_pct - m.ganancias_pct
+    # Todos los descuentos son proporcionales al precio:
+    #   neto = P · (1 − costos_ml − iva − ganancias − iibb)
+    k = 1 - m.costos_ml_pct(categoria) - m.iva_pct - m.ganancias_pct - m.iibb_pct
     if k <= 0:
-        raise ValueError("Las comisiones/impuestos superan el 100% del precio; "
+        raise ValueError("Los costos e impuestos superan el 100% del precio; "
                          "no hay precio que deje margen con esta configuración.")
-
-    # Caso A: precio por encima del umbral → sin costo fijo.
-    p_sin_fijo = (objetivo_neto + m.costo_envio_estimado_ars) / k
-    if p_sin_fijo >= m.umbral_costo_fijo_ars:
-        return round(p_sin_fijo, 2)
-
-    # Caso B: precio por debajo del umbral → se agrega el costo fijo.
-    costo_fijo_total = com.costo_fijo * (1 + m.iva_sobre_comision)
-    p_con_fijo = (objetivo_neto + m.costo_envio_estimado_ars + costo_fijo_total) / k
-    return round(p_con_fijo, 2)
+    return round(objetivo_neto / k, 2)
 
 
 def margen_real_al_precio(costo_ars: float, precio_ars: float,

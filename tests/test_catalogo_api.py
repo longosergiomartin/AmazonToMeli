@@ -144,15 +144,16 @@ def test_desglose_devuelve_ambas_variantes(client):
                 costo_envio_usd=34.36).json()["id"]
     d = client.get(f"/api/catalogo/{pid}/desglose", params={"precio": 590000}).json()
     det = d["detalle"]
-    # El neto estilo ML no descuenta las retenciones; el conservador sí.
+    # El neto estilo ML no descuenta impuestos argentinos; el conservador sí.
     assert d["neto_estilo_ml"] == pytest.approx(
-        d["neto_conservador"] + det["retenciones_iibb_ganancias"], abs=0.5)
+        d["neto_conservador"] + det["impuestos_total"], abs=0.5)
     assert d["estilo_ml"]["margen_ars"] > d["conservador"]["margen_ars"]
     # El margen es neto - costo.
     assert d["conservador"]["margen_ars"] == pytest.approx(
         d["neto_conservador"] - d["costo_puesto_ars"], abs=0.5)
-    for k in ("comision", "iva_sobre_comision", "envio"):
+    for k in ("costos_ml", "iva", "ganancias", "iibb"):
         assert det[k] > 0
+    assert det["costos_ml_pct"] == pytest.approx(16.0, abs=2)
 
 
 def test_oauth_status_sin_credenciales(client):

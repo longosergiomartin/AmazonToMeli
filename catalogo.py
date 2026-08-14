@@ -134,6 +134,11 @@ class Catalogo:
 
     def _calcular(self, p: ProductoCatalogo) -> None:
         """Completa costo_total_ars, precio_sugerido_ars y margen_pct."""
+        # Si no se cargó el envío+importación, se estima como % del precio de
+        # Amazon (envio_import_pct, ~26%). Cargando el Total real del checkout
+        # el número es exacto.
+        if not p.costo_envio_usd and p.precio_usd:
+            p.costo_envio_usd = round(p.precio_usd * self.cfg.envio_import_pct, 2)
         base_usd = p.precio_usd + p.costo_envio_usd
         pa = ProductoArbitraje(
             nombre=p.modelo or p.asin or "producto", query_meli=p.modelo or "",

@@ -35,6 +35,20 @@ def test_alta_calcula_costo_y_precio_sugerido(cat):
     assert p.margen_pct == pytest.approx(35.0, abs=1.0)
 
 
+def test_envio_import_se_estima_como_26pct_si_no_se_carga(cat):
+    # Sin costo de envío cargado: se estima 26% del precio de Amazon.
+    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=0.0, regimen="landed"))
+    assert p.costo_envio_usd == pytest.approx(126.0 * 0.26, abs=0.01)
+    tc = cat.cfg.tc_compra()
+    assert p.costo_total_ars == pytest.approx((126.0 * 1.26) * tc, abs=1)
+
+
+def test_envio_import_cargado_a_mano_tiene_prioridad(cat):
+    # Con el Total real del checkout, no se pisa con la estimación.
+    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=34.36, regimen="landed"))
+    assert p.costo_envio_usd == 34.36
+
+
 def test_comparacion_dolar_oficial_vs_tarjeta():
     conn = sqlite3.connect(":memory:")
     c = Catalogo(conn, cfg=Config(), cotizacion={"oficial": 1000.0, "tarjeta": 1300.0})

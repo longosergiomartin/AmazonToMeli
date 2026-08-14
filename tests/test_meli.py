@@ -1,5 +1,7 @@
 """Tests del cálculo de neto de venta en MeLi y del evaluador (sin red)."""
 
+import pytest
+
 from arbitraje.config import Config
 from arbitraje.models import Producto
 from arbitraje.meli import calcular_neto_venta_meli
@@ -10,18 +12,26 @@ def test_neto_menor_al_precio_de_venta():
     cfg = Config()
     r = calcular_neto_venta_meli(100000, "electronica", cfg)
     assert r.neto_ars < 100000
-    assert set(r.detalle_ars) == {
-        "comision", "costo_fijo", "iva_sobre_comision",
-        "iibb", "ganancias", "envio_estimado",
-    }
+    assert set(r.detalle_ars) == {"costos_ml", "iva", "ganancias", "iibb"}
 
 
-def test_costo_fijo_solo_debajo_del_umbral():
-    cfg = Config()  # umbral 33000
-    barato = calcular_neto_venta_meli(20000, "default", cfg)
-    caro = calcular_neto_venta_meli(50000, "default", cfg)
-    assert barato.detalle_ars["costo_fijo"] > 0
-    assert caro.detalle_ars["costo_fijo"] == 0
+def test_descuentos_son_proporcionales_al_precio():
+    cfg = Config()
+    d1 = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    d2 = calcular_neto_venta_meli(200000, "default", cfg).detalle_ars
+    for k in d1:
+        assert d2[k] == pytest.approx(d1[k] * 2, abs=0.5)
+    # Costos de ML ~16% y el IVA 21% del precio.
+    assert d1["costos_ml"] == pytest.approx(100000 * 0.16, abs=1)
+    assert d1["iva"] == pytest.approx(100000 * 0.21, abs=1)
+
+
+def test_monotributista_sin_iva():
+    cfg = Config()
+    cfg.meli.iva_pct = 0.0
+    r = calcular_neto_venta_meli(100000, "default", cfg)
+    assert r.detalle_ars["iva"] == 0
+    assert r.neto_ars > calcular_neto_venta_meli(100000, "default", Config()).neto_ars
 
 
 def test_categoria_desconocida_usa_default():

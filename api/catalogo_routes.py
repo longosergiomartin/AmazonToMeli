@@ -291,8 +291,10 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         cfg_ef = cat._cfg_efectivo()
         venta = calcular_neto_venta_meli(precio, p.categoria, cfg_ef)
         d = venta.detalle_ars
-        retenciones = d["iibb"] + d["ganancias"]
-        neto_estilo_ml = venta.neto_ars + retenciones  # ML no descuenta retenciones en "Recibís"
+        # Las retenciones y el IVA son "a cuenta" / compensables: el simulador
+        # de ML solo descuenta sus propios costos, por eso mostramos las dos.
+        impuestos = d["iibb"] + d["ganancias"] + d["iva"]
+        neto_estilo_ml = venta.neto_ars + impuestos
         costo = p.costo_total_ars
         def _m(neto):
             m = neto - costo
@@ -302,11 +304,12 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             "precio": precio,
             "costo_puesto_ars": costo,
             "detalle": {
-                "comision": d["comision"],
-                "costo_fijo": d["costo_fijo"],
-                "iva_sobre_comision": d["iva_sobre_comision"],
-                "envio": d["envio_estimado"],
-                "retenciones_iibb_ganancias": round(retenciones, 2),
+                "costos_ml": d["costos_ml"],
+                "iva": d["iva"],
+                "ganancias": d["ganancias"],
+                "iibb": d["iibb"],
+                "impuestos_total": round(impuestos, 2),
+                "costos_ml_pct": round(cfg_ef.meli.costos_ml_pct(p.categoria) * 100, 1),
             },
             "neto_conservador": venta.neto_ars,
             "conservador": _m(venta.neto_ars),
