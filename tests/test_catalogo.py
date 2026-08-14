@@ -141,6 +141,38 @@ def test_editar_dias_preparacion_persiste(cat):
     assert cat.obtener(p.id).dias_preparacion == 30
 
 
+def test_valores_por_defecto_de_atributos_administrativos():
+    from mercadolibre.listing import valor_por_defecto
+    # Elige de la lista de valores permitidos por MercadoLibre.
+    assert valor_por_defecto({"id": "IVA", "name": "IVA",
+                              "values": ["0 %", "10.5 %", "21 %"]}) == "21 %"
+    assert valor_por_defecto({"id": "INTERNAL_TAX", "name": "Impuesto interno",
+                              "values": ["0 %", "5 %"]}) == "0 %"
+    assert valor_por_defecto({"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vacío",
+                              "values": ["Es un kit", "Otra razón"]}) == "Otra razón"
+    # Sin lista de valores, usa el default razonable.
+    assert valor_por_defecto({"id": "IVA", "name": "IVA", "values": []}) == "21 %"
+    # Atributos normales no tienen default.
+    assert valor_por_defecto({"id": "COLOR", "name": "Color", "values": ["Rojo"]}) == ""
+
+
+def test_motivo_gtin_vacio_no_se_manda_si_hay_gtin(cat):
+    p = cat.agregar(_prod(titulo_ml="Lego", ml_category_id="MLA1",
+                          ml_attributes={"GTIN": "5702016914498",
+                                         "EMPTY_GTIN_REASON": "Otra razón",
+                                         "IVA": "21 %"}))
+    ids = {a["id"] for a in construir_item(p, pictures=["http://img/1.jpg"])["attributes"]}
+    assert "GTIN" in ids and "IVA" in ids
+    assert "EMPTY_GTIN_REASON" not in ids  # contradictorio con un GTIN cargado
+
+
+def test_motivo_gtin_vacio_se_manda_si_no_hay_gtin(cat):
+    p = cat.agregar(_prod(titulo_ml="Lego", ml_category_id="MLA1",
+                          ml_attributes={"EMPTY_GTIN_REASON": "Otra razón"}))
+    ids = {a["id"] for a in construir_item(p, pictures=["http://img/1.jpg"])["attributes"]}
+    assert "EMPTY_GTIN_REASON" in ids
+
+
 def test_construir_item_mapea_marca_y_modelo(cat):
     p = cat.agregar(_prod(titulo_ml="Waders HISEA neopreno con botas",
                           ml_category_id="MLA1234"))

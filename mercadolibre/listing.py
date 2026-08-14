@@ -11,7 +11,44 @@ aprobación explícita.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Optional
+
+
+def _norm(texto: str) -> str:
+    """Minúsculas y sin acentos, para comparar nombres de atributos/valores."""
+    t = unicodedata.normalize("NFD", texto or "")
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").lower().strip()
+
+
+def valor_por_defecto(attr: dict) -> str:
+    """Valor sugerido para atributos administrativos que siempre se completan
+    igual, eligiendo —cuando se puede— una de las opciones que MercadoLibre
+    permite para ese atributo:
+
+      - IVA                     → 21 %
+      - Impuesto interno        → 0 %
+      - Motivo de GTIN vacío    → la opción de tipo "Otro"
+
+    Devuelve "" si el atributo no es de los que tienen default.
+    """
+    aid = (attr.get("id") or "").upper()
+    nombre = _norm(attr.get("name", ""))
+    valores = [v for v in (attr.get("values") or []) if v]
+
+    def _elegir(predicado, fallback: str) -> str:
+        for v in valores:
+            if predicado(_norm(v)):
+                return v
+        return fallback
+
+    if aid == "EMPTY_GTIN_REASON" or ("gtin" in nombre and "vaci" in nombre):
+        return _elegir(lambda v: v.startswith("otr"), "Otro")
+    if aid in ("IVA", "VAT") or nombre == "iva":
+        return _elegir(lambda v: v.startswith("21"), "21 %")
+    if aid == "INTERNAL_TAX" or "impuesto interno" in nombre:
+        return _elegir(lambda v: v.startswith("0"), "0 %")
+    return ""
 
 
 def _precio(producto) -> float:
@@ -29,7 +66,12 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
     if producto.modelo:
         attrs.append({"id": "MODEL", "value_name": producto.modelo})
     # Atributos obligatorios extra que el usuario ya haya completado.
-    for aid, val in (producto.ml_attributes or {}).items():
+    extra = dict(producto.ml_attributes or {})
+    # El "motivo de GTIN vacío" solo aplica cuando NO hay GTIN: mandarlo junto
+    # con un GTIN cargado es contradictorio y MercadoLibre lo rechaza.
+    if (extra.get("GTIN") or "").strip():
+        extra.pop("EMPTY_GTIN_REASON", None)
+    for aid, val in extra.items():
         if aid in ("BRAND", "MODEL"):
             continue
         attrs.append({"id": aid, "value_name": val})

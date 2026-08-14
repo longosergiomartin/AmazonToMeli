@@ -283,7 +283,9 @@
       return '<option value="'+esc(cid)+'"'+(v.categoria_id===cid?" selected":"")+'>'+esc(cid+" · "+nm)+'</option>';}).join("");
     var attrInputs=obl.map(function(a){
       var opts=(a.values||[]).map(function(val){return '<option value="'+esc(val)+'">';}).join("");
-      var cur=(v.atributos&&v.atributos[a.id])||"";
+      // Si nunca se cargó, se usa el valor por defecto (IVA 21 %, impuesto
+      // interno 0 %, motivo de GTIN vacío "Otro").
+      var cur=(v.atributos&&v.atributos[a.id])||a.sugerido||"";
       var hint=(a.id==="GTIN")
         ? '<span class="hint">Código de barras EAN/UPC (solo números) de la caja. <b>No es el ASIN.</b> '
           +(p.asin?'<button type="button" class="sm" id="btn-gtin-auto">🔎 Buscar GTIN automáticamente</button> '

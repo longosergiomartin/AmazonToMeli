@@ -24,7 +24,8 @@ from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError
-from mercadolibre.listing import construir_item, vista_previa, faltantes_para_publicar
+from mercadolibre.listing import (construir_item, vista_previa,
+                                  faltantes_para_publicar, valor_por_defecto)
 
 
 class AltaProducto(BaseModel):
@@ -345,6 +346,11 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
                     obligatorios = cli.atributos_obligatorios(catid)
             except (MeliAPIError, HTTPException):
                 pass  # sin conexión seguimos con carga manual de categoría
+        # Valores por defecto para atributos administrativos (IVA 21 %,
+        # impuesto interno 0 %, motivo de GTIN vacío "Otro"), para no cargarlos
+        # a mano en cada publicación.
+        for a in obligatorios:
+            a["sugerido"] = valor_por_defecto(a)
         preview = vista_previa(p, pictures=pics)
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         return {"preview": preview, "categorias_sugeridas": sugeridas,
