@@ -140,6 +140,8 @@ def test_competencia_sin_titulo_da_400(client):
 
 
 def test_desglose_devuelve_ambas_variantes(client):
+    # Como Responsable Inscripto, para que haya IVA y Ganancias en el desglose.
+    client.patch("/api/fiscal", json={"condicion_fiscal": "responsable_inscripto"})
     pid = _alta(client, regimen="landed", precio_usd=126.0,
                 costo_envio_usd=34.36).json()["id"]
     d = client.get(f"/api/catalogo/{pid}/desglose", params={"precio": 590000}).json()
@@ -154,6 +156,33 @@ def test_desglose_devuelve_ambas_variantes(client):
     for k in ("costos_ml", "iva", "ganancias", "iibb"):
         assert det[k] > 0
     assert det["costos_ml_pct"] == pytest.approx(16.0, abs=2)
+
+
+def test_fiscal_default_monotributo(client):
+    f = client.get("/api/fiscal").json()
+    assert f["condicion_fiscal"] == "monotributo"
+    assert f["iva_pct"] == 0 and f["ganancias_pct"] == 0
+
+
+def test_cambiar_condicion_fiscal_recalcula_margenes(client):
+    pid = _alta(client, regimen="landed", precio_usd=126.0).json()["id"]
+    margen_mono = client.get(f"/api/catalogo/{pid}").json()["margen_pct"]
+
+    f = client.patch("/api/fiscal", json={"condicion_fiscal": "responsable_inscripto"}).json()
+    assert f["condicion_fiscal"] == "responsable_inscripto" and f["iva_pct"] == 21.0
+    # Al RI el precio sugerido sube (tiene que cubrir IVA y Ganancias).
+    p = client.get(f"/api/catalogo/{pid}").json()
+    assert p["precio_sugerido_ars"] > 0
+    # El margen al mismo precio publicado baja para el RI.
+    client.patch(f"/api/catalogo/{pid}/precio", json={"precio": 600000})
+    margen_ri = client.get(f"/api/catalogo/{pid}").json()["margen_pct"]
+    client.patch("/api/fiscal", json={"condicion_fiscal": "monotributo"})
+    margen_mono2 = client.get(f"/api/catalogo/{pid}").json()["margen_pct"]
+    assert margen_mono2 > margen_ri
+
+
+def test_condicion_fiscal_invalida_da_400(client):
+    assert client.patch("/api/fiscal", json={"condicion_fiscal": "x"}).status_code == 400
 
 
 def test_oauth_status_sin_credenciales(client):

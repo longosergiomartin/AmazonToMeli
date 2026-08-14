@@ -71,20 +71,41 @@ def _costos_ml_default() -> Dict[str, float]:
     }
 
 
+# Alícuotas de impuestos sobre la venta según la condición fiscal del vendedor.
+# VERIFICAR con tu contador: dependen de tu jurisdicción y de si estás inscripto
+# en los regímenes de retención.
+PRESETS_FISCALES: Dict[str, Dict[str, float]] = {
+    # Monotributo: no discrimina IVA en la venta y no sufre retención de
+    # Ganancias. IIBB puede retenerse igual según la provincia/CABA.
+    # Contrapartida: el IVA que pagás al importar NO se recupera (es costo).
+    "monotributo": {"iva_pct": 0.0, "ganancias_pct": 0.0, "iibb_pct": 0.03},
+    # Responsable Inscripto: IVA débito de la venta (compensable con el crédito
+    # fiscal de la importación) + retenciones de Ganancias e IIBB.
+    "responsable_inscripto": {"iva_pct": 0.21, "ganancias_pct": 0.06, "iibb_pct": 0.03},
+}
+CONDICIONES_FISCALES = tuple(PRESETS_FISCALES)
+
+
 @dataclass
 class MeliConfig:
     # % del precio que se lleva MercadoLibre (comisión + envío gratis).
     costos_ml: Dict[str, float] = field(default_factory=_costos_ml_default)
+    # Condición fiscal del vendedor: define las alícuotas de abajo.
+    condicion_fiscal: str = "monotributo"
     # Impuestos argentinos sobre la venta (% del precio de venta):
-    iva_pct: float = 0.21        # IVA débito fiscal si sos Responsable Inscripto.
-                                 # OJO: la importación genera crédito fiscal de IVA
-                                 # que lo compensa; poné 0 si sos Monotributista.
-    ganancias_pct: float = 0.06  # retención de Ganancias — a cuenta (recuperable)
-    iibb_pct: float = 0.03       # IIBB según jurisdicción — a cuenta (recuperable)
+    iva_pct: float = 0.0         # 0 en Monotributo; 21% si sos RI
+    ganancias_pct: float = 0.0   # 0 en Monotributo; retención si sos RI
+    iibb_pct: float = 0.03       # según jurisdicción — VERIFICAR si te retienen
     site: str = "MLA"            # MLA = Argentina
 
     def costos_ml_pct(self, categoria: str = "default") -> float:
         return self.costos_ml.get(categoria, self.costos_ml["default"])
+
+    def con_condicion_fiscal(self, condicion: str) -> "MeliConfig":
+        """Copia con las alícuotas del preset de esa condición fiscal."""
+        if condicion not in PRESETS_FISCALES:
+            raise ValueError(f"Condición fiscal desconocida: {condicion!r}")
+        return replace(self, condicion_fiscal=condicion, **PRESETS_FISCALES[condicion])
 
 
 # =======================================================================

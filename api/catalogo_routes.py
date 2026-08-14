@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
-from arbitraje.config import Config, CONFIG_DEFAULT
+from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
 from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo
@@ -157,6 +157,27 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
     def oauth_logout():
         store.borrar()
         return {"conectado": False}
+
+    # ---- condición fiscal del vendedor -----------------------------------
+
+    @app.get("/api/fiscal")
+    def fiscal():
+        c = cat._cfg_efectivo().meli
+        return {"condicion_fiscal": cat.condicion_fiscal,
+                "opciones": list(CONDICIONES_FISCALES),
+                "iva_pct": round(c.iva_pct * 100, 1),
+                "ganancias_pct": round(c.ganancias_pct * 100, 1),
+                "iibb_pct": round(c.iibb_pct * 100, 1)}
+
+    @app.patch("/api/fiscal")
+    def fiscal_set(body: dict):
+        valor = (body or {}).get("condicion_fiscal", "")
+        try:
+            cat.condicion_fiscal = valor
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cat.recalcular_todos()  # los márgenes cambian con las alícuotas
+        return fiscal()
 
     # ---- cotización del dólar --------------------------------------------
 

@@ -21,17 +21,33 @@ def test_descuentos_son_proporcionales_al_precio():
     d2 = calcular_neto_venta_meli(200000, "default", cfg).detalle_ars
     for k in d1:
         assert d2[k] == pytest.approx(d1[k] * 2, abs=0.5)
-    # Costos de ML ~16% y el IVA 21% del precio.
+    # Costos de ML ~16% del precio.
     assert d1["costos_ml"] == pytest.approx(100000 * 0.16, abs=1)
-    assert d1["iva"] == pytest.approx(100000 * 0.21, abs=1)
 
 
-def test_monotributista_sin_iva():
+def test_monotributo_es_el_default_y_no_paga_iva_ni_ganancias():
     cfg = Config()
-    cfg.meli.iva_pct = 0.0
-    r = calcular_neto_venta_meli(100000, "default", cfg)
-    assert r.detalle_ars["iva"] == 0
-    assert r.neto_ars > calcular_neto_venta_meli(100000, "default", Config()).neto_ars
+    assert cfg.meli.condicion_fiscal == "monotributo"
+    d = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    assert d["iva"] == 0 and d["ganancias"] == 0
+    assert d["iibb"] > 0  # IIBB puede retenerse igual
+
+
+def test_responsable_inscripto_paga_iva_y_ganancias():
+    from dataclasses import replace
+    base = Config()
+    cfg = replace(base, meli=base.meli.con_condicion_fiscal("responsable_inscripto"))
+    d = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    assert d["iva"] == pytest.approx(21000, abs=1)
+    assert d["ganancias"] == pytest.approx(6000, abs=1)
+    # Al RI le queda menos neto que al monotributista al mismo precio.
+    assert (calcular_neto_venta_meli(100000, "default", cfg).neto_ars
+            < calcular_neto_venta_meli(100000, "default", base).neto_ars)
+
+
+def test_condicion_fiscal_invalida():
+    with pytest.raises(ValueError):
+        Config().meli.con_condicion_fiscal("inventada")
 
 
 def test_categoria_desconocida_usa_default():
