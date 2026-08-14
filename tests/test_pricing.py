@@ -33,7 +33,7 @@ def test_categoria_mas_cara_requiere_precio_mas_alto():
 
 def test_config_imposible_lanza_error():
     cfg = Config()
-    # Comisión absurda que se come todo el precio.
-    cfg.meli.comisiones["default"].comision_pct = 0.95
+    # Costos de ML absurdos que se comen todo el precio.
+    cfg.meli.costos_ml["default"] = 1.05
     with pytest.raises(ValueError):
         precio_sugerido(100000, 0.30, "default", cfg)

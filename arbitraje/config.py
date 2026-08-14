@@ -59,34 +59,53 @@ class GeneralConfig:
 # COSTOS DE VENTA EN MERCADOLIBRE
 # =======================================================================
 
-@dataclass
-class ComisionCategoria:
-    comision_pct: float
-    costo_fijo: float
-
-
-def _comisiones_default() -> Dict[str, ComisionCategoria]:
-    # Tarifas Premium publicadas por MeLi — VERIFICAR en tu cuenta de vendedor,
-    # cambian cada pocos meses.
+def _costos_ml_default() -> Dict[str, float]:
+    """Costos de MercadoLibre como % del precio de venta: incluyen la comisión
+    por vender Y el cargo por ofrecer envío gratis. Verificado contra el
+    simulador de la Central de vendedores (~16%). AJUSTAR por categoría."""
     return {
-        "electronica": ComisionCategoria(0.1714, 2810),
-        "computacion": ComisionCategoria(0.1500, 2810),
-        "hogar":       ComisionCategoria(0.1400, 2300),
-        "default":     ComisionCategoria(0.1500, 2300),
+        "electronica": 0.17,
+        "computacion": 0.16,
+        "hogar":       0.15,
+        "default":     0.16,
     }
+
+
+# Alícuotas de impuestos sobre la venta según la condición fiscal del vendedor.
+# VERIFICAR con tu contador: dependen de tu jurisdicción y de si estás inscripto
+# en los regímenes de retención.
+PRESETS_FISCALES: Dict[str, Dict[str, float]] = {
+    # Monotributo: no discrimina IVA en la venta y no sufre retención de
+    # Ganancias. IIBB puede retenerse igual según la provincia/CABA.
+    # Contrapartida: el IVA que pagás al importar NO se recupera (es costo).
+    "monotributo": {"iva_pct": 0.0, "ganancias_pct": 0.0, "iibb_pct": 0.03},
+    # Responsable Inscripto: IVA débito de la venta (compensable con el crédito
+    # fiscal de la importación) + retenciones de Ganancias e IIBB.
+    "responsable_inscripto": {"iva_pct": 0.21, "ganancias_pct": 0.06, "iibb_pct": 0.03},
+}
+CONDICIONES_FISCALES = tuple(PRESETS_FISCALES)
 
 
 @dataclass
 class MeliConfig:
-    comisiones: Dict[str, ComisionCategoria] = field(default_factory=_comisiones_default)
-    iva_sobre_comision: float = 0.21
-    iibb_pct: float = 0.03                 # sobre precio de venta — AJUSTAR por jurisdicción
-    ganancias_pct: float = 0.06            # retención si sos RI — AJUSTAR
-    costo_envio_estimado_ars: float = 6000 # si ofrecés envío gratis (Premium)
-    umbral_costo_fijo_ars: float = 33000   # debajo de este precio se cobra costo fijo
-    # Las retenciones de IIBB/Ganancias son a cuenta de impuestos anuales
-    # (recuperables), no un costo puro. Se restan igual para ver el margen de caja.
-    site: str = "MLA"                      # MLA = Argentina
+    # % del precio que se lleva MercadoLibre (comisión + envío gratis).
+    costos_ml: Dict[str, float] = field(default_factory=_costos_ml_default)
+    # Condición fiscal del vendedor: define las alícuotas de abajo.
+    condicion_fiscal: str = "monotributo"
+    # Impuestos argentinos sobre la venta (% del precio de venta):
+    iva_pct: float = 0.0         # 0 en Monotributo; 21% si sos RI
+    ganancias_pct: float = 0.0   # 0 en Monotributo; retención si sos RI
+    iibb_pct: float = 0.03       # según jurisdicción — VERIFICAR si te retienen
+    site: str = "MLA"            # MLA = Argentina
+
+    def costos_ml_pct(self, categoria: str = "default") -> float:
+        return self.costos_ml.get(categoria, self.costos_ml["default"])
+
+    def con_condicion_fiscal(self, condicion: str) -> "MeliConfig":
+        """Copia con las alícuotas del preset de esa condición fiscal."""
+        if condicion not in PRESETS_FISCALES:
+            raise ValueError(f"Condición fiscal desconocida: {condicion!r}")
+        return replace(self, condicion_fiscal=condicion, **PRESETS_FISCALES[condicion])
 
 
 # =======================================================================
@@ -102,6 +121,11 @@ class Config:
     # es en pesos). Es a cuenta de impuestos (recuperable) pero sale de tu
     # bolsillo al momento de comprar. VERIFICAR alícuota vigente.
     recargo_tarjeta_pct: float = 0.30
+    # Envío internacional + cargos de importación de Amazon, como % del precio
+    # publicado del producto. Estimación verificada contra checkouts reales
+    # (~26% cuando el envío entra en la promo de envío gratis). Se usa para
+    # precargar el costo de envío; podés pisarlo con el Total real del checkout.
+    envio_import_pct: float = 0.26
     umbral_margen_bueno_pct: float = 30.0  # a partir de acá lo marcamos como oportunidad
     courier: CourierConfig = field(default_factory=CourierConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
@@ -122,19 +146,14 @@ class Config:
         general = replace(base.general, **data.get("general", {}))
 
         meli_data = dict(data.get("meli", {}))
-        comisiones = None
-        if "comisiones" in meli_data:
-            comisiones = {
-                k: ComisionCategoria(**v) if isinstance(v, dict) else v
-                for k, v in meli_data.pop("comisiones").items()
-            }
+        costos = meli_data.pop("costos_ml", None)
         meli = replace(base.meli, **meli_data)
-        if comisiones is not None:
-            meli.comisiones = comisiones
+        if costos is not None:
+            meli.costos_ml = dict(costos)
 
         top = {k: v for k, v in data.items()
                if k in {"tipo_cambio_oficial", "recargo_tarjeta_pct",
-                        "umbral_margen_bueno_pct"}}
+                        "umbral_margen_bueno_pct", "envio_import_pct"}}
         return replace(base, courier=courier, general=general, meli=meli, **top)
 
     @classmethod

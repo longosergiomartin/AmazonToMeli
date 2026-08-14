@@ -79,30 +79,31 @@ def calcular_neto_venta_meli(
     categoria: str = "default",
     cfg: Config = CONFIG_DEFAULT,
 ) -> ResultadoVentaMeli:
-    """Cuánto queda neto (ARS) de una venta en MeLi, descontando comisión +
-    IVA sobre comisión + costo fijo + IIBB + Ganancias + envío estimado."""
+    """Cuánto queda neto (ARS) de una venta en MercadoLibre.
+
+    Descuentos, todos como % del precio de venta:
+      - costos_ml : comisión por vender + cargo por ofrecer envío gratis (~16%).
+      - iva       : IVA débito fiscal de la venta (21% si sos RI). Ojo: la
+                    importación genera crédito fiscal que lo compensa, así que
+                    el impacto real suele ser menor. Poné 0 si sos Monotributista.
+      - ganancias, iibb : retenciones, a cuenta de impuestos anuales
+                    (recuperables, pero salen de la caja al momento de cobrar).
+    """
     m = cfg.meli
-    com = m.comisiones.get(categoria, m.comisiones["default"])
-
-    comision = precio_venta_ars * com.comision_pct
-    costo_fijo = com.costo_fijo if precio_venta_ars < m.umbral_costo_fijo_ars else 0.0
-    iva_sobre_comision = (comision + costo_fijo) * m.iva_sobre_comision
-    iibb = precio_venta_ars * m.iibb_pct
+    costos_ml = precio_venta_ars * m.costos_ml_pct(categoria)
+    iva = precio_venta_ars * m.iva_pct
     ganancias = precio_venta_ars * m.ganancias_pct
-    envio = m.costo_envio_estimado_ars
+    iibb = precio_venta_ars * m.iibb_pct
 
-    total_descuentos = comision + costo_fijo + iva_sobre_comision + iibb + ganancias + envio
-    neto = precio_venta_ars - total_descuentos
+    neto = precio_venta_ars - (costos_ml + iva + ganancias + iibb)
 
     return ResultadoVentaMeli(
         precio_venta_ars=round(precio_venta_ars, 2),
         neto_ars=round(neto, 2),
         detalle_ars={
-            "comision": round(comision, 2),
-            "costo_fijo": round(costo_fijo, 2),
-            "iva_sobre_comision": round(iva_sobre_comision, 2),
-            "iibb": round(iibb, 2),
+            "costos_ml": round(costos_ml, 2),
+            "iva": round(iva, 2),
             "ganancias": round(ganancias, 2),
-            "envio_estimado": round(envio, 2),
+            "iibb": round(iibb, 2),
         },
     )

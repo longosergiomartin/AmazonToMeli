@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel
 
-from arbitraje.config import Config, CONFIG_DEFAULT
+from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
 from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo
@@ -158,6 +158,27 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         store.borrar()
         return {"conectado": False}
 
+    # ---- condición fiscal del vendedor -----------------------------------
+
+    @app.get("/api/fiscal")
+    def fiscal():
+        c = cat._cfg_efectivo().meli
+        return {"condicion_fiscal": cat.condicion_fiscal,
+                "opciones": list(CONDICIONES_FISCALES),
+                "iva_pct": round(c.iva_pct * 100, 1),
+                "ganancias_pct": round(c.ganancias_pct * 100, 1),
+                "iibb_pct": round(c.iibb_pct * 100, 1)}
+
+    @app.patch("/api/fiscal")
+    def fiscal_set(body: dict):
+        valor = (body or {}).get("condicion_fiscal", "")
+        try:
+            cat.condicion_fiscal = valor
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cat.recalcular_todos()  # los márgenes cambian con las alícuotas
+        return fiscal()
+
     # ---- cotización del dólar --------------------------------------------
 
     @app.get("/api/cotizacion")
@@ -291,8 +312,10 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         cfg_ef = cat._cfg_efectivo()
         venta = calcular_neto_venta_meli(precio, p.categoria, cfg_ef)
         d = venta.detalle_ars
-        retenciones = d["iibb"] + d["ganancias"]
-        neto_estilo_ml = venta.neto_ars + retenciones  # ML no descuenta retenciones en "Recibís"
+        # Las retenciones y el IVA son "a cuenta" / compensables: el simulador
+        # de ML solo descuenta sus propios costos, por eso mostramos las dos.
+        impuestos = d["iibb"] + d["ganancias"] + d["iva"]
+        neto_estilo_ml = venta.neto_ars + impuestos
         costo = p.costo_total_ars
         def _m(neto):
             m = neto - costo
@@ -302,11 +325,12 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             "precio": precio,
             "costo_puesto_ars": costo,
             "detalle": {
-                "comision": d["comision"],
-                "costo_fijo": d["costo_fijo"],
-                "iva_sobre_comision": d["iva_sobre_comision"],
-                "envio": d["envio_estimado"],
-                "retenciones_iibb_ganancias": round(retenciones, 2),
+                "costos_ml": d["costos_ml"],
+                "iva": d["iva"],
+                "ganancias": d["ganancias"],
+                "iibb": d["iibb"],
+                "impuestos_total": round(impuestos, 2),
+                "costos_ml_pct": round(cfg_ef.meli.costos_ml_pct(p.categoria) * 100, 1),
             },
             "neto_conservador": venta.neto_ars,
             "conservador": _m(venta.neto_ars),

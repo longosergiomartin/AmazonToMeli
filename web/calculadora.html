@@ -206,17 +206,18 @@
         </div>
         <div class="row">
           <div class="field">
-            <label for="categoria">Categoría (comisión)</label>
+            <label for="categoria">Categoría (costos de ML)</label>
             <select id="categoria">
-              <option value="electronica">Electrónica (17,14%)</option>
-              <option value="computacion">Computación (15%)</option>
-              <option value="hogar">Hogar (14%)</option>
-              <option value="default" selected>Otra / default (15%)</option>
+              <option value="electronica">Electrónica (17%)</option>
+              <option value="computacion">Computación (16%)</option>
+              <option value="hogar">Hogar (15%)</option>
+              <option value="default" selected>Otra / default (16%)</option>
             </select>
           </div>
           <div class="field">
-            <label for="envio">Envío estimado (ARS)</label>
-            <input type="number" id="envio" value="6000" step="500">
+            <label for="iva">IVA de la venta (%)</label>
+            <input type="number" id="iva" value="21" step="0.5">
+            <span class="hint">0 si sos Monotributista.</span>
           </div>
         </div>
 
@@ -243,12 +244,13 @@
 
         <div class="lines">
           <div class="li"><span>Costo puesto (x unidad)</span><b id="r-costo">—</b></div>
-          <div class="li"><span>Neto de la venta</span><b id="r-neto">—</b></div>
+          <div class="li"><span>Neto con impuestos</span><b id="r-neto">—</b></div>
           <div class="li total"><span>Margen por unidad</span><b id="r-margen">—</b></div>
           <div class="li" id="r-lote-row" hidden><span>Margen total del lote</span><b id="r-lote">—</b></div>
-          <div class="li sub"><span>Comisión + IVA</span><b id="r-com">—</b></div>
-          <div class="li sub"><span>IIBB + Ganancias</span><b id="r-imp">—</b></div>
-          <div class="li sub"><span>Costo fijo + envío</span><b id="r-fijo">—</b></div>
+          <div class="li"><span>Margen estilo "Recibís" de ML</span><b id="r-margen-ml">—</b></div>
+          <div class="li sub"><span>MercadoLibre (comisión + envío)</span><b id="r-com">—</b></div>
+          <div class="li sub"><span>IVA de la venta</span><b id="r-imp">—</b></div>
+          <div class="li sub"><span>Ganancias + IIBB</span><b id="r-fijo">—</b></div>
         </div>
 
         <button class="btn" id="save" type="button">Guardar en mi lista</button>
@@ -289,11 +291,9 @@
 (function(){
   "use strict";
   var $ = function(id){ return document.getElementById(id); };
-  var COMIS = {
-    electronica:{pct:0.1714,fijo:2810}, computacion:{pct:0.15,fijo:2810},
-    hogar:{pct:0.14,fijo:2300}, default:{pct:0.15,fijo:2300}
-  };
-  var UMBRAL_FIJO=33000, IVA_COM=0.21, TASA_COURIER=0.50, TOPE=3000, UMBRAL_BUENO=30;
+  // Costos de MercadoLibre como % del precio: comisión + envío gratis.
+  var COMIS = {electronica:0.17, computacion:0.16, hogar:0.15, default:0.16};
+  var TASA_COURIER=0.50, TOPE=3000, UMBRAL_BUENO=30;
   var modo="landed";
 
   function num(id){ var v=parseFloat($(id).value); return isFinite(v)?v:0; }
@@ -318,20 +318,23 @@
     var costoUSD=costoUnitUSD();
     var costoARS=costoUSD*tcCompra();
     var precio=num("precio-meli");
-    var c=COMIS[$("categoria").value]||COMIS.default;
+    var pctML=COMIS[$("categoria").value]||COMIS.default;
 
-    var comision=precio*c.pct;
-    var fijo=precio>0 && precio<UMBRAL_FIJO ? c.fijo : 0;
-    var ivaCom=(comision+fijo)*IVA_COM;
+    var costosML=precio*pctML;                 // comisión + envío gratis (~16%)
+    var iva=precio*num("iva")/100;             // IVA de la venta (0 si Monotributo)
     var iibb=precio*num("iibb")/100;
     var ganancias=precio*num("ganancias")/100;
-    var envio=num("envio");
-    var neto=precio-(comision+fijo+ivaCom+iibb+ganancias+envio);
+    var neto=precio-(costosML+iva+iibb+ganancias);
     var margen=neto-costoARS;
     var pct=costoARS>0?(margen/costoARS*100):0;
+    // Variante "Recibís" del simulador de ML: sin impuestos argentinos.
+    var netoML=precio-costosML;
+    var margenML=netoML-costoARS;
 
     return {cant:cant,costoARS:costoARS,neto:neto,margen:margen,pct:pct,precio:precio,
-      com:comision+ivaCom, imp:iibb+ganancias, fijo:fijo+envio, listo:precio>0&&costoARS>0};
+      com:costosML, imp:iva, fijo:iibb+ganancias,
+      netoML:netoML, margenML:margenML,
+      pctML:costoARS>0?(margenML/costoARS*100):0, listo:precio>0&&costoARS>0};
   }
 
   function veredicto(pct){
@@ -364,6 +367,7 @@
     $("r-com").textContent="−"+fmtARS(r.com);
     $("r-imp").textContent="−"+fmtARS(r.imp);
     $("r-fijo").textContent="−"+fmtARS(r.fijo);
+    $("r-margen-ml").textContent=fmtARS(r.margenML)+"  ("+r.pctML.toFixed(1)+"%)";
     var lote=$("r-lote-row");
     if(r.cant>1){ lote.hidden=false; $("r-lote").textContent=fmtARS(r.margen*r.cant); }
     else lote.hidden=true;
@@ -372,7 +376,7 @@
 
   // ---- persistencia de inputs ----
   var IN_KEYS=["nombre","cantidad","landed","precio-amazon","peso","oficial","recargo",
-    "precio-meli","categoria","envio","iibb","ganancias","flete-kg","franquicia"];
+    "precio-meli","categoria","iva","iibb","ganancias","flete-kg","franquicia"];
   function saveInputs(){
     var o={modo:modo};
     IN_KEYS.forEach(function(k){ o[k]=$(k).value; });

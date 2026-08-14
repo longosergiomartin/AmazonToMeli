@@ -1,5 +1,7 @@
 """Tests del cálculo de neto de venta en MeLi y del evaluador (sin red)."""
 
+import pytest
+
 from arbitraje.config import Config
 from arbitraje.models import Producto
 from arbitraje.meli import calcular_neto_venta_meli
@@ -10,18 +12,42 @@ def test_neto_menor_al_precio_de_venta():
     cfg = Config()
     r = calcular_neto_venta_meli(100000, "electronica", cfg)
     assert r.neto_ars < 100000
-    assert set(r.detalle_ars) == {
-        "comision", "costo_fijo", "iva_sobre_comision",
-        "iibb", "ganancias", "envio_estimado",
-    }
+    assert set(r.detalle_ars) == {"costos_ml", "iva", "ganancias", "iibb"}
 
 
-def test_costo_fijo_solo_debajo_del_umbral():
-    cfg = Config()  # umbral 33000
-    barato = calcular_neto_venta_meli(20000, "default", cfg)
-    caro = calcular_neto_venta_meli(50000, "default", cfg)
-    assert barato.detalle_ars["costo_fijo"] > 0
-    assert caro.detalle_ars["costo_fijo"] == 0
+def test_descuentos_son_proporcionales_al_precio():
+    cfg = Config()
+    d1 = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    d2 = calcular_neto_venta_meli(200000, "default", cfg).detalle_ars
+    for k in d1:
+        assert d2[k] == pytest.approx(d1[k] * 2, abs=0.5)
+    # Costos de ML ~16% del precio.
+    assert d1["costos_ml"] == pytest.approx(100000 * 0.16, abs=1)
+
+
+def test_monotributo_es_el_default_y_no_paga_iva_ni_ganancias():
+    cfg = Config()
+    assert cfg.meli.condicion_fiscal == "monotributo"
+    d = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    assert d["iva"] == 0 and d["ganancias"] == 0
+    assert d["iibb"] > 0  # IIBB puede retenerse igual
+
+
+def test_responsable_inscripto_paga_iva_y_ganancias():
+    from dataclasses import replace
+    base = Config()
+    cfg = replace(base, meli=base.meli.con_condicion_fiscal("responsable_inscripto"))
+    d = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
+    assert d["iva"] == pytest.approx(21000, abs=1)
+    assert d["ganancias"] == pytest.approx(6000, abs=1)
+    # Al RI le queda menos neto que al monotributista al mismo precio.
+    assert (calcular_neto_venta_meli(100000, "default", cfg).neto_ars
+            < calcular_neto_venta_meli(100000, "default", base).neto_ars)
+
+
+def test_condicion_fiscal_invalida():
+    with pytest.raises(ValueError):
+        Config().meli.con_condicion_fiscal("inventada")
 
 
 def test_categoria_desconocida_usa_default():

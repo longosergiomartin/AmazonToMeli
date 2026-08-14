@@ -89,6 +89,14 @@
   <div class="cotiz" id="cotiz">
     <span>💵 Cargando cotización del dólar…</span>
     <button class="sm" id="cotiz-refrescar" type="button">↻ Actualizar</button>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      🧾 Condición fiscal:
+      <select id="fiscal" style="width:auto;padding:5px 8px">
+        <option value="monotributo">Monotributo</option>
+        <option value="responsable_inscripto">Responsable Inscripto</option>
+      </select>
+      <span class="muted" id="fiscal-msg"></span>
+    </span>
   </div>
 
   <div class="card">
@@ -105,7 +113,8 @@
       <div class="f"><label>Modelo</label><input id="modelo" placeholder="Waders neopreno con botas"></div>
       <div class="f"><label>Precio en USD</label><input id="precio_usd" type="number" step="0.01" placeholder="118.99"></div>
       <div class="f"><label>Peso (kg)</label><input id="peso_kg" type="number" step="0.1" value="0.5"></div>
-      <div class="f"><label>Costo de envío (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="49.06"></div>
+      <div class="f"><label>Envío + importación (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="se calcula solo (26%)">
+        <span class="hint">Se estima en 26% del precio de Amazon. Si tenés el Total del checkout, restale el precio y poné la diferencia.</span></div>
       <div class="f"><label>Disponibilidad</label>
         <select id="disponibilidad"><option value="in_stock">En stock</option><option value="out_of_stock">Sin stock</option></select></div>
       <div class="f"><label>Cómo calcular el costo</label>
@@ -176,6 +185,15 @@
       "💵 Dólar oficial <b>$"+Math.round(c.oficial).toLocaleString("es-AR")+"</b> · "+
       "tarjeta <b>$"+Math.round(c.tarjeta).toLocaleString("es-AR")+"</b> "+
       "<span class='muted'>("+esc(c.fuente)+(c.online?"":" — offline")+" "+hora+" UTC)</span>";
+  }
+  function renderFiscal(f){
+    $("fiscal").value=f.condicion_fiscal;
+    $("fiscal-msg").textContent="IVA "+f.iva_pct+"% · Gan. "+f.ganancias_pct+"% · IIBB "+f.iibb_pct+"%";
+  }
+  function cargarFiscal(){ api("GET","/api/fiscal").then(renderFiscal).catch(function(){}); }
+  function cambiarFiscal(){
+    api("PATCH","/api/fiscal",{condicion_fiscal:$("fiscal").value})
+      .then(function(f){ renderFiscal(f); cargar(); }).catch(err);
   }
   function cargarCotiz(refrescar){
     api(refrescar?"POST":"GET", refrescar?"/api/cotizacion/refrescar":"/api/cotizacion")
@@ -348,13 +366,13 @@
       function fila(k,val,extra){return '<div class="kv"><span>'+k+'</span><b'+(extra||'')+'>'+val+'</b></div>';}
       var cCons=d.conservador, cMl=d.estilo_ml;
       function colr(m){return m.margen_pct<0?'var(--bad)':(m.margen_pct<30?'var(--warn)':'var(--good)');}
+      var dt=d.detalle;
       el.innerHTML=
-        fila("Comisión + IVA","−"+fmt(d.detalle.comision+d.detalle.iva_sobre_comision))+
-        (d.detalle.costo_fijo?fila("Costo fijo","−"+fmt(d.detalle.costo_fijo)):"")+
-        fila("Envío","−"+fmt(d.detalle.envio))+
-        fila("Retenciones IIBB+Gan. (recuperables)","−"+fmt(d.detalle.retenciones_iibb_ganancias))+
-        fila("Neto (estilo \"Recibís\" de ML)",fmt(d.neto_estilo_ml)+' · <span style="color:'+colr(cMl)+'">'+cMl.margen_pct.toFixed(1)+'%</span>')+
-        fila("Neto conservador (con retenciones)",fmt(d.neto_conservador)+' · <span style="color:'+colr(cCons)+'">'+cCons.margen_pct.toFixed(1)+'%</span>');
+        fila("MercadoLibre ("+dt.costos_ml_pct+"% comisión + envío gratis)","−"+fmt(dt.costos_ml))+
+        fila("IVA de la venta","−"+fmt(dt.iva))+
+        fila("Ganancias + IIBB (a cuenta)","−"+fmt(dt.ganancias+dt.iibb))+
+        fila("Neto (estilo \"Recibís\" de ML, sin impuestos)",fmt(d.neto_estilo_ml)+' · <span style="color:'+colr(cMl)+'">'+cMl.margen_pct.toFixed(1)+'%</span>')+
+        fila("Neto con impuestos argentinos",fmt(d.neto_conservador)+' · <span style="color:'+colr(cCons)+'">'+cCons.margen_pct.toFixed(1)+'%</span>');
       pintarMargen(cCons.margen_pct, d.costo_puesto_ars);
     }
     var _t=null;
@@ -443,11 +461,21 @@
     }).catch(err);
   }
 
+  // Al cargar el precio de Amazon, se estima el envío+importación (26%).
+  $("precio_usd").addEventListener("input",function(){
+    var envio=$("costo_envio_usd");
+    if(envio.value.trim()==="" || envio.dataset.auto==="1"){
+      var p=parseFloat(this.value);
+      if(isFinite(p)&&p>0){ envio.value=(p*0.26).toFixed(2); envio.dataset.auto="1"; }
+    }
+  });
+  $("costo_envio_usd").addEventListener("input",function(){ this.dataset.auto=""; });
   $("add").addEventListener("click",add);
   $("ml-code").addEventListener("click",pegarCodigo);
   $("traer").addEventListener("click",traerDatos);
   $("cotiz-refrescar").addEventListener("click",function(){cargarCotiz(true);});
-  mlStatus(); cargarCotiz(false); cargar();
+  $("fiscal").addEventListener("change",cambiarFiscal);
+  mlStatus(); cargarCotiz(false); cargarFiscal(); cargar();
 })();
 </script>
 </body>

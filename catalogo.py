@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from arbitraje.config import Config, CONFIG_DEFAULT
+from arbitraje.config import Config, CONFIG_DEFAULT, PRESETS_FISCALES
 from arbitraje.importacion import calcular_costo
 from arbitraje.models import Producto as ProductoArbitraje
 from arbitraje.pricing import precio_sugerido, margen_real_al_precio
@@ -88,13 +88,42 @@ class Catalogo:
         self._crear_tablas()
 
     def _cfg_efectivo(self) -> Config:
-        """Config con el tipo de cambio en vivo (si hay cotización cargada)."""
+        """Config con el tipo de cambio en vivo y la condición fiscal elegida."""
+        cfg = self.cfg
         c = self.cotizacion
         if c and c.get("oficial") and c.get("tarjeta"):
             recargo = c["tarjeta"] / c["oficial"] - 1
-            return replace(self.cfg, tipo_cambio_oficial=c["oficial"],
-                           recargo_tarjeta_pct=recargo)
-        return self.cfg
+            cfg = replace(cfg, tipo_cambio_oficial=c["oficial"],
+                          recargo_tarjeta_pct=recargo)
+        condicion = self.condicion_fiscal
+        if condicion and condicion != cfg.meli.condicion_fiscal:
+            cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
+        return cfg
+
+    # ---- preferencias (condición fiscal) ---------------------------------
+
+    @property
+    def condicion_fiscal(self) -> str:
+        row = self.conn.execute(
+            "SELECT valor FROM preferencias WHERE clave = 'condicion_fiscal'"
+        ).fetchone()
+        return row["valor"] if row else self.cfg.meli.condicion_fiscal
+
+    @condicion_fiscal.setter
+    def condicion_fiscal(self, valor: str) -> None:
+        if valor not in PRESETS_FISCALES:
+            raise ValueError(f"Condición fiscal desconocida: {valor!r}")
+        self.conn.execute(
+            """INSERT INTO preferencias (clave, valor) VALUES ('condicion_fiscal', ?)
+               ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor""", (valor,))
+        self.conn.commit()
+
+    def recalcular_todos(self) -> None:
+        """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras
+        cambiar la condición fiscal)."""
+        for p in self.todos():
+            self._calcular(p)
+            self._guardar(p)
 
     def _crear_tablas(self) -> None:
         self.conn.executescript("""
@@ -112,6 +141,9 @@ class Catalogo:
                 costo_total_ars REAL, precio_sugerido_ars REAL,
                 precio_publicado_ars REAL, margen_pct REAL,
                 estado TEXT, ml_item_id TEXT, ml_permalink TEXT
+            );
+            CREATE TABLE IF NOT EXISTS preferencias (
+                clave TEXT PRIMARY KEY, valor TEXT
             );
             CREATE TABLE IF NOT EXISTS catalogo_historial (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,6 +166,11 @@ class Catalogo:
 
     def _calcular(self, p: ProductoCatalogo) -> None:
         """Completa costo_total_ars, precio_sugerido_ars y margen_pct."""
+        # Si no se cargó el envío+importación, se estima como % del precio de
+        # Amazon (envio_import_pct, ~26%). Cargando el Total real del checkout
+        # el número es exacto.
+        if not p.costo_envio_usd and p.precio_usd:
+            p.costo_envio_usd = round(p.precio_usd * self.cfg.envio_import_pct, 2)
         base_usd = p.precio_usd + p.costo_envio_usd
         pa = ProductoArbitraje(
             nombre=p.modelo or p.asin or "producto", query_meli=p.modelo or "",
