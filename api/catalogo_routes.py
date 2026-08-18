@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
 from amazon_import import importar_desde_url
-from catalogo import Catalogo, ProductoCatalogo
+from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError
 from mercadolibre.listing import (construir_item, vista_previa,
@@ -178,6 +178,24 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
             raise HTTPException(400, str(e))
         cat.recalcular_todos()  # los márgenes cambian con las alícuotas
         return fiscal()
+
+    # ---- dólar con el que se valúa la compra en Amazon --------------------
+
+    @app.get("/api/dolar-costo")
+    def dolar_costo():
+        cfg_ef = cat._cfg_efectivo()
+        return {"dolar_costo": cat.dolar_costo,
+                "opciones": list(DOLARES_COSTO),
+                "tc_usado": round(cfg_ef.tc_compra(), 2)}
+
+    @app.patch("/api/dolar-costo")
+    def dolar_costo_set(body: dict):
+        try:
+            cat.dolar_costo = (body or {}).get("dolar_costo", "")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        cat.recalcular_todos()  # el costo puesto cambia con el tipo de cambio
+        return dolar_costo()
 
     # ---- cotización del dólar --------------------------------------------
 
