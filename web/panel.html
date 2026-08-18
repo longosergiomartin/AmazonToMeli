@@ -89,6 +89,14 @@
   <div class="cotiz" id="cotiz">
     <span>💵 Cargando cotización del dólar…</span>
     <button class="sm" id="cotiz-refrescar" type="button">↻ Actualizar</button>
+    <span style="display:flex;align-items:center;gap:8px">
+      💳 Costo al dólar:
+      <select id="dolar-costo" style="width:auto;padding:5px 8px">
+        <option value="tarjeta">Tarjeta</option>
+        <option value="oficial">Oficial</option>
+      </select>
+      <span class="muted" id="dolar-costo-msg"></span>
+    </span>
     <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
       🧾 Condición fiscal:
       <select id="fiscal" style="width:auto;padding:5px 8px">
@@ -191,6 +199,15 @@
     $("fiscal-msg").textContent="IVA "+f.iva_pct+"% · Gan. "+f.ganancias_pct+"% · IIBB "+f.iibb_pct+"%";
   }
   function cargarFiscal(){ api("GET","/api/fiscal").then(renderFiscal).catch(function(){}); }
+  function renderDolarCosto(d){
+    $("dolar-costo").value=d.dolar_costo;
+    $("dolar-costo-msg").textContent="TC $"+Math.round(d.tc_usado).toLocaleString("es-AR");
+  }
+  function cargarDolarCosto(){ api("GET","/api/dolar-costo").then(renderDolarCosto).catch(function(){}); }
+  function cambiarDolarCosto(){
+    api("PATCH","/api/dolar-costo",{dolar_costo:$("dolar-costo").value})
+      .then(function(d){ renderDolarCosto(d); cargar(); }).catch(err);
+  }
   function cambiarFiscal(){
     api("PATCH","/api/fiscal",{condicion_fiscal:$("fiscal").value})
       .then(function(f){ renderFiscal(f); cargar(); }).catch(err);
@@ -475,7 +492,8 @@
   $("traer").addEventListener("click",traerDatos);
   $("cotiz-refrescar").addEventListener("click",function(){cargarCotiz(true);});
   $("fiscal").addEventListener("change",cambiarFiscal);
-  mlStatus(); cargarCotiz(false); cargarFiscal(); cargar();
+  $("dolar-costo").addEventListener("change",cambiarDolarCosto);
+  mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto(); cargar();
 })();
 </script>
 </body>

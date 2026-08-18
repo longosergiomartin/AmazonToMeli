@@ -32,6 +32,8 @@ from arbitraje.models import Producto as ProductoArbitraje
 from arbitraje.pricing import precio_sugerido, margen_real_al_precio
 
 ESTADOS = ("borrador", "aprobado", "publicado", "pausado")
+# Con qué tipo de cambio se valúa la compra en Amazon.
+DOLARES_COSTO = ("tarjeta", "oficial")
 
 
 @dataclass
@@ -88,35 +90,57 @@ class Catalogo:
         self._crear_tablas()
 
     def _cfg_efectivo(self) -> Config:
-        """Config con el tipo de cambio en vivo y la condición fiscal elegida."""
+        """Config con el tipo de cambio en vivo, el dólar elegido para el costo
+        y la condición fiscal."""
         cfg = self.cfg
         c = self.cotizacion
         if c and c.get("oficial") and c.get("tarjeta"):
             recargo = c["tarjeta"] / c["oficial"] - 1
             cfg = replace(cfg, tipo_cambio_oficial=c["oficial"],
                           recargo_tarjeta_pct=recargo)
+        # Con qué dólar se valúa la compra en Amazon: "tarjeta" (lo que
+        # realmente debita la tarjeta) u "oficial" (si comprás con dólares
+        # propios o recuperás las percepciones).
+        if self.dolar_costo == "oficial":
+            cfg = replace(cfg, recargo_tarjeta_pct=0.0)
         condicion = self.condicion_fiscal
         if condicion and condicion != cfg.meli.condicion_fiscal:
             cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
         return cfg
 
-    # ---- preferencias (condición fiscal) ---------------------------------
+    # ---- preferencias -----------------------------------------------------
+
+    def _pref(self, clave: str, default: str) -> str:
+        row = self.conn.execute(
+            "SELECT valor FROM preferencias WHERE clave = ?", (clave,)).fetchone()
+        return row["valor"] if row else default
+
+    def _set_pref(self, clave: str, valor: str) -> None:
+        self.conn.execute(
+            """INSERT INTO preferencias (clave, valor) VALUES (?, ?)
+               ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor""",
+            (clave, valor))
+        self.conn.commit()
 
     @property
     def condicion_fiscal(self) -> str:
-        row = self.conn.execute(
-            "SELECT valor FROM preferencias WHERE clave = 'condicion_fiscal'"
-        ).fetchone()
-        return row["valor"] if row else self.cfg.meli.condicion_fiscal
+        return self._pref("condicion_fiscal", self.cfg.meli.condicion_fiscal)
 
     @condicion_fiscal.setter
     def condicion_fiscal(self, valor: str) -> None:
         if valor not in PRESETS_FISCALES:
             raise ValueError(f"Condición fiscal desconocida: {valor!r}")
-        self.conn.execute(
-            """INSERT INTO preferencias (clave, valor) VALUES ('condicion_fiscal', ?)
-               ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor""", (valor,))
-        self.conn.commit()
+        self._set_pref("condicion_fiscal", valor)
+
+    @property
+    def dolar_costo(self) -> str:
+        return self._pref("dolar_costo", "tarjeta")
+
+    @dolar_costo.setter
+    def dolar_costo(self, valor: str) -> None:
+        if valor not in DOLARES_COSTO:
+            raise ValueError(f"Dólar inválido: {valor!r} (usá tarjeta u oficial)")
+        self._set_pref("dolar_costo", valor)
 
     def recalcular_todos(self) -> None:
         """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras
@@ -202,9 +226,14 @@ class Catalogo:
         """Costo y margen del producto bajo dólar oficial y dólar tarjeta, para
         comparar. El costo escala lineal con el tipo de cambio."""
         cfg_ef = self._cfg_efectivo()
-        tarjeta = cfg_ef.tc_compra()
         oficial = cfg_ef.tipo_cambio_oficial
-        total_usd = (p.costo_total_ars / tarjeta) if tarjeta else 0.0
+        # El tarjeta sale de la cotización en vivo (no de cfg_ef, que puede
+        # tener el recargo anulado si se eligió valuar al oficial).
+        c = self.cotizacion or {}
+        tarjeta = c.get("tarjeta") or self.cfg.tc_compra()
+        # El costo guardado se calculó con el TC efectivamente elegido.
+        tc_usado = cfg_ef.tc_compra()
+        total_usd = (p.costo_total_ars / tc_usado) if tc_usado else 0.0
         precio = p.precio_publicado_ars or p.precio_sugerido_ars
         out = {}
         for nombre, tc in (("oficial", oficial), ("tarjeta", tarjeta)):

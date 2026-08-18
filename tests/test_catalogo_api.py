@@ -158,6 +158,32 @@ def test_desglose_devuelve_ambas_variantes(client):
     assert det["costos_ml_pct"] == pytest.approx(16.0, abs=2)
 
 
+def test_dolar_costo_default_tarjeta(client):
+    d = client.get("/api/dolar-costo").json()
+    assert d["dolar_costo"] == "tarjeta"
+
+
+def test_cambiar_a_dolar_oficial_baja_el_costo(client):
+    # 135 USD + 26% = 170,10 USD. Al oficial el costo puesto es menor.
+    pid = _alta(client, regimen="landed", precio_usd=135.0,
+                costo_envio_usd=0.0).json()["id"]
+    costo_tarjeta = client.get(f"/api/catalogo/{pid}").json()["costo_total_ars"]
+
+    d = client.patch("/api/dolar-costo", json={"dolar_costo": "oficial"}).json()
+    assert d["dolar_costo"] == "oficial"
+    p = client.get(f"/api/catalogo/{pid}").json()
+    assert p["costo_total_ars"] < costo_tarjeta
+    # El costo al oficial coincide con la fila "oficial" de la comparación.
+    assert p["costo_total_ars"] == pytest.approx(
+        p["comparacion"]["oficial"]["costo_ars"], abs=1)
+    # Y la comparación sigue mostrando ambas puntas distintas.
+    assert p["comparacion"]["tarjeta"]["costo_ars"] > p["comparacion"]["oficial"]["costo_ars"]
+
+
+def test_dolar_costo_invalido_da_400(client):
+    assert client.patch("/api/dolar-costo", json={"dolar_costo": "blue"}).status_code == 400
+
+
 def test_fiscal_default_monotributo(client):
     f = client.get("/api/fiscal").json()
     assert f["condicion_fiscal"] == "monotributo"
