@@ -1,8 +1,9 @@
 """Tests del catálogo y del ciclo de vida de la publicación (sin red)."""
 
-import sqlite3
 
 import pytest
+
+from db import conectar
 
 from arbitraje.config import Config
 from catalogo import Catalogo, ProductoCatalogo
@@ -11,7 +12,7 @@ from mercadolibre.listing import construir_item, faltantes_para_publicar, vista_
 
 @pytest.fixture()
 def cat():
-    conn = sqlite3.connect(":memory:")
+    conn = conectar(":memory:")
     return Catalogo(conn, cfg=Config())
 
 
@@ -50,7 +51,7 @@ def test_envio_import_cargado_a_mano_tiene_prioridad(cat):
 
 
 def test_comparacion_dolar_oficial_vs_tarjeta():
-    conn = sqlite3.connect(":memory:")
+    conn = conectar(":memory:")
     c = Catalogo(conn, cfg=Config(), cotizacion={"oficial": 1000.0, "tarjeta": 1300.0})
     p = c.agregar(_prod(regimen="landed", precio_usd=839.97, costo_envio_usd=530.36))
     comp = c.comparacion_dolar(p)

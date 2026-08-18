@@ -20,7 +20,6 @@ explícito que dispara el usuario tras aprobar la vista previa.
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,10 +79,9 @@ def _ahora() -> str:
 class Catalogo:
     """Almacenamiento + lógica de negocio del catálogo."""
 
-    def __init__(self, conn: sqlite3.Connection, cfg: Config = CONFIG_DEFAULT,
+    def __init__(self, conn, cfg: Config = CONFIG_DEFAULT,
                  cotizacion: Optional[dict] = None):
         self.conn = conn
-        self.conn.row_factory = sqlite3.Row
         self.cfg = cfg
         # Cotización en vivo {oficial, tarjeta}. Si está, manda sobre la config.
         self.cotizacion = cotizacion
@@ -177,7 +175,7 @@ class Catalogo:
             );
         """)
         # Migración para bases creadas antes de columnas nuevas.
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(catalogo)").fetchall()]
+        cols = self.conn.columnas("catalogo")
         if "pictures" not in cols:
             self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
         if "dias_preparacion" not in cols:
@@ -253,7 +251,7 @@ class Catalogo:
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
                "ml_permalink"]
 
-    def _fila_a_producto(self, row: sqlite3.Row) -> ProductoCatalogo:
+    def _fila_a_producto(self, row) -> ProductoCatalogo:
         d = dict(row)
         attrs = json.loads(d.pop("ml_attributes") or "{}")
         pics = json.loads(d.pop("pictures") or "[]")
@@ -264,14 +262,13 @@ class Catalogo:
     def agregar(self, p: ProductoCatalogo) -> ProductoCatalogo:
         self._calcular(p)
         vals = [getattr(p, c) for c in self._CAMPOS]
-        cur = self.conn.execute(
+        p.id = self.conn.insertar(
             f"""INSERT INTO catalogo (creado, actualizado, ml_attributes, pictures, {','.join(self._CAMPOS)})
                 VALUES (?, ?, ?, ?, {','.join('?' * len(self._CAMPOS))})""",
             [_ahora(), _ahora(), json.dumps(p.ml_attributes),
              json.dumps(p.pictures)] + vals,
         )
         self.conn.commit()
-        p.id = cur.lastrowid
         self._log(p.id, "alta", nota=f"Producto {p.modelo or p.asin} registrado")
         return p
 

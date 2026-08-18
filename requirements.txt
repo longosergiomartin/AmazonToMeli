@@ -6,6 +6,9 @@ requests>=2.31
 fastapi>=0.110
 uvicorn>=0.29
 pydantic>=2.0
+# Base de datos externa (opcional): si definís DATABASE_URL con un Postgres,
+# los datos sobreviven a los reinicios del servidor en la nube.
+psycopg[binary]>=3.1
 
 # Tests
 pytest>=7.0

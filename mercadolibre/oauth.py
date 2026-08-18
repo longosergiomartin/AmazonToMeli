@@ -12,7 +12,8 @@ Pasos:
   5. Cuando el access_token vence (~6 h), se renueva con el refresh_token
      (`refrescar`).
 
-Los tokens se guardan en SQLite (TokenStore). Las credenciales de la app
+Los tokens se guardan en la base (TokenStore): con Postgres configurado
+sobreviven a los reinicios y la sesión queda enganchada sin reconectar. Las credenciales de la app
 (client_id/secret) se leen de variables de entorno o se pasan explícitas —
 nunca se hardcodean ni se commitean.
 """
@@ -20,7 +21,6 @@ nunca se hardcodean ni se commitean.
 from __future__ import annotations
 
 import os
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,9 +59,9 @@ class MeliCredenciales:
 
 
 class TokenStore:
-    """Guarda el token vigente (una fila) en SQLite."""
+    """Guarda el token vigente (una fila) en la base."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn):
         self.conn = conn
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS meli_token (
@@ -88,8 +88,7 @@ class TokenStore:
         )
         self.conn.commit()
 
-    def leer(self) -> Optional[sqlite3.Row]:
-        self.conn.row_factory = sqlite3.Row
+    def leer(self) -> Optional[dict]:
         return self.conn.execute("SELECT * FROM meli_token WHERE id = 1").fetchone()
 
     def hay_sesion(self) -> bool:
