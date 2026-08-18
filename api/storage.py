@@ -1,5 +1,8 @@
 """
-Almacenamiento en SQLite: productos capturados + histórico de precios.
+Almacenamiento de productos capturados + histórico de precios.
+
+Funciona sobre SQLite (local) o PostgreSQL (nube, para que los datos
+sobrevivan a los reinicios). Ver `db.conectar`.
 
 Esquema:
   productos(asin PK, titulo, link, categoria, peso_kg, creado)
@@ -13,18 +16,18 @@ lo que permite ver la evolución del precio de cada producto.
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from db import conectar
+
 
 class Almacen:
     def __init__(self, ruta: str | Path = "data/arbitraje.db"):
-        ruta = Path(ruta)
-        ruta.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(ruta), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        # `ruta` puede ser un archivo SQLite o una URL de Postgres; si está
+        # definida DATABASE_URL, esa gana (ver db.conectar).
+        self.conn = conectar(str(ruta) if ruta else None)
         self._crear_tablas()
 
     def _crear_tablas(self) -> None:
@@ -82,7 +85,7 @@ class Almacen:
 
     # ---- lectura ---------------------------------------------------------
 
-    def _ultimo_precio(self, asin: str, campo: str) -> Optional[sqlite3.Row]:
+    def _ultimo_precio(self, asin: str, campo: str) -> Optional[dict]:
         return self.conn.execute(
             f"""SELECT * FROM precios WHERE asin = ? AND {campo} IS NOT NULL
                 ORDER BY ts DESC, id DESC LIMIT 1""",

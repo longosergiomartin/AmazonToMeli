@@ -18,3 +18,7 @@ services:
         sync: false
       - key: MELI_REDIRECT_URI
         value: https://oauth.pstmn.io/v1/callback
+      # Postgres externo (Neon/Supabase). Sin esto el disco es efímero y se
+      # pierden la sesión de MercadoLibre y el catálogo en cada reinicio.
+      - key: DATABASE_URL
+        sync: false

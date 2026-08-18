@@ -158,6 +158,12 @@ def test_desglose_devuelve_ambas_variantes(client):
     assert det["costos_ml_pct"] == pytest.approx(16.0, abs=2)
 
 
+def test_almacenamiento_avisa_si_no_es_persistente(client):
+    a = client.get("/api/almacenamiento").json()
+    # En tests corre sobre SQLite: debe avisar que no es persistente.
+    assert a["persistente"] is False and "SQLite" in a["detalle"]
+
+
 def test_dolar_costo_default_tarjeta(client):
     d = client.get("/api/dolar-costo").json()
     assert d["dolar_costo"] == "tarjeta"

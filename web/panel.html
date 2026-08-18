@@ -107,6 +107,9 @@
     </span>
   </div>
 
+  <div id="aviso-datos" style="display:none;background:var(--warn-bg);color:var(--warn);
+       border-radius:10px;padding:9px 14px;margin-bottom:18px;font-size:.85rem"></div>
+
   <div class="card">
     <h2>Registrar producto de Amazon</h2>
     <div class="grid2">
@@ -204,6 +207,16 @@
     $("dolar-costo-msg").textContent="TC $"+Math.round(d.tc_usado).toLocaleString("es-AR");
   }
   function cargarDolarCosto(){ api("GET","/api/dolar-costo").then(renderDolarCosto).catch(function(){}); }
+  function cargarAlmacenamiento(){
+    api("GET","/api/almacenamiento").then(function(a){
+      var el=$("aviso-datos");
+      if(a.persistente){ el.style.display="none"; return; }
+      el.style.display="block";
+      el.innerHTML="⚠️ <b>Los datos no se están guardando de forma permanente</b> ("+esc(a.detalle)+"). "+
+        "En la nube gratis, al reiniciarse el servidor se pierden la sesión de MercadoLibre y el catálogo. "+
+        "Configurá <b>DATABASE_URL</b> con un Postgres gratuito para que quede conectado siempre (ver README).";
+    }).catch(function(){});
+  }
   function cambiarDolarCosto(){
     api("PATCH","/api/dolar-costo",{dolar_costo:$("dolar-costo").value})
       .then(function(d){ renderDolarCosto(d); cargar(); }).catch(err);
@@ -493,7 +506,8 @@
   $("cotiz-refrescar").addEventListener("click",function(){cargarCotiz(true);});
   $("fiscal").addEventListener("change",cambiarFiscal);
   $("dolar-costo").addEventListener("change",cambiarDolarCosto);
-  mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto(); cargar();
+  mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
+  cargarAlmacenamiento(); cargar();
 })();
 </script>
 </body>

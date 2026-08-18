@@ -11,7 +11,6 @@ y que no falte ningún dato obligatorio. Nunca se publica en un solo paso.
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -76,7 +75,7 @@ class Publicacion(BaseModel):
     descripcion: Optional[str] = None
 
 
-def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
+def registrar_catalogo(app: FastAPI, conn,
                        cfg: Config = CONFIG_DEFAULT) -> None:
     cat = Catalogo(conn, cfg=cfg, cotizacion=obtener_cotizaciones(cfg))
     cred = MeliCredenciales.desde_entorno()
@@ -180,6 +179,14 @@ def registrar_catalogo(app: FastAPI, conn: sqlite3.Connection,
         return fiscal()
 
     # ---- dólar con el que se valúa la compra en Amazon --------------------
+
+    @app.get("/api/almacenamiento")
+    def almacenamiento():
+        """Dónde se guardan los datos: sirve para saber si la sesión de
+        MercadoLibre y el catálogo van a sobrevivir a un reinicio."""
+        from db import describir
+        persistente = getattr(conn, "postgres", False)
+        return {"persistente": bool(persistente), "detalle": describir(conn)}
 
     @app.get("/api/dolar-costo")
     def dolar_costo():

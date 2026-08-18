@@ -1,9 +1,10 @@
 """Tests del cliente de MercadoLibre y OAuth con una sesión HTTP falsa."""
 
-import sqlite3
 import time
 
 import pytest
+
+from db import conectar
 
 from mercadolibre.client import MeliClient, MeliAPIError
 from mercadolibre.oauth import TokenStore
@@ -117,7 +118,7 @@ def test_error_http_se_convierte_en_excepcion():
 
 
 def test_token_store_guarda_y_expira():
-    conn = sqlite3.connect(":memory:")
+    conn = conectar(":memory:")
     store = TokenStore(conn)
     assert store.hay_sesion() is False
     store.guardar({"access_token": "A", "refresh_token": "R",

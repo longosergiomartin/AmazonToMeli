@@ -266,10 +266,31 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
 > Notas del plan gratis:
 > - El servicio **se duerme** tras un rato sin uso; la primera carga puede
 >   tardar ~30-60 s en despertar.
-> - El disco es **efímero**: si Render reinicia el servicio, se pierde la base
->   local (tenés que reconectar MercadoLibre y recargar productos). Para uso
->   serio, un plan pago con disco persistente (o una base Postgres) lo resuelve.
 > - Tu Secret Key queda guardada como variable en Render, no en el código.
+
+### Que no se pierda la sesión (base de datos permanente)
+
+El disco de Render en plan gratis es **efímero**: cada vez que el servicio se
+duerme o se redeploya, se borra el archivo SQLite y con él **la sesión de
+MercadoLibre, el catálogo y el historial**. Por eso hay que reconectar y pegar
+el código una y otra vez.
+
+La solución es guardar los datos en un **Postgres externo** (gratis y
+permanente). Una vez configurado, **la conexión con MercadoLibre queda
+enganchada sola**: el token se renueva solo y no hay que pegar más el código.
+
+1. Creá una base gratuita en [Neon](https://neon.tech) (o Supabase). Te dan una
+   *connection string* así:
+   `postgresql://usuario:clave@host.neon.tech/basedatos?sslmode=require`
+2. En Render → tu servicio → **Environment** → agregá la variable:
+   - `DATABASE_URL` = esa connection string.
+3. **Save** → Render redeploya. Entrá al panel, conectá MercadoLibre **una
+   última vez**, y listo: queda conectado para siempre.
+
+El panel muestra un aviso amarillo cuando los datos **no** están guardados de
+forma permanente, y lo oculta cuando `DATABASE_URL` está bien configurada.
+Localmente (sin `DATABASE_URL`) sigue usando SQLite, que en tu PC ya es
+permanente.
 
 Alternativa sin nube: dejar el panel en tu PC y exponerlo por un **túnel**
 (ver la sección anterior).
