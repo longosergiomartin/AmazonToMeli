@@ -104,6 +104,36 @@ def test_sin_precio_queda_como_error_pero_la_cola_sigue(cola):
     assert r["errores"] == 2
 
 
+def test_descarta_lo_que_no_es_set_lego(cola):
+    """Un accesorio de terceros no debe entrar al catálogo, y la cola sigue."""
+    cola.encolar(["B0000000A1", "B0000000A2"])
+    accesorio = {**_ficha("B0000000A1", 25.99),
+                 "marca": "BRIKSMAX",
+                 "modelo": "Juego de luces LED compatibles con Lego Ferrari"}
+    r = cola.procesar_uno(importador=lambda url: accesorio)
+    assert r["hecho"] is False and r["motivo"] == "descartado"
+    assert r["detener"] is False          # sigue con el resto
+    assert cola.estado()["descartados"] == 1
+    assert cola.cat.todos() == []         # no se creó producto
+
+
+def test_acepta_set_lego_de_verdad(cola):
+    cola.encolar(["B0000000A1"])
+    set_lego = {**_ficha("B0000000A1", 199.99),
+                "marca": "LEGO", "modelo": "LEGO Icons Ghostbusters ECTO-1 10274"}
+    r = cola.procesar_uno(importador=lambda url: set_lego)
+    assert r["hecho"] is True
+    assert cola.cat.obtener(r["producto_id"]).marca == "LEGO"
+
+
+def test_filtro_se_puede_desactivar(cola):
+    cola.solo_lego = False
+    cola.encolar(["B0000000A1"])
+    accesorio = {**_ficha("B0000000A1", 25.99),
+                 "modelo": "Luces LED compatibles con Lego"}
+    assert cola.procesar_uno(importador=lambda url: accesorio)["hecho"] is True
+
+
 def test_limpiar_terminados(cola):
     cola.encolar(["B0000000A1"])
     cola.procesar_lote(maximo=1, dormir=lambda s: None,

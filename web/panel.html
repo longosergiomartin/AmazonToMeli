@@ -279,6 +279,7 @@
   function pintarCola(e,extra){
     $("lote-estado").innerHTML=
       "<div><b>"+e.pendientes+"</b> pendientes · <b>"+e.listos+"</b> cargados · "+
+      (e.descartados||0)+" descartados (no son sets LEGO) · "+
       e.errores+" con error · "+e.bloqueados+" frenados</div>"+(extra||"");
   }
   function cargarCola(){ api("GET","/api/importar/estado").then(function(e){pintarCola(e);}).catch(function(){}); }
@@ -298,7 +299,12 @@
       if(!loteCorriendo){ $("lote-frenar").style.display="none"; cargar(); return; }
       api("POST","/api/importar/procesar",{maximo:3,pausa_seg:2}).then(function(r){
         var ultimos=(r.procesados||[]).map(function(x){
-          return "<div>"+(x.hecho?"✓ ":"• ")+esc(x.asin||"")+" — "+esc(x.titulo||x.motivo||"")+"</div>";
+          var icono = x.hecho ? "✓ " : (x.motivo==="descartado" ? "✗ " : "• ");
+          var color = x.motivo==="descartado" ? " style='color:var(--muted)'" : "";
+          var detalle = x.motivo==="descartado"
+            ? esc(x.titulo||"")+" — descartado: "+esc(x.mensaje||"")
+            : esc(x.titulo||x.motivo||"");
+          return "<div"+color+">"+icono+esc(x.asin||"")+" — "+detalle+"</div>";
         }).join("");
         if(r.detener){
           loteCorriendo=false; $("lote-frenar").style.display="none";

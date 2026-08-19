@@ -170,6 +170,13 @@ Qué hace:
     intenta esquivar el bloqueo: además de corresponder, protege tu cuenta de
     comprador, que es la que necesitás para comprar.
   - También podés pegar una lista de links o ASIN a mano.
+  - **Filtro "solo sets LEGO"**: las búsquedas de Amazon devuelven además
+    patrocinados, accesorios de terceros ("luces LED *compatibles con* Lego",
+    vitrinas, organizadores) y productos de otras marcas. El filtro los
+    descarta en dos momentos: en el botón (para no gastar pedidos a Amazon en
+    basura) y al procesar, con el título y la marca reales de la ficha. También
+    descarta lo muy barato (llaveros, polybags) según un precio mínimo
+    (USD 25 por defecto). Ver `filtros.py`.
 
 ### Procesar la cola desde tu PC (importante)
 
