@@ -21,6 +21,7 @@ from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
 from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
+from importador import ColaImportacion
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError
 from mercadolibre.listing import (construir_item, vista_previa,
@@ -78,6 +79,7 @@ class Publicacion(BaseModel):
 def registrar_catalogo(app: FastAPI, conn,
                        cfg: Config = CONFIG_DEFAULT) -> None:
     cat = Catalogo(conn, cfg=cfg, cotizacion=obtener_cotizaciones(cfg))
+    cola = ColaImportacion(conn, cat)
     cred = MeliCredenciales.desde_entorno()
     store = TokenStore(conn)
     oauth = MeliOAuth(cred, store)
@@ -220,6 +222,48 @@ def registrar_catalogo(app: FastAPI, conn,
     def amazon_importar(body: dict):
         url = (body or {}).get("url", "")
         return importar_desde_url(url)
+
+    # ---- importación por lote --------------------------------------------
+
+    @app.get("/api/importar/estado")
+    def importar_estado():
+        return {**cola.estado(), "items": cola.items()}
+
+    @app.post("/api/importar/encolar")
+    def importar_encolar(body: dict):
+        """Recibe links de Amazon o ASIN (uno por línea) y los encola."""
+        crudo = (body or {}).get("entradas", "")
+        entradas = crudo if isinstance(crudo, list) else str(crudo).splitlines()
+        return cola.encolar(entradas)
+
+    @app.post("/api/importar/procesar")
+    def importar_procesar(body: dict):
+        """Procesa unos pocos por llamada: el navegador vuelve a llamar para
+        seguir. Así el avance se ve en vivo y no hay peticiones eternas."""
+        maximo = int((body or {}).get("maximo", 3))
+        pausa = float((body or {}).get("pausa_seg", 2.0))
+        return cola.procesar_lote(maximo=min(maximo, 10), pausa_seg=pausa)
+
+    @app.post("/api/importar/reactivar")
+    def importar_reactivar():
+        """Retoma lo que quedó frenado por un bloqueo (continuar otro día)."""
+        return cola.reactivar_bloqueados()
+
+    @app.post("/api/importar/limpiar")
+    def importar_limpiar():
+        return cola.limpiar_terminados()
+
+    @app.get("/importar/capturar", response_class=HTMLResponse)
+    def importar_capturar(asins: str = ""):
+        """Destino del bookmarklet que captura los ASIN de una página de
+        resultados de Amazon que el usuario ya tiene abierta."""
+        r = cola.encolar([a.strip() for a in asins.split(",") if a.strip()])
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'>"
+            "<div style=\"font-family:system-ui;text-align:center;margin-top:70px\">"
+            f"<h1>✅ {r['nuevos']} producto(s) encolado(s)</h1>"
+            f"<p>{r['duplicados']} ya estaban · {r['pendientes']} pendientes en total.</p>"
+            "<p>Volvé al panel y tocá <b>Procesar cola</b>.</p></div>")
 
     # ---- búsqueda automática del GTIN por ASIN ---------------------------
 

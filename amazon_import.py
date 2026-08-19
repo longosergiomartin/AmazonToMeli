@@ -121,7 +121,11 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     url = (url or "").strip()
     datos = {"asin": extraer_asin(url), "amazon_link": url, "ok": False,
              "marca": "", "modelo": "", "precio_usd": None, "peso_kg": None,
-             "descripcion": "", "imagenes": [], "mensaje": ""}
+             "descripcion": "", "imagenes": [], "mensaje": "",
+             # `status` y `bloqueado` permiten a la cola de importación
+             # distinguir "no pude leer la página" de "Amazon me está
+             # limitando", que es cuando hay que frenar y seguir otro día.
+             "status": None, "bloqueado": False}
     if not url.startswith("http"):
         datos["mensaje"] = "Pegá un link válido de Amazon."
         return datos
@@ -133,12 +137,22 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
         datos["mensaje"] = f"No se pudo leer la página ({e}). Completá a mano."
         return datos
 
+    datos["status"] = resp.status_code
     if resp.status_code != 200:
+        # 429/503 = nos está limitando; 403 = nos bloqueó. En esos casos la
+        # cola tiene que parar, no insistir.
+        datos["bloqueado"] = resp.status_code in (403, 429, 503)
         datos["mensaje"] = (f"Amazon respondió {resp.status_code} (suele pasar en "
                             "servidores). El ASIN quedó cargado; completá el resto a mano.")
         return datos
 
     texto = resp.text
+    # Amazon a veces responde 200 con la página de "no soy un robot".
+    if "captcha" in texto[:4000].lower() and "productTitle" not in texto:
+        datos["bloqueado"] = True
+        datos["mensaje"] = ("Amazon pidió verificación (captcha). Conviene frenar "
+                            "y continuar más tarde.")
+        return datos
     titulo = _buscar([r'id="productTitle"[^>]*>(.*?)</span>',
                       r'<title>(.*?)</title>'], texto)
     marca = _buscar([r'id="bylineInfo"[^>]*>(?:Visita la tienda de\s*|Marca:\s*)?(.*?)</(?:a|span)>',
