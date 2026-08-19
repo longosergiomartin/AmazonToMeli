@@ -76,8 +76,13 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
             continue
         attrs.append({"id": aid, "value_name": val})
 
+    titulo = (producto.titulo_ml or producto.modelo or producto.asin)[:60]
     item = {
-        "title": (producto.titulo_ml or producto.modelo or producto.asin)[:60],
+        "title": titulo,
+        # MercadoLibre reemplazó `title` por `family_name`: lo mapea solo por
+        # compatibilidad, pero varias categorías ya lo exigen explícito (si no,
+        # rechaza con "body does not contains ... [family_name]").
+        "family_name": titulo,
         "category_id": producto.ml_category_id,
         "price": round(_precio(producto), 2),
         "currency_id": currency_id,
