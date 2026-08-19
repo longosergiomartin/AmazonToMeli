@@ -118,6 +118,24 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
     app = FastAPI(title="API de arbitraje Amazon→MeLi", version="0.1.0")
     almacen = Almacen(db_path)
 
+    # Las bases gratuitas se duermen por inactividad y tardan unos segundos en
+    # despertar. En vez de un "Internal Server Error" pelado, avisamos qué pasa
+    # y recargamos solos.
+    from db import Conexion
+
+    @app.exception_handler(Exception)
+    async def _error_de_base(request: Request, exc: Exception):
+        if not Conexion._es_error_de_conexion(exc):
+            raise exc
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='6'>"
+            "<div style=\"font-family:system-ui;max-width:520px;margin:80px auto;"
+            "text-align:center;line-height:1.6\">"
+            "<h2>⏳ La base de datos está despertando</h2>"
+            "<p>Las bases gratuitas se duermen por inactividad. Esta página se "
+            "recarga sola en unos segundos.</p></div>",
+            status_code=503)
+
     # Protección por contraseña (opcional). Si definís PANEL_PASSWORD, todo el
     # panel queda detrás de un login. Es IMPRESCINDIBLE si exponés el panel a
     # internet (túnel o nube), porque controla tu cuenta de MercadoLibre. En

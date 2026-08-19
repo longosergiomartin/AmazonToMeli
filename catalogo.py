@@ -174,15 +174,20 @@ class Catalogo:
                 valor_anterior TEXT, valor_nuevo TEXT, nota TEXT
             );
         """)
-        # Migración para bases creadas antes de columnas nuevas.
-        cols = self.conn.columnas("catalogo")
-        if "pictures" not in cols:
-            self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
-        if "dias_preparacion" not in cols:
-            self.conn.execute("ALTER TABLE catalogo ADD COLUMN dias_preparacion INTEGER DEFAULT 25")
-        if "descripcion" not in cols:
-            self.conn.execute("ALTER TABLE catalogo ADD COLUMN descripcion TEXT")
-        self.conn.commit()
+        # Migración para bases creadas antes de columnas nuevas. Si la base
+        # está caída (ej. Neon despertando), no se aborta el arranque: en el
+        # próximo inicio se vuelve a intentar.
+        try:
+            cols = self.conn.columnas("catalogo")
+            if "pictures" not in cols:
+                self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
+            if "dias_preparacion" not in cols:
+                self.conn.execute("ALTER TABLE catalogo ADD COLUMN dias_preparacion INTEGER DEFAULT 25")
+            if "descripcion" not in cols:
+                self.conn.execute("ALTER TABLE catalogo ADD COLUMN descripcion TEXT")
+            self.conn.commit()
+        except Exception:  # noqa: BLE001 - base no disponible al arrancar
+            pass
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
 

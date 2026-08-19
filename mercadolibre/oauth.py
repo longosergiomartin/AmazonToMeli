@@ -63,12 +63,14 @@ class TokenStore:
 
     def __init__(self, conn):
         self.conn = conn
-        self.conn.execute("""
+        # Va por executescript para que el esquema se reaplique solo si la
+        # conexión se cae y se reconecta (base dormida en la nube).
+        self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS meli_token (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 access_token TEXT, refresh_token TEXT,
                 user_id INTEGER, expires_at REAL, actualizado TEXT
-            )""")
+            );""")
         self.conn.commit()
 
     def guardar(self, data: dict) -> None:
