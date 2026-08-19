@@ -21,6 +21,8 @@ from typing import Optional
 
 import requests
 
+from marcas import limpiar_marca
+
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 _LBS_A_KG = 0.453592
@@ -155,11 +157,14 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
         return datos
     titulo = _buscar([r'id="productTitle"[^>]*>(.*?)</span>',
                       r'<title>(.*?)</title>'], texto)
-    marca = _buscar([r'id="bylineInfo"[^>]*>(?:Visita la tienda de\s*|Marca:\s*)?(.*?)</(?:a|span)>',
+    # El byline trae la marca envuelta en texto y en el idioma del sitio
+    # ("Visit the LEGO Store"): `limpiar_marca` deja solo el nombre, que es lo
+    # único que MercadoLibre acepta como valor de BRAND.
+    marca = _buscar([r'id="bylineInfo"[^>]*>(.*?)</(?:a|span)>',
                      r'"brand"\s*:\s*"([^"]+)"',
-                     r'>\s*Marca\s*</span>.*?<span[^>]*>(.*?)</span>'], texto)
+                     r'>\s*(?:Marca|Brand)\s*</span>.*?<span[^>]*>(.*?)</span>'], texto)
     datos["modelo"] = (titulo or "")[:120]
-    datos["marca"] = (marca or "")[:60]
+    datos["marca"] = limpiar_marca(marca or "")
     datos["precio_usd"] = _parse_precio(texto)
     datos["peso_kg"] = _parse_peso_kg(texto)
     datos["descripcion"] = _parse_descripcion(texto)

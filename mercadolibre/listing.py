@@ -11,14 +11,9 @@ aprobación explícita.
 
 from __future__ import annotations
 
-import unicodedata
 from typing import Optional
 
-
-def _norm(texto: str) -> str:
-    """Minúsculas y sin acentos, para comparar nombres de atributos/valores."""
-    t = unicodedata.normalize("NFD", texto or "")
-    return "".join(c for c in t if unicodedata.category(c) != "Mn").lower().strip()
+from marcas import elegir_marca, normalizar_texto as _norm
 
 
 def valor_por_defecto(attr: dict) -> str:
@@ -59,19 +54,42 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
                    listing_type_id: str = "gold_special",
                    condition: str = "new",
                    currency_id: str = "ARS",
-                   campo_titulo: str = "family_name") -> dict:
+                   campo_titulo: str = "family_name",
+                   valores_permitidos: Optional[dict[str, list[dict]]] = None) -> dict:
     """Arma el payload para POST /items de MercadoLibre.
 
     `campo_titulo` elige cómo se manda el nombre del producto: MercadoLibre
     migró de `title` a `family_name` y **no acepta los dos juntos** (rechaza
     con "The fields [title] are invalid"). Se manda `family_name` por defecto,
     con `title` como alternativa para categorías que todavía lo esperen.
+
+    `valores_permitidos` es {attr_id: [{"id", "name"}]} con los valores que ML
+    acepta en la categoría. Cuando el valor coincide con uno de la lista se
+    manda el `value_id`, que es la forma que MercadoLibre valida sin objetar.
     """
+    permitidos = valores_permitidos or {}
+
+    def _attr(aid: str, valor: str) -> Optional[dict]:
+        """Atributo listo para mandar: con `value_id` si MercadoLibre nos dijo
+        qué valores acepta y el nuestro está entre ellos, si no con el texto."""
+        valor = (valor or "").strip()
+        if not valor:
+            return None
+        objetivo = _norm(valor)
+        for v in permitidos.get(aid, []):
+            if _norm(v.get("name", "")) == objetivo:
+                return {"id": aid, "value_id": v.get("id")}
+        return {"id": aid, "value_name": valor}
+
     attrs = []
-    if producto.marca:
-        attrs.append({"id": "BRAND", "value_name": producto.marca})
-    if producto.modelo:
-        attrs.append({"id": "MODEL", "value_name": producto.modelo})
+    # La marca viene del byline de Amazon ("Visit the LEGO Store"): hay que
+    # limpiarla o MercadoLibre la rechaza por "invalid value name".
+    marca = elegir_marca(producto.marca, producto.titulo_ml or producto.modelo or "",
+                         permitidos.get("BRAND"))
+    for aid, valor in (("BRAND", marca), ("MODEL", producto.modelo)):
+        a = _attr(aid, valor)
+        if a:
+            attrs.append(a)
     # Atributos obligatorios extra que el usuario ya haya completado.
     extra = dict(producto.ml_attributes or {})
     # El "motivo de GTIN vacío" solo aplica cuando NO hay GTIN: mandarlo junto
@@ -81,7 +99,9 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
     for aid, val in extra.items():
         if aid in ("BRAND", "MODEL"):
             continue
-        attrs.append({"id": aid, "value_name": val})
+        a = _attr(aid, val)
+        if a:
+            attrs.append(a)
 
     titulo = (producto.titulo_ml or producto.modelo or producto.asin)[:60]
     campo = campo_titulo if campo_titulo in ("family_name", "title") else "family_name"
@@ -120,7 +140,10 @@ def faltantes_para_publicar(producto, obligatorios: Optional[list[dict]] = None,
         faltan.append("al menos una foto")
     for a in (obligatorios or []):
         aid = a.get("id")
-        if aid in ("BRAND",) and not producto.marca:
+        # Para la marca vale la limpia: "Visit the LEGO Store" sirve (da LEGO),
+        # pero un byline sin nombre adentro no.
+        if aid in ("BRAND",) and not elegir_marca(producto.marca,
+                                                  producto.titulo_ml or producto.modelo or ""):
             faltan.append(f"atributo obligatorio: {a.get('name', aid)}")
         elif aid in ("MODEL",) and not producto.modelo:
             faltan.append(f"atributo obligatorio: {a.get('name', aid)}")

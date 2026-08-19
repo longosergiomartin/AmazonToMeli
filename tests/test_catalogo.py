@@ -212,6 +212,64 @@ def test_motivo_gtin_vacio_se_manda_si_no_hay_gtin(cat):
     assert "EMPTY_GTIN_REASON" in ids
 
 
+def test_item_limpia_la_marca_que_trae_amazon(cat):
+    """Amazon guarda "Visit the LEGO Store" en el byline; mandarlo tal cual hace
+    que ML rechace el ítem con "Attribute BRAND has an invalid value name"."""
+    p = cat.agregar(_prod(marca="Visit the LEGO Store", titulo_ml="LEGO Icons ECTO-1",
+                          ml_category_id="MLA1157"))
+    ids = {a["id"]: a.get("value_name") for a in
+           construir_item(p, pictures=["http://img/1.jpg"])["attributes"]}
+    assert ids["BRAND"] == "LEGO"
+
+
+def test_item_manda_value_id_cuando_ml_dice_que_valores_acepta(cat):
+    p = cat.agregar(_prod(marca="Visit the LEGO Store", titulo_ml="LEGO Icons ECTO-1",
+                          ml_category_id="MLA1157"))
+    item = construir_item(p, pictures=["http://img/1.jpg"],
+                          valores_permitidos={"BRAND": [{"id": "9155", "name": "LEGO"}]})
+    brand = next(a for a in item["attributes"] if a["id"] == "BRAND")
+    assert brand["value_id"] == "9155"
+    assert "value_name" not in brand  # ML valida el id, el texto sobra
+
+
+def test_item_saca_la_marca_del_titulo_si_amazon_no_la_trajo(cat):
+    p = cat.agregar(_prod(marca="", titulo_ml="LEGO Star Wars X-Wing 75355",
+                          ml_category_id="MLA1157"))
+    item = construir_item(p, pictures=["http://img/1.jpg"],
+                          valores_permitidos={"BRAND": [{"id": "9155", "name": "LEGO"}]})
+    brand = next(a for a in item["attributes"] if a["id"] == "BRAND")
+    assert brand["value_id"] == "9155"
+
+
+def test_item_sin_marca_usable_no_manda_brand_vacio(cat):
+    p = cat.agregar(_prod(marca="", titulo_ml="Set de bloques", ml_category_id="MLA1157"))
+    ids = {a["id"] for a in construir_item(p, pictures=["http://img/1.jpg"])["attributes"]}
+    assert "BRAND" not in ids
+
+
+def test_faltantes_detecta_marca_sucia_pero_recuperable(cat):
+    obligatorios = [{"id": "BRAND", "name": "Marca"}]
+    p = cat.agregar(_prod(marca="Visit the LEGO Store", titulo_ml="X",
+                          ml_category_id="MLA1157"))
+    assert faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"]) == []
+    # En cambio, un byline sin marca adentro sí falta.
+    p2 = cat.agregar(_prod(marca="Visit the Store", titulo_ml="X",
+                           ml_category_id="MLA1157"))
+    assert any("Marca" in f for f in
+               faltantes_para_publicar(p2, obligatorios, ["http://img/1.jpg"]))
+
+
+def test_limpiar_marcas_arregla_los_productos_ya_guardados(cat):
+    """Los ~40 productos importados antes del arreglo tienen la marca sucia."""
+    p = cat.agregar(_prod(marca="Visit the LEGO Store"))
+    limpio = cat.agregar(_prod(marca="LEGO"))
+    assert cat.limpiar_marcas() == 1          # solo el sucio
+    assert cat.obtener(p.id).marca == "LEGO"
+    assert cat.obtener(limpio.id).marca == "LEGO"
+    assert cat.limpiar_marcas() == 0          # idempotente
+    assert any(h["tipo"] == "marca" for h in cat.historial(p.id))
+
+
 def test_construir_item_mapea_marca_y_modelo(cat):
     p = cat.agregar(_prod(titulo_ml="Waders HISEA neopreno con botas",
                           ml_category_id="MLA1234"))
