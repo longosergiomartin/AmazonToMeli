@@ -160,6 +160,16 @@ python -m api.server        # abrí http://localhost:8321/panel
 
 Qué hace:
 
+- **Importar muchos de una vez**: buscás lo que te interesa en Amazon (ej.
+  "LEGO Star Wars"), tocás el botón **"Encolar toda la página"** de tu barra de
+  favoritos y se encolan todos los productos de esa página. La cola los procesa
+  **de a uno y despacio**, autocompletando lo que se puede leer, y los deja como
+  **borradores** para que los revises.
+  - Si Amazon empieza a limitar, la cola **se detiene y guarda el progreso**;
+    se continúa después con *Reintentar bloqueados*. No se insiste ni se
+    intenta esquivar el bloqueo: además de corresponder, protege tu cuenta de
+    comprador, que es la que necesitás para comprar.
+  - También podés pegar una lista de links o ASIN a mano.
 - **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
   peso, costo de envío, disponibilidad.
 - **Traer datos desde el link de Amazon**: con un botón se autocompletan ASIN,

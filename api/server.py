@@ -33,6 +33,23 @@ PUERTO = 8321
 # ASIN corresponde. Después abre /capture en una pestaña nueva.
 # __BASE__ se reemplaza por la URL real con la que accediste a la API, así el
 # botón apunta al host/puerto correcto (localhost, 127.0.0.1, otro puerto...).
+# Segundo bookmarklet: en una página de RESULTADOS de Amazon que el usuario
+# ya tiene abierta, junta los ASIN visibles y los manda a la cola. No navega ni
+# pide páginas por su cuenta: solo lee lo que el navegador ya cargó.
+_BOOKMARKLET_LOTE = (
+    "javascript:(function(){"
+    "var B='__BASE__';"
+    "if(location.hostname.indexOf('amazon.')<0){alert('Usá este boton en una pagina de resultados de Amazon');return;}"
+    "var s={},n=[];"
+    "document.querySelectorAll('[data-asin]').forEach(function(e){"
+    "var a=e.getAttribute('data-asin');"
+    "if(a&&a.length===10&&!s[a]){s[a]=1;n.push(a);}});"
+    "if(!n.length){alert('No encontre productos en esta pagina.');return;}"
+    "if(!confirm('Encolar '+n.length+' producto(s) de esta pagina?'))return;"
+    "window.open(B+'/importar/capturar?asins='+n.join(','),'_blank');"
+    "})();"
+)
+
 _BOOKMARKLET_TPL = (
     "javascript:(function(){"
     "var B='__BASE__';"
@@ -75,9 +92,13 @@ _PAGINA_INICIO = """<!doctype html>
 <h1>🛒 Tu API de arbitraje</h1>
 <p>Estado: <strong>funcionando</strong> · {n} producto(s) capturado(s)</p>
 <p><a class="btn" href="/panel">📋 Panel de publicación en MercadoLibre</a></p>
-<h2>El botón mágico</h2>
-<p>Arrastrá este botón a tu <strong>barra de favoritos</strong> (una sola vez):</p>
-<p><a class="btn" href="{bm}">➜ Capturar producto</a></p>
+<h2>Los botones mágicos</h2>
+<p>Arrastrá estos botones a tu <strong>barra de favoritos</strong> (una sola vez):</p>
+<p><a class="btn" href="{bm}">➜ Capturar producto</a>
+   &nbsp; <a class="btn" href="{bm_lote}">➜➜ Encolar toda la página</a></p>
+<p>El segundo sirve en una <strong>página de resultados</strong>: buscás
+   "LEGO Star Wars" en Amazon, tocás el botón y se encolan todos los productos
+   de esa página para que la herramienta los cargue sola.</p>
 <h2>Cómo se usa</h2>
 <ol>
  <li>Navegá Amazon como siempre. En la página de un producto, tocá el botón:
@@ -169,7 +190,8 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         # del bookmarklet, así siempre apunta adonde corresponde.
         base = str(request.base_url).rstrip("/")
         bm = _BOOKMARKLET_TPL.replace("__BASE__", base).replace('"', "&quot;")
-        return _PAGINA_INICIO.format(n=n, bm=bm)
+        bm_lote = _BOOKMARKLET_LOTE.replace("__BASE__", base).replace('"', "&quot;")
+        return _PAGINA_INICIO.format(n=n, bm=bm, bm_lote=bm_lote)
 
     @app.get("/capture", response_class=HTMLResponse)
     def capture(site: str, asin: str, titulo: str = "",

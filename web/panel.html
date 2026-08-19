@@ -110,6 +110,26 @@
   <div id="aviso-datos" style="display:none;background:var(--warn-bg);color:var(--warn);
        border-radius:10px;padding:9px 14px;margin-bottom:18px;font-size:.85rem"></div>
 
+  <div class="card" style="margin-bottom:16px">
+    <h2>Importar muchos de una vez</h2>
+    <div class="f">
+      <label>Links de Amazon o ASIN — uno por línea</label>
+      <textarea id="lote-entradas" rows="3"
+        placeholder="https://www.amazon.com/dp/B075SDMMMV&#10;B0BBHHT8LY"></textarea>
+      <span class="hint">También podés usar el botón <b>"Encolar toda la página"</b>
+        desde una búsqueda de Amazon (arrastralo a favoritos desde
+        <a href="/" target="_blank" rel="noopener">la página de inicio</a>).</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button type="button" id="lote-encolar">Encolar</button>
+      <button type="button" class="primary" id="lote-procesar">▶ Procesar cola</button>
+      <button type="button" id="lote-frenar" style="display:none">■ Frenar</button>
+      <button type="button" class="sm" id="lote-reactivar">Reintentar bloqueados</button>
+      <button type="button" class="sm" id="lote-limpiar">Limpiar terminados</button>
+    </div>
+    <div class="hist" id="lote-estado" style="margin-top:10px"></div>
+  </div>
+
   <div class="card">
     <h2>Registrar producto de Amazon</h2>
     <div class="grid2">
@@ -252,6 +272,48 @@
         '<b style="color:var(--'+cls+')">'+fmt(o.costo_ars)+' · '+o.margen_pct.toFixed(1)+'%</b></div>'; }
     into.innerHTML='<div style="margin-top:10px;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Comparación de dólar (costo · margen)</div>'+
       fila("Dólar tarjeta",comp.tarjeta)+fila("Dólar oficial",comp.oficial);
+  }
+
+  // ---- cola de importación por lote ----
+  var loteCorriendo=false;
+  function pintarCola(e,extra){
+    $("lote-estado").innerHTML=
+      "<div><b>"+e.pendientes+"</b> pendientes · <b>"+e.listos+"</b> cargados · "+
+      e.errores+" con error · "+e.bloqueados+" frenados</div>"+(extra||"");
+  }
+  function cargarCola(){ api("GET","/api/importar/estado").then(function(e){pintarCola(e);}).catch(function(){}); }
+  function encolarLote(){
+    var txt=$("lote-entradas").value||"";
+    if(!txt.trim()){ pintarCola({pendientes:0,listos:0,errores:0,bloqueados:0},
+      "<div>Pegá links o ASIN, o usá el botón de favoritos en una búsqueda de Amazon.</div>"); return; }
+    api("POST","/api/importar/encolar",{entradas:txt}).then(function(r){
+      $("lote-entradas").value="";
+      pintarCola(r,"<div>Encolados: "+r.nuevos+" · repetidos: "+r.duplicados+"</div>");
+    }).catch(err);
+  }
+  function procesarCola(){
+    if(loteCorriendo) return;
+    loteCorriendo=true; $("lote-frenar").style.display="";
+    (function paso(){
+      if(!loteCorriendo){ $("lote-frenar").style.display="none"; cargar(); return; }
+      api("POST","/api/importar/procesar",{maximo:3,pausa_seg:2}).then(function(r){
+        var ultimos=(r.procesados||[]).map(function(x){
+          return "<div>"+(x.hecho?"✓ ":"• ")+esc(x.asin||"")+" — "+esc(x.titulo||x.motivo||"")+"</div>";
+        }).join("");
+        if(r.detener){
+          loteCorriendo=false; $("lote-frenar").style.display="none";
+          var msg = r.motivo==="bloqueado"
+            ? "<div style='color:var(--warn)'><b>Amazon nos limitó: la cola quedó frenada.</b> "
+              +"Los productos no se pierden — probá de nuevo más tarde o mañana con "
+              +"<b>Reintentar bloqueados</b>.</div>"
+            : (r.motivo==="vacia" ? "<div>Cola vacía. ✓</div>" : "");
+          pintarCola(r, ultimos+msg); cargar(); return;
+        }
+        pintarCola(r, ultimos);
+        cargar();
+        setTimeout(paso, 800);   // sigue de a poco, sin golpear el sitio
+      }).catch(function(e){ loteCorriendo=false; $("lote-frenar").style.display="none"; err(e); });
+    })();
   }
 
   function num(id){var v=parseFloat($(id).value);return isFinite(v)?v:0;}
@@ -506,8 +568,20 @@
   $("cotiz-refrescar").addEventListener("click",function(){cargarCotiz(true);});
   $("fiscal").addEventListener("change",cambiarFiscal);
   $("dolar-costo").addEventListener("change",cambiarDolarCosto);
+  $("lote-encolar").addEventListener("click",encolarLote);
+  $("lote-procesar").addEventListener("click",procesarCola);
+  $("lote-frenar").addEventListener("click",function(){ loteCorriendo=false; });
+  $("lote-reactivar").addEventListener("click",function(){
+    api("POST","/api/importar/reactivar",{}).then(function(e){
+      pintarCola(e,"<div>Los frenados volvieron a la cola. Tocá <b>Procesar cola</b>.</div>");
+    }).catch(err);
+  });
+  $("lote-limpiar").addEventListener("click",function(){
+    api("POST","/api/importar/limpiar",{}).then(function(e){pintarCola(e);}).catch(err);
+  });
+
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargar();
+  cargarAlmacenamiento(); cargarCola(); cargar();
 })();
 </script>
 </body>
