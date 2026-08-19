@@ -136,14 +136,21 @@ def test_descripcion_persiste_y_se_edita(cat):
     assert cat.obtener(p.id).descripcion == "Editada"
 
 
-def test_item_incluye_family_name(cat):
-    """MercadoLibre exige family_name en varias categorías; sin él rechaza con
-    'body does not contains ... [family_name]'."""
+def test_item_manda_family_name_y_no_title(cat):
+    """MercadoLibre migró de `title` a `family_name` y NO acepta los dos:
+    manda uno u otro, nunca ambos."""
     p = cat.agregar(_prod(titulo_ml="LEGO Icons Ghostbusters ECTO-1 10274",
                           ml_category_id="MLA1157"))
     item = construir_item(p, pictures=["http://img/1.jpg"])
-    assert item["family_name"] == item["title"]
     assert item["family_name"] == "LEGO Icons Ghostbusters ECTO-1 10274"
+    assert "title" not in item
+
+
+def test_item_puede_usar_title_para_categorias_viejas(cat):
+    p = cat.agregar(_prod(titulo_ml="LEGO Star Wars 75192", ml_category_id="MLA1"))
+    item = construir_item(p, pictures=["http://img/1.jpg"], campo_titulo="title")
+    assert item["title"] == "LEGO Star Wars 75192"
+    assert "family_name" not in item
 
 
 def test_family_name_respeta_el_limite_de_titulo(cat):

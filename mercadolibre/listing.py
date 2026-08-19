@@ -58,8 +58,15 @@ def _precio(producto) -> float:
 def construir_item(producto, pictures: Optional[list[str]] = None,
                    listing_type_id: str = "gold_special",
                    condition: str = "new",
-                   currency_id: str = "ARS") -> dict:
-    """Arma el payload para POST /items de MercadoLibre."""
+                   currency_id: str = "ARS",
+                   campo_titulo: str = "family_name") -> dict:
+    """Arma el payload para POST /items de MercadoLibre.
+
+    `campo_titulo` elige cómo se manda el nombre del producto: MercadoLibre
+    migró de `title` a `family_name` y **no acepta los dos juntos** (rechaza
+    con "The fields [title] are invalid"). Se manda `family_name` por defecto,
+    con `title` como alternativa para categorías que todavía lo esperen.
+    """
     attrs = []
     if producto.marca:
         attrs.append({"id": "BRAND", "value_name": producto.marca})
@@ -77,12 +84,9 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
         attrs.append({"id": aid, "value_name": val})
 
     titulo = (producto.titulo_ml or producto.modelo or producto.asin)[:60]
+    campo = campo_titulo if campo_titulo in ("family_name", "title") else "family_name"
     item = {
-        "title": titulo,
-        # MercadoLibre reemplazó `title` por `family_name`: lo mapea solo por
-        # compatibilidad, pero varias categorías ya lo exigen explícito (si no,
-        # rechaza con "body does not contains ... [family_name]").
-        "family_name": titulo,
+        campo: titulo,
         "category_id": producto.ml_category_id,
         "price": round(_precio(producto), 2),
         "currency_id": currency_id,

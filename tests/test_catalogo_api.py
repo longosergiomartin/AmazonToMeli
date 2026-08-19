@@ -158,6 +158,43 @@ def test_desglose_devuelve_ambas_variantes(client):
     assert det["costos_ml_pct"] == pytest.approx(16.0, abs=2)
 
 
+def test_publicar_reintenta_con_title_si_ml_pide_family_name(tmp_path, monkeypatch):
+    """Si la categoría rechaza `family_name`, se reintenta con `title`."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    enviados = []
+
+    class _CliFalso:
+        def atributos_obligatorios(self, cat_id):
+            return []
+
+        def publicar(self, item):
+            enviados.append(item)
+            if "family_name" in item:
+                raise MeliAPIError("rechazo", status=400,
+                                   cuerpo={"error": "The fields [family_name] are invalid"})
+            return {"id": "MLA999", "permalink": "http://ml/x"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "t.db")))
+    pid = _alta(c, titulo_ml="LEGO Star Wars", ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200 and r.json()["ml_item_id"] == "MLA999"
+    assert len(enviados) == 2                     # primer intento + reintento
+    assert "family_name" in enviados[0] and "title" not in enviados[0]
+    assert "title" in enviados[1] and "family_name" not in enviados[1]
+
+
 def test_almacenamiento_avisa_si_no_es_persistente(client):
     a = client.get("/api/almacenamiento").json()
     # En tests corre sobre SQLite: debe avisar que no es persistente.

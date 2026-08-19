@@ -482,12 +482,24 @@ def registrar_catalogo(app: FastAPI, conn,
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
-        item = construir_item(p, pictures=pics,
-                              listing_type_id=body.listing_type_id)
+        # MercadoLibre migró de `title` a `family_name` y no acepta los dos.
+        # Probamos con el campo nuevo y, si la categoría todavía espera el
+        # viejo, reintentamos una vez con `title`.
+        def _armar(campo: str) -> dict:
+            return construir_item(p, pictures=pics,
+                                  listing_type_id=body.listing_type_id,
+                                  campo_titulo=campo)
+
         try:
-            creado = cli.publicar(item)
+            creado = cli.publicar(_armar("family_name"))
         except MeliAPIError as e:
-            raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e.cuerpo}")
+            if "family_name" in str(e.cuerpo):
+                try:
+                    creado = cli.publicar(_armar("title"))
+                except MeliAPIError as e2:
+                    raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e2.cuerpo}")
+            else:
+                raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e.cuerpo}")
         item_id = creado.get("id", "")
         # La descripción va en un endpoint aparte, después de crear el ítem.
         if item_id and (p.descripcion or "").strip():
