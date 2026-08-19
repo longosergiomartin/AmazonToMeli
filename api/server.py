@@ -40,12 +40,19 @@ _BOOKMARKLET_LOTE = (
     "javascript:(function(){"
     "var B='__BASE__';"
     "if(location.hostname.indexOf('amazon.')<0){alert('Usá este boton en una pagina de resultados de Amazon');return;}"
-    "var s={},n=[];"
+    # Mismo criterio que el filtro del servidor: descarta accesorios, otras
+    # marcas y lo que no sea LEGO, para no gastar pedidos en basura.
+    "var pasa=__FILTRO__;"
+    "var s={},n=[],desc=0;"
     "document.querySelectorAll('[data-asin]').forEach(function(e){"
     "var a=e.getAttribute('data-asin');"
-    "if(a&&a.length===10&&!s[a]){s[a]=1;n.push(a);}});"
-    "if(!n.length){alert('No encontre productos en esta pagina.');return;}"
-    "if(!confirm('Encolar '+n.length+' producto(s) de esta pagina?'))return;"
+    "if(!a||a.length!==10||s[a])return;"
+    "s[a]=1;"
+    "var h=e.querySelector('h2');"
+    "var t=h?h.innerText:(e.innerText||'');"
+    "if(pasa(t)){n.push(a);}else{desc++;}});"
+    "if(!n.length){alert('No encontre sets LEGO en esta pagina'+(desc?' ('+desc+' descartados por el filtro).':'.'));return;}"
+    "if(!confirm('Encolar '+n.length+' set(s) LEGO?'+(desc?'\\n('+desc+' accesorios/otras marcas descartados)':'')))return;"
     "window.open(B+'/importar/capturar?asins='+n.join(','),'_blank');"
     "})();"
 )
@@ -190,7 +197,9 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         # del bookmarklet, así siempre apunta adonde corresponde.
         base = str(request.base_url).rstrip("/")
         bm = _BOOKMARKLET_TPL.replace("__BASE__", base).replace('"', "&quot;")
-        bm_lote = _BOOKMARKLET_LOTE.replace("__BASE__", base).replace('"', "&quot;")
+        from filtros import filtro_js
+        bm_lote = (_BOOKMARKLET_LOTE.replace("__BASE__", base)
+                   .replace("__FILTRO__", filtro_js()).replace('"', "&quot;"))
         return _PAGINA_INICIO.format(n=n, bm=bm, bm_lote=bm_lote)
 
     @app.get("/capture", response_class=HTMLResponse)

@@ -24,12 +24,14 @@ from typing import Callable, Optional
 
 from amazon_import import extraer_asin, importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo
+from filtros import PRECIO_MIN_USD, es_set_lego
 
 # Estados de cada ítem de la cola.
 PENDIENTE = "pendiente"
 LISTO = "listo"
 ERROR = "error"
-BLOQUEADO = "bloqueado"   # Amazon nos limitó: reintentar más tarde
+BLOQUEADO = "bloqueado"    # Amazon nos limitó: reintentar más tarde
+DESCARTADO = "descartado"  # no es un set LEGO (accesorio, otra marca, etc.)
 
 
 def _ahora() -> str:
@@ -37,9 +39,13 @@ def _ahora() -> str:
 
 
 class ColaImportacion:
-    def __init__(self, conn, cat: Catalogo):
+    def __init__(self, conn, cat: Catalogo, solo_lego: bool = True,
+                 precio_min_usd: float = PRECIO_MIN_USD):
         self.conn = conn
         self.cat = cat
+        # Filtro: quedarse solo con sets LEGO (no accesorios ni otras marcas).
+        self.solo_lego = solo_lego
+        self.precio_min_usd = precio_min_usd
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS cola_importacion (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +146,16 @@ class ColaImportacion:
             return {"hecho": False, "detener": False, "motivo": "sin_precio",
                     "asin": asin, "mensaje": datos.get("mensaje", ""), **self.estado()}
 
+        # Filtro con los datos reales de la ficha: acá se decide de verdad.
+        if self.solo_lego:
+            ok, motivo = es_set_lego(datos.get("modelo", ""), datos.get("marca", ""),
+                                     datos.get("precio_usd"), self.precio_min_usd)
+            if not ok:
+                self._marcar(item_id, DESCARTADO, motivo)
+                return {"hecho": False, "detener": False, "motivo": "descartado",
+                        "asin": asin, "titulo": datos.get("modelo", "")[:60],
+                        "mensaje": motivo, **self.estado()}
+
         p = self._crear_producto(datos)
         self._marcar(item_id, LISTO, f"Cargado como borrador #{p.id}")
         return {"hecho": True, "detener": False, "motivo": "ok", "asin": asin,
@@ -174,7 +190,8 @@ class ColaImportacion:
         return {"pendientes": conteo.get(PENDIENTE, 0),
                 "listos": conteo.get(LISTO, 0),
                 "errores": conteo.get(ERROR, 0),
-                "bloqueados": conteo.get(BLOQUEADO, 0)}
+                "bloqueados": conteo.get(BLOQUEADO, 0),
+                "descartados": conteo.get(DESCARTADO, 0)}
 
     def items(self, limite: int = 30) -> list[dict]:
         filas = self.conn.execute(
@@ -191,7 +208,7 @@ class ColaImportacion:
         return self.estado()
 
     def limpiar_terminados(self) -> dict:
-        self.conn.execute("DELETE FROM cola_importacion WHERE estado IN (?, ?)",
-                          (LISTO, ERROR))
+        self.conn.execute("DELETE FROM cola_importacion WHERE estado IN (?, ?, ?)",
+                          (LISTO, ERROR, DESCARTADO))
         self.conn.commit()
         return self.estado()

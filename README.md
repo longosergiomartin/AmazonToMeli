@@ -170,6 +170,32 @@ Qué hace:
     intenta esquivar el bloqueo: además de corresponder, protege tu cuenta de
     comprador, que es la que necesitás para comprar.
   - También podés pegar una lista de links o ASIN a mano.
+  - **Filtro "solo sets LEGO"**: las búsquedas de Amazon devuelven además
+    patrocinados, accesorios de terceros ("luces LED *compatibles con* Lego",
+    vitrinas, organizadores) y productos de otras marcas. El filtro los
+    descarta en dos momentos: en el botón (para no gastar pedidos a Amazon en
+    basura) y al procesar, con el título y la marca reales de la ficha. También
+    descarta lo muy barato (llaveros, polybags) según un precio mínimo
+    (USD 25 por defecto). Ver `filtros.py`.
+
+### Procesar la cola desde tu PC (importante)
+
+**Amazon bloquea las IPs de los servidores en la nube**: desde Render la
+lectura de fichas falla siempre (403), aunque el encolado funcione bien. Desde
+una conexión hogareña, en cambio, anda.
+
+Como la base es compartida, encolás desde donde quieras y **procesás desde tu
+casa**. En la carpeta del proyecto:
+
+```bash
+set DATABASE_URL=postgresql://...     # el mismo valor que pusiste en Render
+py procesar_cola.py                   # procesa hasta 25, con 3 s entre cada uno
+py procesar_cola.py --maximo 40 --pausa 4
+py procesar_cola.py --reintentar      # retomar los que quedaron frenados
+```
+
+Los productos cargados aparecen en el panel de la nube al instante. El script
+frena solo si Amazon empieza a limitar.
 - **Registrar** un producto de Amazon: link, ASIN, marca, modelo, precio USD,
   peso, costo de envío, disponibilidad.
 - **Traer datos desde el link de Amazon**: con un botón se autocompletan ASIN,

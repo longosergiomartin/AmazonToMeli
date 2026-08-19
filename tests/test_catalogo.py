@@ -136,6 +136,23 @@ def test_descripcion_persiste_y_se_edita(cat):
     assert cat.obtener(p.id).descripcion == "Editada"
 
 
+def test_item_incluye_family_name(cat):
+    """MercadoLibre exige family_name en varias categorías; sin él rechaza con
+    'body does not contains ... [family_name]'."""
+    p = cat.agregar(_prod(titulo_ml="LEGO Icons Ghostbusters ECTO-1 10274",
+                          ml_category_id="MLA1157"))
+    item = construir_item(p, pictures=["http://img/1.jpg"])
+    assert item["family_name"] == item["title"]
+    assert item["family_name"] == "LEGO Icons Ghostbusters ECTO-1 10274"
+
+
+def test_family_name_respeta_el_limite_de_titulo(cat):
+    largo = "LEGO " + "x" * 120
+    p = cat.agregar(_prod(titulo_ml=largo, ml_category_id="MLA1"))
+    item = construir_item(p, pictures=["http://img/1.jpg"])
+    assert len(item["family_name"]) <= 60
+
+
 def test_item_incluye_dias_de_preparacion(cat):
     p = cat.agregar(_prod(titulo_ml="Waders", ml_category_id="MLA1", dias_preparacion=25))
     item = construir_item(p, pictures=["http://img/1.jpg"])

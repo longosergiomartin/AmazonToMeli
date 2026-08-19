@@ -279,6 +279,7 @@
   function pintarCola(e,extra){
     $("lote-estado").innerHTML=
       "<div><b>"+e.pendientes+"</b> pendientes · <b>"+e.listos+"</b> cargados · "+
+      (e.descartados||0)+" descartados (no son sets LEGO) · "+
       e.errores+" con error · "+e.bloqueados+" frenados</div>"+(extra||"");
   }
   function cargarCola(){ api("GET","/api/importar/estado").then(function(e){pintarCola(e);}).catch(function(){}); }
@@ -298,14 +299,27 @@
       if(!loteCorriendo){ $("lote-frenar").style.display="none"; cargar(); return; }
       api("POST","/api/importar/procesar",{maximo:3,pausa_seg:2}).then(function(r){
         var ultimos=(r.procesados||[]).map(function(x){
-          return "<div>"+(x.hecho?"✓ ":"• ")+esc(x.asin||"")+" — "+esc(x.titulo||x.motivo||"")+"</div>";
+          var icono = x.hecho ? "✓ " : (x.motivo==="descartado" ? "✗ " : "• ");
+          var color = x.motivo==="descartado" ? " style='color:var(--muted)'" : "";
+          var detalle = x.motivo==="descartado"
+            ? esc(x.titulo||"")+" — descartado: "+esc(x.mensaje||"")
+            : esc(x.titulo||x.motivo||"");
+          return "<div"+color+">"+icono+esc(x.asin||"")+" — "+detalle+"</div>";
         }).join("");
         if(r.detener){
           loteCorriendo=false; $("lote-frenar").style.display="none";
+          var enNube = location.hostname.indexOf("onrender.com")>=0
+                    || location.hostname.indexOf("localhost")<0 && location.hostname.indexOf("127.0.0.1")<0;
           var msg = r.motivo==="bloqueado"
             ? "<div style='color:var(--warn)'><b>Amazon nos limitó: la cola quedó frenada.</b> "
-              +"Los productos no se pierden — probá de nuevo más tarde o mañana con "
-              +"<b>Reintentar bloqueados</b>.</div>"
+              +"Los productos no se pierden ("+r.pendientes+" siguen pendientes).</div>"
+              +(enNube
+                ? "<div style='margin-top:6px'>Amazon bloquea los servidores en la nube. "
+                  +"Para cargarlos, corré esto <b>en tu PC</b> (misma base, misma cola):<br>"
+                  +"<code>py procesar_cola.py</code><br>"
+                  +"Los productos van a aparecer acá solos.</div>"
+                : "<div style='margin-top:6px'>Probá más tarde o mañana con "
+                  +"<b>Reintentar bloqueados</b>.</div>")
             : (r.motivo==="vacia" ? "<div>Cola vacía. ✓</div>" : "");
           pintarCola(r, ultimos+msg); cargar(); return;
         }
