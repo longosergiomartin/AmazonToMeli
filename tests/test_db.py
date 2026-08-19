@@ -22,9 +22,30 @@ def test_database_url_tiene_prioridad(monkeypatch, tmp_path):
     """Si el entorno define DATABASE_URL, gana sobre la ruta local (es lo que
     hace que en la nube se use el Postgres persistente)."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
-    # No conectamos de verdad: solo comprobamos qué motor elegiría.
-    with pytest.raises(Exception):
-        Conexion(str(tmp_path / "t.db"))  # falla al conectar, no al elegir
+    c = Conexion(str(tmp_path / "t.db"))
+    assert c.postgres is True
+    assert c.url == "postgresql://x/y"
+
+
+def test_conexion_postgres_es_perezosa(monkeypatch, tmp_path):
+    """Construir la conexión NO debe conectar: si la base está dormida (Neon
+    'scale to zero'), la app tiene que arrancar igual."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nadie@127.0.0.1:1/nada")
+    c = Conexion()                      # no explota
+    assert c._conn is None
+    # Recién al usarla falla, y con un error de conexión reconocible.
+    with pytest.raises(Exception) as exc:
+        c.execute("SELECT 1")
+    assert Conexion._es_error_de_conexion(exc.value)
+
+
+def test_executescript_tolera_base_caida(monkeypatch):
+    """El esquema queda registrado para aplicarse al reconectar, sin tumbar
+    el arranque de la app."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nadie@127.0.0.1:1/nada")
+    c = Conexion()
+    c.executescript("CREATE TABLE IF NOT EXISTS x (id INTEGER PRIMARY KEY AUTOINCREMENT);")
+    assert len(c._esquema) == 1  # registrado, se aplicará al conectar
 
 
 def test_traduccion_de_sql_a_postgres():
