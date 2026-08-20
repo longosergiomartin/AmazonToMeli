@@ -48,8 +48,31 @@
   button:hover{filter:brightness(1.04)}
   button.sm{padding:6px 10px;font-size:.8rem}
   .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-top:14px}
-  table{width:100%;border-collapse:collapse;font-size:.86rem;min-width:720px}
+  /* `separate` (y no `collapse`) porque Chrome no fija celdas sticky con los
+     bordes colapsados, y la columna de acciones va pegada a la derecha. */
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem;min-width:640px}
   th,td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  /* El nombre del producto es largo: que corte en varias líneas en vez de
+     estirar la tabla y empujar los botones fuera de la pantalla. */
+  td.prod,th.prod{white-space:normal;min-width:210px;max-width:360px}
+  /* La columna de acciones queda pegada a la derecha: siempre visible, aunque
+     la tabla tenga scroll horizontal. */
+  th.acc,td.acc{position:sticky;right:0;background:var(--surface);
+    box-shadow:-8px 0 8px -8px rgba(0,0,0,.25)}
+  .menu{position:relative;display:inline-block}
+  .menu>summary{list-style:none;cursor:pointer;padding:3px 8px;border:1px solid var(--line);
+    border-radius:7px;font-size:.82rem;background:var(--surface)}
+  .menu>summary::-webkit-details-marker{display:none}
+  .menu[open]>summary{border-color:var(--accent)}
+  .menu-body{position:absolute;right:0;top:calc(100% + 4px);z-index:20;display:flex;
+    flex-direction:column;gap:4px;background:var(--surface);border:1px solid var(--line);
+    border-radius:9px;padding:7px;min-width:150px;box-shadow:0 8px 22px rgba(0,0,0,.28)}
+  .menu-body button{width:100%;text-align:left}
+  /* Barra de acciones en lote (varios productos seleccionados a la vez). */
+  .lote{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 13px;
+    border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-top:14px}
+  .lote.off{display:none}
+  td.chk,th.chk{width:1%;padding-right:0}
   th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   td.num{font-family:var(--mono);text-align:right}
   tr:last-child td{border-bottom:0}
@@ -59,7 +82,9 @@
   .pill.publicado{background:var(--good-bg);color:var(--good)}
   .pill.pausado{background:var(--bad-bg);color:var(--bad)}
   .warnflag{color:var(--bad);font-weight:700;font-size:.75rem}
-  .actions{display:flex;gap:5px;flex-wrap:wrap}
+  /* Va en un div adentro de la celda: una celda de tabla en display:flex se
+     encoge y los botones se salen de ella. */
+  .actions{display:flex;gap:5px;align-items:center;justify-content:flex-end}
   dialog{border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);max-width:520px;width:92%;padding:0}
   dialog::backdrop{background:rgba(0,0,0,.45)}
   .dlg-h{padding:16px 18px;border-bottom:1px solid var(--line);font-weight:700}
@@ -166,10 +191,19 @@
       <span class="msg" id="add-msg"></span></div>
   </div>
 
+  <div class="lote off" id="lote">
+    <b id="lote-n">0 seleccionados</b>
+    <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
+    <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
+    <button type="button" class="sm" id="lote-borrar">Borrar</button>
+    <span class="msg" id="lote-msg"></span>
+  </div>
+
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
-      <th>Producto</th><th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
-      <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th>Acciones</th>
+      <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
+      <th class="prod">Producto</th><th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
+      <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th class="acc">Acciones</th>
     </tr></thead><tbody id="tbody"></tbody></table>
     <div class="empty" id="empty">Todavía no registraste productos.</div>
   </div>
@@ -356,23 +390,96 @@
       list.forEach(function(p){
         var tr=document.createElement("tr");
         var flag=p.margen_insuficiente?' <span class="warnflag" title="Margen por debajo del umbral">⚠ bajo</span>':'';
-        tr.innerHTML='<td>'+esc(p.modelo||p.asin||"(sin nombre)")+'<div class="sub">'+esc(p.marca||"")+'</div></td>'+
+        tr.innerHTML='<td class="chk"><input type="checkbox" class="sel" value="'+p.id+'"></td>'+
+          '<td class="prod">'+esc(p.modelo||p.asin||"(sin nombre)")+'<div class="sub">'+esc(p.marca||"(sin marca)")+'</div></td>'+
           '<td class="num">'+fmt(p.costo_total_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
           '<td class="num">'+(p.margen_pct||0).toFixed(0)+'%'+flag+'</td>'+
           '<td><span class="pill '+p.estado+'">'+p.estado+'</span></td>'+
-          '<td class="actions" id="act-'+p.id+'"></td>';
+          '<td class="acc"><div class="actions" id="act-'+p.id+'"></div></td>';
         tb.appendChild(tr);
         acciones(p);
       });
+      Array.prototype.forEach.call(document.querySelectorAll(".sel"),
+        function(c){ c.onchange=pintarLote; });
+      $("chk-todos").checked=false; pintarLote();
     });
   }
 
+  // ---- selección múltiple ------------------------------------------------
+  function seleccionados(){
+    return Array.prototype.filter.call(document.querySelectorAll(".sel"), function(c){return c.checked;})
+      .map(function(c){ return parseInt(c.value,10); });
+  }
+  function pintarLote(){
+    var n=seleccionados().length;
+    $("lote").className="lote"+(n?"":" off");
+    $("lote-n").textContent=n+(n===1?" seleccionado":" seleccionados");
+  }
+  $("chk-todos").onchange=function(){
+    var v=this.checked;
+    Array.prototype.forEach.call(document.querySelectorAll(".sel"),function(c){c.checked=v;});
+    pintarLote();
+  };
+
+  // Los lotes se mandan de a poco: cada llamada busca categoría y GTIN en la
+  // red, así que en tandas chicas se ve el avance y no hay peticiones eternas.
+  function porTandas(ids,url,onPaso){
+    var pendientes=ids.slice(), resultados=[];
+    function paso(){
+      if(!pendientes.length) return Promise.resolve(resultados);
+      var tanda=pendientes.splice(0,3);
+      return api("POST",url,{ids:tanda}).then(function(r){
+        resultados=resultados.concat(r.resultados||[]);
+        onPaso(resultados.length,ids.length);
+        return paso();
+      });
+    }
+    return paso();
+  }
+  function resumen(res){
+    var ok=res.filter(function(r){return r.ok;}).length;
+    var fallas=res.filter(function(r){return !r.ok;});
+    var txt="✓ "+ok+" de "+res.length;
+    if(fallas.length) txt+=" · "+fallas.length+" con problemas:\n"+
+      fallas.slice(0,8).map(function(f){return "· "+(f.nombre||f.id)+": "+f.error;}).join("\n");
+    return txt;
+  }
+  function correrLote(url,btnId,confirmar){
+    var ids=seleccionados();
+    if(!ids.length) return;
+    if(confirmar && !confirm(confirmar.replace("{n}",ids.length))) return;
+    var b=$(btnId); b.disabled=true;
+    $("lote-msg").textContent="Procesando 0/"+ids.length+"…";
+    porTandas(ids,url,function(hechos,total){ $("lote-msg").textContent="Procesando "+hechos+"/"+total+"…"; })
+      .then(function(res){ $("lote-msg").textContent=""; b.disabled=false; alert(resumen(res)); cargar(); })
+      .catch(function(e){ b.disabled=false; $("lote-msg").textContent=""; err(e); });
+  }
+  $("lote-preparar").onclick=function(){ correrLote("/api/catalogo/lote/preparar","lote-preparar"); };
+  $("lote-publicar").onclick=function(){
+    correrLote("/api/catalogo/lote/publicar","lote-publicar",
+      "Vas a publicar {n} producto(s) en MercadoLibre, con el precio sugerido de cada uno.\n\n¿Confirmás?");
+  };
+  $("lote-borrar").onclick=function(){
+    var ids=seleccionados();
+    if(ids.length && confirm("¿Borrar "+ids.length+" producto(s) del catálogo?"))
+      api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
+  };
+
   function acciones(p){
     var c=document.getElementById("act-"+p.id); c.innerHTML="";
-    function b(txt,fn,cls){var el=document.createElement("button");el.className="sm"+(cls?" "+cls:"");el.textContent=txt;el.onclick=fn;c.appendChild(el);}
-    b("Vista previa",function(){previa(p.id);},"primary");
+    // Solo la acción principal queda a la vista; el resto entra en un menú, así
+    // la columna no estira la tabla y los botones no quedan fuera de pantalla.
+    var principal=document.createElement("button");
+    principal.className="sm primary"; principal.textContent="Editar y publicar";
+    principal.onclick=function(){previa(p.id);}; c.appendChild(principal);
+
+    var d=document.createElement("details"); d.className="menu";
+    var s=document.createElement("summary"); s.textContent="⋯"; d.appendChild(s);
+    var body=document.createElement("div"); body.className="menu-body"; d.appendChild(body);
+    function b(txt,fn){var el=document.createElement("button");el.className="sm";el.textContent=txt;
+      el.onclick=function(){d.removeAttribute("open");fn();};body.appendChild(el);}
     b("Precio",function(){var v=prompt("Nuevo precio de venta (ARS):",Math.round(p.precio_publicado_ars||p.precio_sugerido_ars));
       if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
     b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);
@@ -385,7 +492,14 @@
     });
     b("Historial",function(){historial(p.id);});
     b("Borrar",function(){ if(confirm("¿Borrar este producto del catálogo?")) api("DELETE","/api/catalogo/"+p.id).then(cargar).catch(err); });
+    c.appendChild(d);
   }
+  // Un solo menú abierto por vez.
+  document.addEventListener("click",function(e){
+    Array.prototype.forEach.call(document.querySelectorAll("details.menu[open]"),function(d){
+      if(!d.contains(e.target)) d.removeAttribute("open");
+    });
+  });
   function op(id,accion){ api("POST","/api/catalogo/"+id+"/"+accion,{}).then(cargar).catch(err); }
   function err(e){ alert("Error: "+(typeof e==="string"?e:JSON.stringify(e))); }
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}

@@ -469,3 +469,116 @@ def test_pictures_persisten_para_publicar(client):
     # Publicar sin pasar pictures en el body: usa las guardadas → llega a pedir sesión ML.
     r = client.post(f"/api/catalogo/{pid}/publicar", json={})
     assert r.status_code in (400, 401)  # faltaría solo la sesión de ML, no las fotos
+
+
+def _cli_lote(enviados, con_categoria=True):
+    class _Cli:
+        def predecir_categoria(self, titulo):
+            return [{"category_id": "MLA1157", "category_name": "Sets"}] if con_categoria else []
+
+        def atributos_obligatorios(self, cat_id):
+            return [{"id": "IVA", "name": "IVA", "values": ["0 %", "21 %"]},
+                    {"id": "BRAND", "name": "Marca"}]
+
+        def valores_permitidos(self, cat_id):
+            return {}
+
+        def publicar(self, item):
+            enviados.append(item)
+            return {"id": "MLA" + str(len(enviados)), "permalink": "http://ml/x"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+    return _Cli()
+
+
+def _con_ml(monkeypatch, cli):
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+
+def test_lote_preparar_completa_marca_categoria_y_atributos(tmp_path, monkeypatch):
+    """Lo que evita cargar producto por producto: se deduce todo lo deducible."""
+    _con_ml(monkeypatch, _cli_lote([]))
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": True, "gtin": "5702016914498", "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "lote.db")))
+    ids = [_alta(c, marca="Visit the LEGO Store", modelo="LEGO Icons ECTO-1 10274",
+                 titulo_ml="", asin="B0TEST1").json()["id"],
+           _alta(c, marca="", modelo="LEGO Technic Ferrari 42143", asin="B0TEST2").json()["id"]]
+
+    r = c.post("/api/catalogo/lote/preparar", json={"ids": ids})
+    assert r.status_code == 200
+    assert all(x["ok"] for x in r.json()["resultados"])
+
+    for pid in ids:
+        p = c.get(f"/api/catalogo/{pid}").json()
+        assert p["marca"] == "LEGO"
+        assert p["ml_category_id"] == "MLA1157"
+        assert p["titulo_ml"]                                  # se completó del modelo
+        assert p["ml_attributes"]["GTIN"] == "5702016914498"
+        assert p["ml_attributes"]["IVA"] == "21 %"             # default administrativo
+
+
+def test_lote_publicar_publica_los_seleccionados(tmp_path, monkeypatch):
+    """El flujo de los dos botones: Preparar completa los datos, Publicar sube."""
+    enviados = []
+    _con_ml(monkeypatch, _cli_lote(enviados))
+    monkeypatch.setattr("gtin_lookup.buscar_gtin", lambda asin: {"ok": False, "gtin": ""})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "lote2.db")))
+    ids = []
+    for n in (1, 2):
+        pid = _alta(c, marca="LEGO", titulo_ml=f"LEGO Set {n}",
+                    ml_category_id="MLA1157").json()["id"]
+        c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+        ids.append(pid)
+
+    c.post("/api/catalogo/lote/preparar", json={"ids": ids})
+    r = c.post("/api/catalogo/lote/publicar", json={"ids": ids})
+    assert all(x["ok"] for x in r.json()["resultados"]), r.text
+    assert len(enviados) == 2
+    for pid in ids:
+        assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_lote_sigue_con_los_demas_si_uno_falla(tmp_path, monkeypatch):
+    """Un producto incompleto no puede frenar la tanda entera."""
+    enviados = []
+    _con_ml(monkeypatch, _cli_lote(enviados))
+    monkeypatch.setattr("gtin_lookup.buscar_gtin", lambda asin: {"ok": False, "gtin": ""})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "lote3.db")))
+    bueno = _alta(c, marca="LEGO", titulo_ml="LEGO Set OK",
+                  ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{bueno}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    malo = _alta(c, marca="LEGO", titulo_ml="Sin foto").json()["id"]
+
+    c.post("/api/catalogo/lote/preparar", json={"ids": [malo, bueno]})
+    res = c.post("/api/catalogo/lote/publicar", json={"ids": [malo, bueno]}).json()["resultados"]
+    por_id = {r["id"]: r for r in res}
+    assert por_id[malo]["ok"] is False and "falta" in por_id[malo]["error"]
+    assert por_id[bueno]["ok"] is True
+    assert len(enviados) == 1
+
+
+def test_lote_borrar(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "lote4.db")))
+    ids = [_alta(c).json()["id"] for _ in range(3)]
+    c.post("/api/catalogo/lote/borrar", json={"ids": ids[:2]})
+    assert [p["id"] for p in c.get("/api/catalogo").json()] == [ids[2]]
+
+
+def test_lote_preparar_funciona_sin_sesion_de_ml(tmp_path, monkeypatch):
+    """Sin conexión a ML igual se limpia la marca y se arma el título."""
+    monkeypatch.setattr("gtin_lookup.buscar_gtin", lambda asin: {"ok": False, "gtin": ""})
+    c = TestClient(crear_app(db_path=str(tmp_path / "lote5.db")))
+    pid = _alta(c, marca="Visit the LEGO Store", modelo="LEGO Star Wars 75355",
+                titulo_ml="").json()["id"]
+    r = c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
+    assert r.json()["resultados"][0]["ok"] is True
+    p = c.get(f"/api/catalogo/{pid}").json()
+    assert p["marca"] == "LEGO" and p["titulo_ml"] == "LEGO Star Wars 75355"

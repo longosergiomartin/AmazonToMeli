@@ -51,7 +51,15 @@ _SUFIJOS = (
 
 def limpiar_marca(texto: str) -> str:
     """Deja solo el nombre de la marca. Devuelve "" si no queda nada usable."""
-    m = re.sub(r"\s+", " ", (texto or "").strip())
+    m = texto or ""
+    # El scraping a veces se lleva HTML puesto (comentarios y etiquetas del
+    # markup de Amazon). Eso llegaba a MercadoLibre como marca y hacía que
+    # rechazara el ítem entero con "invalid value name".
+    m = re.sub(r"<!--.*?(?:-->|$)", " ", m, flags=re.S)
+    m = re.sub(r"<[^>]*>", " ", m)
+    m = re.sub(r"\s+", " ", m.strip())
+    if "<" in m or "-->" in m:
+        return ""  # quedó markup a medias: no es una marca
     # Dos pasadas: "Visit the LEGO Store" necesita sacar prefijo y sufijo.
     for _ in range(2):
         for p in _PREFIJOS:
@@ -66,7 +74,10 @@ def limpiar_marca(texto: str) -> str:
     # la página no traía marca.
     if normalizar_texto(m) in _GENERICOS:
         return ""
-    return m[:60]
+    # Una marca es corta. Si vino un párrafo, es texto de la página, no la marca.
+    if len(m) > 60 or len(m.split()) > 5:
+        return ""
+    return m
 
 
 def elegir_marca(marca: str, titulo: str = "",
