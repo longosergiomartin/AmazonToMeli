@@ -129,20 +129,33 @@ _NO_ES_MARCA = {
 }
 
 
-def marca_del_titulo(titulo: str) -> str:
-    """Primera palabra del título cuando parece una marca.
+def _parece_marca(palabra: str) -> bool:
+    if not (2 <= len(palabra) <= 30):
+        return False
+    if normalizar_texto(palabra) in _NO_ES_MARCA:
+        return False
+    return bool(re.search(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]", palabra))
 
-    Los títulos de Amazon arrancan con la marca. Es una estimación, no un dato:
-    por eso el panel muestra el campo Marca editable para corregirla.
+
+def marca_del_titulo(titulo: str) -> str:
+    """Marca deducida del título.
+
+    Los títulos de Amazon suelen arrancar con la marca ("LEGO Icons…"), pero no
+    siempre: los traducidos la corren de lugar ("Set de construcción Star Wars
+    de LEGO, Darth Vader"). Por eso, si la primera palabra no sirve, se busca un
+    token en mayúsculas dentro del título, que es como se escriben las marcas.
+
+    Es una estimación, no un dato: el panel muestra el campo Marca editable.
     """
-    palabras = re.findall(r"[0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ&.\-]+", titulo or "")
+    palabras = [p.strip(".-&,") for p in
+                re.findall(r"[0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ&.\-]+", titulo or "")]
+    palabras = [p for p in palabras if p]
     if not palabras:
         return ""
-    primera = palabras[0].strip(".-&")
-    if len(primera) < 2 or len(primera) > 30:
-        return ""
-    if normalizar_texto(primera) in _NO_ES_MARCA:
-        return ""
-    if not re.search(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]", primera):
-        return ""  # arrancaba con un número: no es una marca
-    return primera
+    if _parece_marca(palabras[0]):
+        return palabras[0]
+    for p in palabras[1:]:
+        # Marca escrita en mayúsculas en medio del título (LEGO, HISEA, BOSCH).
+        if len(p) >= 3 and p.isupper() and _parece_marca(p):
+            return p
+    return ""

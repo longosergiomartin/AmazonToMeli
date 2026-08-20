@@ -478,7 +478,13 @@ def _cli_lote(enviados, con_categoria=True):
 
         def atributos_obligatorios(self, cat_id):
             return [{"id": "IVA", "name": "IVA", "values": ["0 %", "21 %"]},
-                    {"id": "BRAND", "name": "Marca"}]
+                    {"id": "BRAND", "name": "Marca"},
+                    {"id": "GTIN", "name": "Código universal de producto"}]
+
+        def atributos(self, cat_id):
+            return self.atributos_obligatorios(cat_id) + [
+                {"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vacío",
+                 "values": ["Es un kit", "Otra razón"]}]
 
         def valores_permitidos(self, cat_id):
             return {}
@@ -582,3 +588,36 @@ def test_lote_preparar_funciona_sin_sesion_de_ml(tmp_path, monkeypatch):
     assert r.json()["resultados"][0]["ok"] is True
     p = c.get(f"/api/catalogo/{pid}").json()
     assert p["marca"] == "LEGO" and p["titulo_ml"] == "LEGO Star Wars 75355"
+
+
+def test_lote_prepara_los_casos_que_fallaban_en_produccion(tmp_path, monkeypatch):
+    """Los dos motivos por los que los 72 productos quedaron "con problemas":
+    la marca no estaba primera en el título, y el GTIN no se conseguía."""
+    _con_ml(monkeypatch, _cli_lote([]))
+    # El buscador de GTIN no encuentra nada, como pasó con los sets reales.
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "prod.db")))
+    titulos = [
+        "Set de construcción Star Wars de LEGO, Darth Vader, talla única",
+        "Juguete para armar Star Wars 75050 B-Wing LEGO",
+        "LEGO Star Wars: El ascenso de Skywalker Nave de Kylo Ren 752",
+    ]
+    ids = [_alta(c, marca="", modelo=t, titulo_ml=t, asin=f"B0T{i}").json()["id"]
+           for i, t in enumerate(titulos)]
+
+    r = c.post("/api/catalogo/lote/preparar", json={"ids": ids})
+    assert all(x["ok"] for x in r.json()["resultados"]), r.text
+
+    for pid in ids:
+        p = c.get(f"/api/catalogo/{pid}").json()
+        assert p["marca"] == "LEGO"
+        # Sin código de barras se declara el motivo, que es la vía que acepta ML.
+        assert p["ml_attributes"]["EMPTY_GTIN_REASON"] == "Otra razón"
+
+    # Y con eso ya no falta nada: el borrador queda listo para publicar.
+    for pid in ids:
+        c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    d = c.post(f"/api/catalogo/{ids[0]}/borrador", json={}).json()
+    assert d["faltantes"] == [], d["faltantes"]

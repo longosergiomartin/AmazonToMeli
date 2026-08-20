@@ -109,3 +109,24 @@ def test_marca_envuelta_en_etiquetas_se_extrae():
 def test_marca_con_html_alrededor_igual_se_recupera_del_titulo():
     assert elegir_marca("<!-- No content: Premium non-fashion products",
                         "LEGO Star Wars Death Star 75339") == "LEGO"
+
+
+@pytest.mark.parametrize("titulo, esperado", [
+    # Títulos traducidos: la marca no va primero. Son los que fallaban en el
+    # lote con "falta atributo obligatorio: Marca".
+    ("Set de construcción Star Wars de LEGO, Darth Vader, talla única", "LEGO"),
+    ("Juguete para armar Star Wars 75050 B-Wing LEGO", "LEGO"),
+    ("Kit de construcción de la nave de Kylo Ren LEGO 75256", "LEGO"),
+    # Y los que ya andaban: la marca al principio sigue ganando.
+    ("LEGO Icons Ghostbusters ECTO-1 10274", "LEGO"),
+    ("LEGO Casco de conductor AT-AT de Star Wars 75429", "LEGO"),
+])
+def test_marca_del_titulo_la_encuentra_aunque_no_este_primera(titulo, esperado):
+    from marcas import marca_del_titulo
+    assert marca_del_titulo(titulo) == esperado
+
+
+def test_marca_del_titulo_no_confunde_siglas_con_la_marca():
+    """Si la primera palabra ya sirve, no se sale a buscar otra cosa."""
+    from marcas import marca_del_titulo
+    assert marca_del_titulo("Playmobil Set AT-AT edición DELUXE") == "Playmobil"
