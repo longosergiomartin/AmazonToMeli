@@ -128,6 +128,33 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
     return item
 
 
+def construir_item_catalogo(producto, catalog_product_id: str,
+                            listing_type_id: str = "gold_special",
+                            condition: str = "new",
+                            currency_id: str = "ARS") -> dict:
+    """Payload para publicar **contra un producto del catálogo** de ML.
+
+    Es la vía por la que MercadoLibre no pide GTIN ni el resto de los atributos:
+    los toma de su propia ficha. Solo hay que decirle qué producto es, a qué
+    precio y con cuánto stock. También deja la publicación matcheada con el
+    catálogo, que es como aparece bien rankeada.
+    """
+    item = {
+        "catalog_product_id": catalog_product_id,
+        "catalog_listing": True,
+        "price": round(_precio(producto), 2),
+        "currency_id": currency_id,
+        "available_quantity": max(0, int(producto.stock)),
+        "buying_mode": "buy_it_now",
+        "listing_type_id": listing_type_id,
+        "condition": condition,
+    }
+    dias = int(getattr(producto, "dias_preparacion", 0) or 0)
+    if dias > 0:
+        item["sale_terms"] = [{"id": "MANUFACTURING_TIME", "value_name": f"{dias} días"}]
+    return item
+
+
 def faltantes_para_publicar(producto, obligatorios: Optional[list[dict]] = None,
                             pictures: Optional[list[str]] = None) -> list[str]:
     """Lista de cosas que faltan para poder publicar (validación previa)."""

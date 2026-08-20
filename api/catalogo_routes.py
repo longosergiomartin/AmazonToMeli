@@ -24,10 +24,11 @@ from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
 from importador import ColaImportacion
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError, describir_error
-from mercadolibre.listing import (construir_item, vista_previa,
-                                  faltantes_para_publicar, valor_por_defecto)
+from mercadolibre.listing import (construir_item, construir_item_catalogo,
+                                  vista_previa, faltantes_para_publicar,
+                                  valor_por_defecto)
 from marcas import elegir_marca
-from titulos import piezas_del_titulo
+from titulos import numero_de_set, piezas_del_titulo
 
 
 class AltaProducto(BaseModel):
@@ -504,22 +505,33 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
+    def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient]) -> dict:
+        """Producto del catálogo de MercadoLibre que corresponde a este título.
+
+        Se busca por el número de set del fabricante, que es inequívoco. Ojo con
+        el título: hay que pasarle el completo de Amazon, porque el de ML está
+        recortado a 60 caracteres y ahí el número suele quedar cortado
+        ("...Kylo Ren 752" por 75256).
+        """
+        if cli is None or not titulo_completo:
+            return {}
+        set_id = numero_de_set(titulo_completo)
+        if not set_id:
+            return {}
+        try:
+            return cli.ficha_de_catalogo(f"LEGO {set_id}", debe_contener=set_id)
+        except MeliAPIError:
+            return {}
+
     def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient]) -> str:
         """Código de barras del producto, probando de la fuente más confiable a
         la menos: el catálogo de MercadoLibre (que ya tiene los sets cargados
         con su GTIN) y después la búsqueda web por ASIN."""
-        from gtin_lookup import buscar_gtin, numero_de_set, validar_gtin
+        from gtin_lookup import buscar_gtin, validar_gtin
 
-        if cli is not None and titulo:
-            set_id = numero_de_set(titulo)
-            # Con el número de set la búsqueda es inequívoca; sin él, el título.
-            consulta = f"LEGO {set_id}" if set_id else titulo
-            try:
-                r = cli.gtin_de_catalogo(consulta, debe_contener=set_id)
-                if r.get("gtin") and validar_gtin(r["gtin"]):
-                    return r["gtin"]
-            except MeliAPIError:
-                pass
+        ficha = _ficha_catalogo(titulo, cli)
+        if ficha.get("gtin") and validar_gtin(ficha["gtin"]):
+            return ficha["gtin"]
         if asin:
             try:
                 r = buscar_gtin(asin)
@@ -539,6 +551,11 @@ def registrar_catalogo(app: FastAPI, conn,
         if not (p.titulo_ml or "").strip() and p.modelo:
             datos["titulo_ml"] = p.modelo[:60]
         titulo = datos.get("titulo_ml") or p.titulo_ml or p.modelo or p.asin
+        # El título de MercadoLibre está recortado a 60 caracteres y ahí se
+        # pierden justo los datos del final: el número de set queda cortado
+        # ("...Kylo Ren 752" por 75256) y la cantidad de piezas desaparece. Para
+        # leer datos siempre se usa el título completo de Amazon.
+        titulo_completo = p.modelo or p.titulo_ml or titulo
 
         categoria = p.ml_category_id
         if not categoria and cli is not None:
@@ -552,7 +569,7 @@ def registrar_catalogo(app: FastAPI, conn,
 
         attrs = dict(p.ml_attributes or {})
         if not (attrs.get("GTIN") or "").strip():
-            gtin = _buscar_gtin(titulo, p.asin, cli)
+            gtin = _buscar_gtin(titulo_completo, p.asin, cli)
             if gtin:
                 attrs["GTIN"] = gtin
         defs = _defs_categoria(cli, categoria)
@@ -567,7 +584,7 @@ def registrar_catalogo(app: FastAPI, conn,
         # ella MercadoLibre publica igual, pero avisa que falta y la publicación
         # matchea peor con su catálogo.
         if not (attrs.get("PIECES_NUMBER") or "").strip():
-            piezas = piezas_del_titulo(titulo)
+            piezas = piezas_del_titulo(titulo_completo)
             if piezas:
                 attrs["PIECES_NUMBER"] = piezas
         # El código de barras de los sets no siempre se consigue. La vía oficial
@@ -661,10 +678,61 @@ def registrar_catalogo(app: FastAPI, conn,
             "marcas_de_ejemplo": [v["name"] for v in marca_ml[:15]],
         }
 
+    @app.get("/api/catalogo/{pid}/diagnostico")
+    def diagnostico(pid: int):
+        """Por qué no se consigue el GTIN de este producto, paso por paso.
+
+        Muestra el título completo, el número de set que se extrae, qué
+        devuelve la búsqueda en el catálogo de MercadoLibre y qué error tiró,
+        si tiró alguno. Sin esto hay que adivinar en qué eslabón se corta.
+        """
+        p = _p(pid)
+        completo = p.modelo or p.titulo_ml or ""
+        set_id = numero_de_set(completo)
+        out = {
+            "titulo_completo": completo,
+            "titulo_ml_recortado": p.titulo_ml,
+            "numero_de_set": set_id or "(no se pudo extraer)",
+            "piezas": piezas_del_titulo(completo) or "(no figura en el título)",
+            "gtin_guardado": (p.ml_attributes or {}).get("GTIN", ""),
+            "consulta": f"LEGO {set_id}" if set_id else "(sin número de set)",
+            "candidatos_del_catalogo": [],
+            "ficha_elegida": {},
+            "error": "",
+        }
+        if not (store.hay_sesion() and cred.configurado):
+            out["error"] = "No hay sesión de MercadoLibre."
+            return out
+        if not set_id:
+            out["error"] = ("Sin número de set no se puede buscar en el catálogo. "
+                            "Cargá el GTIN a mano.")
+            return out
+        try:
+            cli = _client()
+            out["candidatos_del_catalogo"] = cli.buscar_productos_catalogo(
+                out["consulta"], limit=5)
+            out["ficha_elegida"] = cli.ficha_de_catalogo(out["consulta"],
+                                                         debe_contener=set_id)
+        except (MeliAPIError, HTTPException) as e:
+            out["error"] = f"{type(e).__name__}: {e}"
+        return out
+
     @app.post("/api/catalogo/{pid}/aprobar")
     def aprobar(pid: int):
         _p(pid)
         return _dict(cat.cambiar_estado(pid, "aprobado", "Aprobado para publicar"))
+
+    def _publicado(pid: int, p: ProductoCatalogo, creado: dict, cli) -> dict:
+        """Cierre común de las dos vías de publicación."""
+        item_id = creado.get("id", "")
+        # La descripción va en un endpoint aparte, después de crear el ítem.
+        if item_id and (p.descripcion or "").strip():
+            try:
+                cli.poner_descripcion(item_id, p.descripcion)
+            except MeliAPIError:
+                pass  # el ítem ya se publicó; la descripción se puede reintentar
+        return _dict(cat.registrar_publicacion(pid, item_id,
+                                               creado.get("permalink", "")))
 
     @app.post("/api/catalogo/{pid}/publicar")
     def publicar(pid: int, body: Borrador):
@@ -678,8 +746,26 @@ def registrar_catalogo(app: FastAPI, conn,
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
         cli = _client()  # exige sesión OAuth
-        # 2) Atributos obligatorios reales de la categoría (GTIN, cantidad de
-        #    piezas, etc.) para no mandar algo que ML va a rechazar.
+
+        # 2) Vía del catálogo: si el producto está en el catálogo de
+        #    MercadoLibre, se publica contra su ficha. ML toma de ahí el GTIN y
+        #    el resto de los atributos, así que no hay nada más que validar. Es
+        #    la única forma de publicar los sets cuyo código de barras no se
+        #    consigue, y además deja la publicación bien matcheada.
+        ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli)
+        creado = None
+        if ficha.get("product_id"):
+            try:
+                creado = cli.publicar(construir_item_catalogo(
+                    p, ficha["product_id"], listing_type_id=body.listing_type_id))
+            except MeliAPIError:
+                creado = None  # no es catalogable: seguimos por la vía normal
+
+        if creado is not None:
+            return _publicado(pid, p, creado, cli)
+
+        # 3) Vía normal: hay que mandar todos los atributos obligatorios de la
+        #    categoría (GTIN, cantidad de piezas, etc.).
         obligatorios = []
         try:
             obligatorios = cli.atributos_obligatorios(p.ml_category_id)
@@ -688,7 +774,7 @@ def registrar_catalogo(app: FastAPI, conn,
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
-        # 3) Valores que ML acepta en la categoría: nos dejan mandar `value_id`
+        # 4) Valores que ML acepta en la categoría: nos dejan mandar `value_id`
         #    en vez de texto libre y evitan el "invalid value name" (la marca
         #    de Amazon viene como "Visit the LEGO Store").
         permitidos = {}
@@ -731,15 +817,7 @@ def registrar_catalogo(app: FastAPI, conn,
                     raise _rechazo(e2.cuerpo)
             else:
                 raise _rechazo(e.cuerpo)
-        item_id = creado.get("id", "")
-        # La descripción va en un endpoint aparte, después de crear el ítem.
-        if item_id and (p.descripcion or "").strip():
-            try:
-                cli.poner_descripcion(item_id, p.descripcion)
-            except MeliAPIError:
-                pass  # el ítem ya se publicó; la descripción se puede reintentar
-        p = cat.registrar_publicacion(pid, item_id, creado.get("permalink", ""))
-        return _dict(p)
+        return _publicado(pid, p, creado, cli)
 
     @app.post("/api/catalogo/{pid}/pausar")
     def pausar(pid: int):
