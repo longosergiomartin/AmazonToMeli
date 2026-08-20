@@ -216,6 +216,17 @@ class ColaImportacion:
         self.conn.commit()
         return self.estado()
 
+    def vaciar(self) -> dict:
+        """Borra la cola entera, incluidos los ya procesados.
+
+        Hace falta al empezar de cero: `encolar` descarta los ASIN que figuran
+        en la cola aunque estén en estado "listo" o "descartado", así que sin
+        esto los mismos productos volverían a rebotar como duplicados.
+        """
+        self.conn.execute("DELETE FROM cola_importacion")
+        self.conn.commit()
+        return self.estado()
+
     def limpiar_terminados(self) -> dict:
         self.conn.execute("DELETE FROM cola_importacion WHERE estado IN (?, ?, ?)",
                           (LISTO, ERROR, DESCARTADO))

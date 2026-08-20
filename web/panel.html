@@ -199,6 +199,10 @@
     <span class="msg" id="lote-msg"></span>
   </div>
 
+  <div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
+  </div>
+
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
@@ -465,6 +469,22 @@
     var ids=seleccionados();
     if(ids.length && confirm("¿Borrar "+ids.length+" producto(s) del catálogo?"))
       api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
+  };
+
+  // Vaciar todo para arrancar de cero: borra el catálogo y también la cola,
+  // porque encolar descarta los ASIN que ya figuran ahí aunque estén procesados.
+  $("vaciar").onclick=function(){
+    if(!confirm("Esto borra TODO el catálogo y la cola de importación, para "
+                +"volver a empezar.\n\nLas publicaciones que ya estén en "
+                +"MercadoLibre NO se dan de baja: se conservan en la lista para "
+                +"no perderles el rastro.\n\n¿Seguimos?")) return;
+    api("POST","/api/catalogo/vaciar",{confirmar:true}).then(function(r){
+      var msg="Catálogo vaciado.";
+      if(r.conservados_publicados)
+        msg+=" Se conservaron "+r.conservados_publicados+" publicación/es en MercadoLibre.";
+      alert(msg+"\n\nYa podés encolar los productos de nuevo.");
+      cargar(); cargarCola();
+    }).catch(err);
   };
 
   function acciones(p){

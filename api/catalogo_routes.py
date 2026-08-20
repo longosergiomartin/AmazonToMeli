@@ -284,6 +284,19 @@ def registrar_catalogo(app: FastAPI, conn,
 
     # ---- catálogo --------------------------------------------------------
 
+    @app.post("/api/catalogo/vaciar")
+    def vaciar(body: dict):
+        """Vacía el catálogo y la cola para empezar de cero.
+
+        Se limpian las dos cosas juntas a propósito: `encolar` descarta los ASIN
+        que ya figuran en la cola aunque estén procesados, así que borrar solo
+        los productos haría que al reencolarlos rebotaran como duplicados.
+        """
+        if not (body or {}).get("confirmar"):
+            raise HTTPException(400, "Falta confirmar: esta acción borra el catálogo.")
+        r = cat.vaciar(incluir_publicados=bool((body or {}).get("incluir_publicados")))
+        return {**r, "cola": cola.vaciar()}
+
     @app.post("/api/catalogo/limpiar-marcas")
     def limpiar_marcas():
         """Arregla las marcas guardadas con el texto del byline de Amazon

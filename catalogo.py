@@ -178,6 +178,29 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
+    def vaciar(self, incluir_publicados: bool = False) -> dict:
+        """Borra el catálogo para empezar de cero.
+
+        Los productos **publicados** se conservan por defecto: borrarlos de acá
+        no los baja de MercadoLibre, solo hace que la herramienta les pierda el
+        rastro y ya no se les pueda cambiar precio ni pausarlos desde el panel.
+        """
+        publicados = [p for p in self.todos() if p.ml_item_id]
+        if incluir_publicados or not publicados:
+            self.conn.execute("DELETE FROM catalogo_historial")
+            self.conn.execute("DELETE FROM catalogo")
+            conservados = 0
+        else:
+            ids = [p.id for p in publicados]
+            marcas = ",".join("?" * len(ids))
+            self.conn.execute(
+                f"DELETE FROM catalogo_historial WHERE producto_id NOT IN ({marcas})", ids)
+            self.conn.execute(f"DELETE FROM catalogo WHERE id NOT IN ({marcas})", ids)
+            conservados = len(ids)
+        self.conn.commit()
+        return {"conservados_publicados": conservados,
+                "quedan": len(self.todos())}
+
     @staticmethod
     def _migrar(conn) -> None:
         """Columnas agregadas después de la primera versión. Corre al abrir la
