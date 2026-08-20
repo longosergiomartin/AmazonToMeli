@@ -160,9 +160,11 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     # El byline trae la marca envuelta en texto y en el idioma del sitio
     # ("Visit the LEGO Store"): `limpiar_marca` deja solo el nombre, que es lo
     # único que MercadoLibre acepta como valor de BRAND.
-    marca = _buscar([r'id="bylineInfo"[^>]*>(.*?)</(?:a|span)>',
-                     r'"brand"\s*:\s*"([^"]+)"',
-                     r'>\s*(?:Marca|Brand)\s*</span>.*?<span[^>]*>(.*?)</span>'], texto)
+    # `[^<]` para que la captura no se lleve etiquetas ni comentarios HTML por
+    # delante: eso terminaba guardado como marca y MercadoLibre lo rechazaba.
+    marca = _buscar([r'id="bylineInfo"[^>]*>([^<]{2,80})<',
+                     r'"brand"\s*:\s*"([^"]{2,80})"',
+                     r'>\s*(?:Marca|Brand)\s*</span>.*?<span[^>]*>([^<]{2,80})<'], texto)
     datos["modelo"] = (titulo or "")[:120]
     datos["marca"] = limpiar_marca(marca or "")
     datos["precio_usd"] = _parse_precio(texto)

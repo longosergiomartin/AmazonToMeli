@@ -474,6 +474,113 @@ def registrar_catalogo(app: FastAPI, conn,
         datos = {k: v for k, v in body.model_dump().items() if v is not None}
         return _dict(cat.actualizar_publicacion(pid, **datos))
 
+    # ---- acciones en lote ------------------------------------------------
+    #
+    # Cargar de a uno es el cuello de botella: cada producto necesita categoría,
+    # GTIN, atributos y fotos. `preparar` completa todo eso solo; `publicar`
+    # aprueba y publica los que ya quedaron completos. Nada se publica sin que
+    # el usuario apriete el botón: la aprobación sigue siendo un acto explícito.
+
+    def _preparar_uno(p: ProductoCatalogo, cli: Optional[MeliClient]) -> ProductoCatalogo:
+        """Completa lo que se pueda deducir solo: marca, categoría, fotos, GTIN
+        y los atributos administrativos con valor fijo."""
+        datos: dict = {}
+        marca = elegir_marca(p.marca, p.titulo_ml or p.modelo or "")
+        if marca and marca != p.marca:
+            datos["marca"] = marca
+        if not (p.titulo_ml or "").strip() and p.modelo:
+            datos["titulo_ml"] = p.modelo[:60]
+        titulo = datos.get("titulo_ml") or p.titulo_ml or p.modelo or p.asin
+
+        categoria = p.ml_category_id
+        if not categoria and cli is not None:
+            try:
+                sug = cli.predecir_categoria(titulo)
+                categoria = (sug[0].get("category_id") if sug else "") or ""
+                if categoria:
+                    datos["ml_category_id"] = categoria
+            except MeliAPIError:
+                pass
+
+        attrs = dict(p.ml_attributes or {})
+        if not (attrs.get("GTIN") or "").strip() and p.asin:
+            try:
+                from gtin_lookup import buscar_gtin
+                r = buscar_gtin(p.asin)
+                if r.get("ok") and r.get("gtin"):
+                    attrs["GTIN"] = r["gtin"]
+            except Exception:  # noqa: BLE001 - el GTIN es opcional
+                pass
+        if categoria and cli is not None:
+            try:
+                for a in cli.atributos_obligatorios(categoria):
+                    aid = a.get("id")
+                    if aid and not (attrs.get(aid) or "").strip():
+                        valor = valor_por_defecto(a)
+                        if valor:
+                            attrs[aid] = valor
+            except MeliAPIError:
+                pass
+        if attrs != (p.ml_attributes or {}):
+            datos["ml_attributes"] = attrs
+
+        # El estado no se toca: los productos ya nacen en "borrador" y los
+        # publicados o pausados no deben volver atrás por completarles datos.
+        if datos:
+            p = cat.actualizar_publicacion(p.id, **datos)
+        return p
+
+    def _en_lote(ids: list[int], accion) -> dict:
+        """Corre `accion` sobre cada id sin que un error corte el resto."""
+        resultados = []
+        for pid in ids[:25]:
+            p = cat.obtener(int(pid))
+            if not p:
+                resultados.append({"id": pid, "ok": False, "error": "no existe"})
+                continue
+            nombre = (p.titulo_ml or p.modelo or p.asin or str(pid))[:60]
+            try:
+                accion(p)
+                resultados.append({"id": pid, "ok": True, "nombre": nombre})
+            except HTTPException as e:
+                detalle = e.detail
+                if isinstance(detalle, dict) and detalle.get("faltantes"):
+                    detalle = "falta " + ", ".join(detalle["faltantes"])
+                resultados.append({"id": pid, "ok": False, "nombre": nombre,
+                                   "error": str(detalle)})
+            except Exception as e:  # noqa: BLE001 - un producto no frena el lote
+                resultados.append({"id": pid, "ok": False, "nombre": nombre,
+                                   "error": str(e)})
+        return {"resultados": resultados}
+
+    @app.post("/api/catalogo/lote/preparar")
+    def lote_preparar(body: dict):
+        ids = (body or {}).get("ids") or []
+        try:
+            cli = _client()
+        except HTTPException:
+            cli = None  # sin sesión de ML se completa lo que no necesita red
+        return _en_lote(ids, lambda p: _preparar_uno(p, cli))
+
+    @app.post("/api/catalogo/lote/publicar")
+    def lote_publicar(body: dict):
+        """Aprueba y publica. El clic del usuario en el panel ES la aprobación:
+        cada producto pasa por el mismo `publicar` de siempre, con sus
+        validaciones."""
+        ids = (body or {}).get("ids") or []
+
+        def _uno(p: ProductoCatalogo) -> None:
+            if p.estado != "aprobado":
+                cat.cambiar_estado(p.id, "aprobado", "Aprobado en lote")
+            publicar(p.id, Borrador())
+
+        return _en_lote(ids, _uno)
+
+    @app.post("/api/catalogo/lote/borrar")
+    def lote_borrar(body: dict):
+        ids = (body or {}).get("ids") or []
+        return _en_lote(ids, lambda p: cat.eliminar(p.id))
+
     @app.get("/api/catalogo/{pid}/payload")
     def payload(pid: int):
         """Exactamente el JSON que se le va a mandar a MercadoLibre, sin

@@ -161,10 +161,12 @@ class Catalogo:
         ("Visit the LEGO Store" en vez de "LEGO"). Los productos importados
         antes de la corrección tienen ese valor guardado y MercadoLibre lo
         rechaza. Devuelve cuántos se corrigieron."""
-        from marcas import limpiar_marca
+        from marcas import elegir_marca
         arreglados = 0
         for p in self.todos():
-            limpia = limpiar_marca(p.marca)
+            # Si lo guardado no sirve (texto del byline, HTML del scraping), se
+            # recurre al título, que en Amazon arranca con la marca.
+            limpia = elegir_marca(p.marca, p.titulo_ml or p.modelo or "")
             if limpia and limpia != p.marca:
                 anterior, p.marca = p.marca, limpia
                 self._guardar(p)

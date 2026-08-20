@@ -88,3 +88,24 @@ def test_elegir_marca_desconocida_se_manda_igual():
     """Una marca que no está en la lista de ML se manda como texto: la lista
     de valores es de sugerencias, no cierra el universo de marcas."""
     assert elegir_marca("HISEA", permitidas=[{"id": "1", "name": "LEGO"}]) == "HISEA"
+
+
+@pytest.mark.parametrize("basura", [
+    # Caso real visto en el panel: el scraping se llevó el markup de Amazon.
+    "<!-- No content: Premium non-fashion products (CE/Home/Eligi",
+    "<!-- comentario -->",
+    "Amazon recomienda estos productos parecidos para vos según tu historial",
+])
+def test_limpiar_marca_descarta_html_y_parrafos(basura):
+    assert limpiar_marca(basura) == ""
+
+
+def test_marca_envuelta_en_etiquetas_se_extrae():
+    """Si adentro del markup hay una marca de verdad, se rescata."""
+    assert limpiar_marca("<span>LEGO</span>") == "LEGO"
+    assert limpiar_marca("<a href='#'>Playmobil</a> <!-- resto") == "Playmobil"
+
+
+def test_marca_con_html_alrededor_igual_se_recupera_del_titulo():
+    assert elegir_marca("<!-- No content: Premium non-fashion products",
+                        "LEGO Star Wars Death Star 75339") == "LEGO"
