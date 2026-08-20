@@ -473,8 +473,12 @@ def test_pictures_persisten_para_publicar(client):
 
 def _cli_lote(enviados, con_categoria=True, gtin_catalogo=None):
     class _Cli:
-        def gtin_de_catalogo(self, query, debe_contener="", limit=5):
+        def ficha_de_catalogo(self, query, debe_contener="", limit=5):
             return dict(gtin_catalogo) if gtin_catalogo else {}
+
+        def gtin_de_catalogo(self, query, debe_contener="", limit=5):
+            f = self.ficha_de_catalogo(query, debe_contener, limit)
+            return f if f.get("gtin") else {}
 
         def predecir_categoria(self, titulo):
             return [{"category_id": "MLA1157", "category_name": "Sets"}] if con_categoria else []
@@ -672,3 +676,104 @@ def test_motivo_gtin_vacio_no_se_inventa_si_ml_no_lo_ofrece():
     assert valor_por_defecto({"id": "EMPTY_GTIN_REASON", "values": []}) == ""
     assert valor_por_defecto({"id": "EMPTY_GTIN_REASON",
                               "values": ["Es un kit", "Otra razón"]}) == "Otra razón"
+
+
+def test_los_datos_se_leen_del_titulo_completo_no_del_recortado(tmp_path, monkeypatch):
+    """El título de ML está recortado a 60 caracteres y ahí se pierde el final:
+    el número de set queda cortado ("...Kylo Ren 752" por 75256) y la cantidad
+    de piezas desaparece. Los datos se leen del título completo de Amazon."""
+    consultas = []
+
+    cli = _cli_lote([], gtin_catalogo={"gtin": "5702016909937",
+                                       "product_id": "MLA77", "nombre": "LEGO 75256"})
+    original = cli.ficha_de_catalogo
+
+    def _espiar(query, debe_contener="", limit=5):
+        consultas.append((query, debe_contener))
+        return original(query, debe_contener, limit)
+
+    cli.ficha_de_catalogo = _espiar
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "candidatos": []})
+
+    completo = ("LEGO Star Wars: El ascenso de Skywalker Nave de Kylo Ren 75256 "
+                "Kit de construcción (1005 piezas)")
+    c = TestClient(crear_app(db_path=str(tmp_path / "trunc.db")))
+    pid = _alta(c, marca="", modelo=completo, titulo_ml=completo[:60],
+                asin="B0TRUNC").json()["id"]
+
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
+
+    assert ("LEGO 75256", "75256") in consultas   # no "752" del título cortado
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702016909937"
+    assert attrs["PIECES_NUMBER"] == "1005"
+
+
+def test_publica_contra_el_catalogo_cuando_encuentra_el_producto(tmp_path, monkeypatch):
+    """La vía por la que ML no pide GTIN: publicar contra su producto de
+    catálogo, del que toma los atributos de su propia ficha."""
+    enviados = []
+    _con_ml(monkeypatch, _cli_lote(enviados, gtin_catalogo={
+        "gtin": "", "product_id": "MLA77", "nombre": "LEGO 75429"}))
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "cat.db")))
+    completo = "LEGO Casco de conductor AT-AT de Star Wars 75429"
+    pid = _alta(c, marca="LEGO", modelo=completo, titulo_ml=completo,
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    assert enviados[0]["catalog_product_id"] == "MLA77"
+    assert enviados[0]["catalog_listing"] is True
+    # Por esta vía no se mandan atributos: los pone MercadoLibre.
+    assert "attributes" not in enviados[0]
+
+
+def test_si_el_catalogo_rechaza_se_publica_por_la_via_normal(tmp_path, monkeypatch):
+    """Un producto que no se puede publicar contra el catálogo (ya lo tenés
+    publicado, no admite catalogación) no debe quedar trabado."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    enviados = []
+    cli = _cli_lote(enviados, gtin_catalogo={"gtin": "", "product_id": "MLA77",
+                                             "nombre": "LEGO 75429"})
+
+    def _publicar(item):
+        enviados.append(item)
+        if item.get("catalog_listing"):
+            raise MeliAPIError("no", status=400, cuerpo={"error": "not catalogable"})
+        return {"id": "MLA5", "permalink": "http://ml/x"}
+
+    cli.publicar = _publicar
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "fb.db")))
+    completo = "LEGO Casco de conductor AT-AT de Star Wars 75429"
+    pid = _alta(c, marca="LEGO", modelo=completo, titulo_ml=completo,
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"pictures": ["http://img/1.jpg"],
+                  "ml_attributes": {"GTIN": "5702017424101", "IVA": "21 %"}})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["ml_item_id"] == "MLA5"
+    assert enviados[0].get("catalog_listing") is True      # intento por catálogo
+    assert "family_name" in enviados[1]                    # y después el normal
+
+
+def test_diagnostico_explica_donde_se_corta(client):
+    completo = ("LEGO Star Wars: El ascenso de Skywalker Nave de Kylo Ren 75256 "
+                "Kit de construcción (1005 piezas)")
+    pid = _alta(client, modelo=completo, titulo_ml=completo[:60]).json()["id"]
+    d = client.get(f"/api/catalogo/{pid}/diagnostico").json()
+    assert d["numero_de_set"] == "75256"     # del completo, no del recortado
+    assert d["piezas"] == "1005"
+    assert d["consulta"] == "LEGO 75256"
+    assert d["error"]                        # sin sesión de ML, lo dice

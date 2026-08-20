@@ -192,34 +192,40 @@ class MeliClient:
         """Ficha de un producto del catálogo, con sus atributos."""
         return self._req("GET", f"/products/{product_id}")
 
-    def gtin_de_catalogo(self, query: str, debe_contener: str = "",
-                         limit: int = 5) -> dict:
-        """Busca el código de barras en el catálogo de MercadoLibre.
+    def ficha_de_catalogo(self, query: str, debe_contener: str = "",
+                          limit: int = 5) -> dict:
+        """Busca el producto en el catálogo de MercadoLibre y devuelve su ficha.
 
         Es la fuente más confiable que tenemos: los sets ya están cargados en el
-        catálogo de ML con su GTIN, así que no hace falta salir a adivinarlo por
-        la web. Devuelve {gtin, product_id, nombre} o {} si no hay match seguro.
+        catálogo de ML, con su GTIN y sus atributos. Devuelve
+        {product_id, nombre, gtin} o {} si no hay match seguro.
 
         `debe_contener` (el número de set, por ejemplo "75339") es la guarda
-        contra publicar el código de otro producto: si el nombre del candidato
-        no lo trae, se descarta.
+        contra quedarse con otro producto: si el nombre del candidato no lo
+        trae, se descarta.
         """
         clave = (debe_contener or "").strip().lower()
         for prod in self.buscar_productos_catalogo(query, limit=limit):
             nombre = prod.get("nombre") or ""
             if clave and clave not in nombre.lower():
                 continue
+            gtin = ""
             try:
                 ficha = self.producto_catalogo(prod["id"])
             except MeliAPIError:
-                continue
+                ficha = {}
             for a in (ficha.get("attributes") or []):
                 if (a.get("id") or "").upper() == "GTIN":
-                    valor = (a.get("value_name") or "").strip()
-                    if valor:
-                        return {"gtin": valor, "product_id": prod["id"],
-                                "nombre": nombre}
+                    gtin = (a.get("value_name") or "").strip()
+                    break
+            return {"product_id": prod["id"], "nombre": nombre, "gtin": gtin}
         return {}
+
+    def gtin_de_catalogo(self, query: str, debe_contener: str = "",
+                         limit: int = 5) -> dict:
+        """Solo el código de barras: {gtin, product_id, nombre} o {}."""
+        ficha = self.ficha_de_catalogo(query, debe_contener, limit)
+        return ficha if ficha.get("gtin") else {}
 
     def ofertas_de_producto(self, product_id: str, limit: int = 10) -> list[dict]:
         """Publicaciones (ofertas) que compiten por un producto del catálogo:
