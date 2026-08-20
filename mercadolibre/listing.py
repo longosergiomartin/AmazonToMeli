@@ -38,7 +38,9 @@ def valor_por_defecto(attr: dict) -> str:
         return fallback
 
     if aid == "EMPTY_GTIN_REASON" or ("gtin" in nombre and "vaci" in nombre):
-        return _elegir(lambda v: v.startswith("otr"), "Otro")
+        # Solo un valor de la lista de MercadoLibre: uno inventado lo descarta
+        # en silencio y después reclama el GTIN como si no se hubiera mandado.
+        return _elegir(lambda v: v.startswith("otr"), "")
     if aid in ("IVA", "VAT") or nombre == "iva":
         return _elegir(lambda v: v.startswith("21"), "21 %")
     if aid == "INTERNAL_TAX" or "impuesto interno" in nombre:

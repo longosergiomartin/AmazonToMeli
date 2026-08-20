@@ -128,3 +128,58 @@ def test_token_store_guarda_y_expira():
     assert row["expires_at"] > time.time() + 21000
     store.borrar()
     assert store.hay_sesion() is False
+
+
+class _ReqFalso:
+    """Cliente con las respuestas del catálogo de MercadoLibre a mano."""
+
+    def __init__(self, productos, fichas):
+        self.productos, self.fichas = productos, fichas
+        self.pedidos = []
+
+    def __call__(self, metodo, path, **kw):
+        self.pedidos.append(path)
+        if path == "/products/search":
+            return {"results": self.productos}
+        return self.fichas.get(path, {})
+
+
+def _cli_con(productos, fichas):
+    from mercadolibre.client import MeliClient
+    cli = MeliClient(token_provider=lambda: "t", site="MLA")
+    cli._req = _ReqFalso(productos, fichas)
+    return cli
+
+
+def test_gtin_del_catalogo_de_mercadolibre():
+    """La fuente confiable del código de barras: los sets ya están en el
+    catálogo de ML con su GTIN, no hay que salir a adivinarlo por la web."""
+    cli = _cli_con(
+        [{"id": "MLA123", "name": "LEGO Star Wars 75339 Death Star Trash Compactor"}],
+        {"/products/MLA123": {"attributes": [
+            {"id": "BRAND", "value_name": "LEGO"},
+            {"id": "GTIN", "value_name": "5702017155326"}]}})
+    r = cli.gtin_de_catalogo("LEGO 75339", debe_contener="75339")
+    assert r["gtin"] == "5702017155326" and r["product_id"] == "MLA123"
+
+
+def test_gtin_del_catalogo_descarta_el_producto_equivocado():
+    """Publicar el código de otro set es peor que no publicar ninguno: si el
+    número de set no está en el nombre del candidato, se descarta."""
+    cli = _cli_con(
+        [{"id": "MLA999", "name": "LEGO Star Wars 75192 Millennium Falcon"}],
+        {"/products/MLA999": {"attributes": [
+            {"id": "GTIN", "value_name": "5702016109818"}]}})
+    assert cli.gtin_de_catalogo("LEGO 75339", debe_contener="75339") == {}
+
+
+def test_gtin_del_catalogo_sin_resultados():
+    cli = _cli_con([], {})
+    assert cli.gtin_de_catalogo("LEGO 99999", debe_contener="99999") == {}
+
+
+def test_gtin_del_catalogo_producto_sin_ese_atributo():
+    cli = _cli_con(
+        [{"id": "MLA1", "name": "LEGO 75339 set"}],
+        {"/products/MLA1": {"attributes": [{"id": "BRAND", "value_name": "LEGO"}]}})
+    assert cli.gtin_de_catalogo("LEGO 75339", debe_contener="75339") == {}

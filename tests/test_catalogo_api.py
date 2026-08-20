@@ -471,8 +471,11 @@ def test_pictures_persisten_para_publicar(client):
     assert r.status_code in (400, 401)  # faltaría solo la sesión de ML, no las fotos
 
 
-def _cli_lote(enviados, con_categoria=True):
+def _cli_lote(enviados, con_categoria=True, gtin_catalogo=None):
     class _Cli:
+        def gtin_de_catalogo(self, query, debe_contener="", limit=5):
+            return dict(gtin_catalogo) if gtin_catalogo else {}
+
         def predecir_categoria(self, titulo):
             return [{"category_id": "MLA1157", "category_name": "Sets"}] if con_categoria else []
 
@@ -621,3 +624,51 @@ def test_lote_prepara_los_casos_que_fallaban_en_produccion(tmp_path, monkeypatch
         c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
     d = c.post(f"/api/catalogo/{ids[0]}/borrador", json={}).json()
     assert d["faltantes"] == [], d["faltantes"]
+
+
+def test_lote_saca_el_gtin_del_catalogo_de_mercadolibre(tmp_path, monkeypatch):
+    """El caso que dejó 61 de 63 sin publicar: MercadoLibre exige GTIN en
+    MLA1157 y no le alcanza el motivo de GTIN vacío. El código sale del propio
+    catálogo de ML, que ya tiene los sets cargados."""
+    _con_ml(monkeypatch, _cli_lote([], gtin_catalogo={
+        "gtin": "5702017155326", "product_id": "MLA123", "nombre": "LEGO 75339"}))
+    # La búsqueda web por ASIN no encuentra nada, como en producción.
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "gtin.db")))
+    titulo = ("LEGO Star Wars Death Star - Compactador de basura Diorama 75339 "
+              "Kit de construcción (802 piezas)")
+    pid = _alta(c, marca="", modelo=titulo, titulo_ml=titulo, asin="B0TEST9").json()["id"]
+
+    r = c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
+    assert all(x["ok"] for x in r.json()["resultados"]), r.text
+
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702017155326"
+    # Con GTIN de verdad, el motivo de GTIN vacío no viaja (son contradictorios).
+    assert "EMPTY_GTIN_REASON" not in attrs
+    # Y la cantidad de piezas sale del propio título.
+    assert attrs["PIECES_NUMBER"] == "802"
+
+
+def test_lote_no_pone_gtin_si_el_catalogo_no_lo_tiene(tmp_path, monkeypatch):
+    """Sin código verificado no se inventa nada: mejor que falte a publicar
+    el código de otro producto."""
+    _con_ml(monkeypatch, _cli_lote([]))          # el catálogo no devuelve GTIN
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "singtin.db")))
+    pid = _alta(c, titulo_ml="LEGO Star Wars 75339", asin="B0TESTA").json()["id"]
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
+    assert not (c.get(f"/api/catalogo/{pid}").json()["ml_attributes"].get("GTIN"))
+
+
+def test_motivo_gtin_vacio_no_se_inventa_si_ml_no_lo_ofrece():
+    """Un valor inventado ML lo descarta en silencio y después reclama el GTIN
+    como si nunca se hubiera mandado: es peor que no mandarlo."""
+    from mercadolibre.listing import valor_por_defecto
+    assert valor_por_defecto({"id": "EMPTY_GTIN_REASON", "values": []}) == ""
+    assert valor_por_defecto({"id": "EMPTY_GTIN_REASON",
+                              "values": ["Es un kit", "Otra razón"]}) == "Otra razón"

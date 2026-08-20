@@ -188,6 +188,39 @@ class MeliClient:
                 out.append({"id": pid, "nombre": r.get("name", "")})
         return out
 
+    def producto_catalogo(self, product_id: str) -> dict:
+        """Ficha de un producto del catálogo, con sus atributos."""
+        return self._req("GET", f"/products/{product_id}")
+
+    def gtin_de_catalogo(self, query: str, debe_contener: str = "",
+                         limit: int = 5) -> dict:
+        """Busca el código de barras en el catálogo de MercadoLibre.
+
+        Es la fuente más confiable que tenemos: los sets ya están cargados en el
+        catálogo de ML con su GTIN, así que no hace falta salir a adivinarlo por
+        la web. Devuelve {gtin, product_id, nombre} o {} si no hay match seguro.
+
+        `debe_contener` (el número de set, por ejemplo "75339") es la guarda
+        contra publicar el código de otro producto: si el nombre del candidato
+        no lo trae, se descarta.
+        """
+        clave = (debe_contener or "").strip().lower()
+        for prod in self.buscar_productos_catalogo(query, limit=limit):
+            nombre = prod.get("nombre") or ""
+            if clave and clave not in nombre.lower():
+                continue
+            try:
+                ficha = self.producto_catalogo(prod["id"])
+            except MeliAPIError:
+                continue
+            for a in (ficha.get("attributes") or []):
+                if (a.get("id") or "").upper() == "GTIN":
+                    valor = (a.get("value_name") or "").strip()
+                    if valor:
+                        return {"gtin": valor, "product_id": prod["id"],
+                                "nombre": nombre}
+        return {}
+
     def ofertas_de_producto(self, product_id: str, limit: int = 10) -> list[dict]:
         """Publicaciones (ofertas) que compiten por un producto del catálogo:
         es exactamente la competencia de precio de ese producto."""

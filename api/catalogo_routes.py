@@ -27,6 +27,7 @@ from mercadolibre.client import MeliClient, MeliAPIError, describir_error
 from mercadolibre.listing import (construir_item, vista_previa,
                                   faltantes_para_publicar, valor_por_defecto)
 from marcas import elegir_marca
+from titulos import piezas_del_titulo
 
 
 class AltaProducto(BaseModel):
@@ -503,6 +504,31 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
+    def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient]) -> str:
+        """Código de barras del producto, probando de la fuente más confiable a
+        la menos: el catálogo de MercadoLibre (que ya tiene los sets cargados
+        con su GTIN) y después la búsqueda web por ASIN."""
+        from gtin_lookup import buscar_gtin, numero_de_set, validar_gtin
+
+        if cli is not None and titulo:
+            set_id = numero_de_set(titulo)
+            # Con el número de set la búsqueda es inequívoca; sin él, el título.
+            consulta = f"LEGO {set_id}" if set_id else titulo
+            try:
+                r = cli.gtin_de_catalogo(consulta, debe_contener=set_id)
+                if r.get("gtin") and validar_gtin(r["gtin"]):
+                    return r["gtin"]
+            except MeliAPIError:
+                pass
+        if asin:
+            try:
+                r = buscar_gtin(asin)
+                if r.get("ok") and r.get("gtin"):
+                    return r["gtin"]
+            except Exception:  # noqa: BLE001 - es best-effort
+                pass
+        return ""
+
     def _preparar_uno(p: ProductoCatalogo, cli: Optional[MeliClient]) -> ProductoCatalogo:
         """Completa lo que se pueda deducir solo: marca, categoría, fotos, GTIN
         y los atributos administrativos con valor fijo."""
@@ -525,14 +551,10 @@ def registrar_catalogo(app: FastAPI, conn,
                 pass
 
         attrs = dict(p.ml_attributes or {})
-        if not (attrs.get("GTIN") or "").strip() and p.asin:
-            try:
-                from gtin_lookup import buscar_gtin
-                r = buscar_gtin(p.asin)
-                if r.get("ok") and r.get("gtin"):
-                    attrs["GTIN"] = r["gtin"]
-            except Exception:  # noqa: BLE001 - el GTIN es opcional
-                pass
+        if not (attrs.get("GTIN") or "").strip():
+            gtin = _buscar_gtin(titulo, p.asin, cli)
+            if gtin:
+                attrs["GTIN"] = gtin
         defs = _defs_categoria(cli, categoria)
         obligatorios = defs["obligatorios"]
         for a in obligatorios:
@@ -541,15 +563,22 @@ def registrar_catalogo(app: FastAPI, conn,
                 valor = valor_por_defecto(a)
                 if valor:
                     attrs[aid] = valor
+        # La cantidad de piezas viene en el propio título ("(802 piezas)"). Sin
+        # ella MercadoLibre publica igual, pero avisa que falta y la publicación
+        # matchea peor con su catálogo.
+        if not (attrs.get("PIECES_NUMBER") or "").strip():
+            piezas = piezas_del_titulo(titulo)
+            if piezas:
+                attrs["PIECES_NUMBER"] = piezas
         # El código de barras de los sets no siempre se consigue. La vía oficial
         # de MercadoLibre para ese caso es declarar el motivo de GTIN vacío; sin
         # eso el producto queda trabado pidiendo un dato que no existe.
         if (attrs.get("GTIN") or "").strip():
             attrs.pop("EMPTY_GTIN_REASON", None)
         elif not (attrs.get("EMPTY_GTIN_REASON") or "").strip():
-            attrs["EMPTY_GTIN_REASON"] = valor_por_defecto(
-                defs["todos"].get("EMPTY_GTIN_REASON")
-                or {"id": "EMPTY_GTIN_REASON", "values": []})
+            motivo = valor_por_defecto(defs["todos"].get("EMPTY_GTIN_REASON") or {})
+            if motivo:
+                attrs["EMPTY_GTIN_REASON"] = motivo
         if attrs != (p.ml_attributes or {}):
             datos["ml_attributes"] = attrs
 
