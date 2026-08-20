@@ -81,7 +81,10 @@ class Publicacion(BaseModel):
 
 def registrar_catalogo(app: FastAPI, conn,
                        cfg: Config = CONFIG_DEFAULT) -> None:
-    cat = Catalogo(conn, cfg=cfg, cotizacion=obtener_cotizaciones(cfg))
+    # La cotización se busca en el primer uso, no al arrancar: si la API del
+    # dólar tarda o no responde, el arranque no se puede quedar esperándola.
+    cat = Catalogo(conn, cfg=cfg,
+                   proveedor_cotizacion=lambda: obtener_cotizaciones(cfg))
     cola = ColaImportacion(conn, cat)
     cred = MeliCredenciales.desde_entorno()
     store = TokenStore(conn)

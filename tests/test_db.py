@@ -86,3 +86,54 @@ def test_los_datos_persisten_entre_conexiones(tmp_path):
 
     c2 = conectar(ruta)  # "reinicio"
     assert c2.execute("SELECT nombre FROM demo").fetchone()["nombre"] == "persistente"
+
+
+def test_preparar_no_toca_la_base_hasta_que_haya_conexion(monkeypatch):
+    """El arranque no debe depender de que la base esté despierta.
+
+    Con Neon (scale to zero) la primera conexión tarda; si el esquema se
+    aplicaba al construir la app, el proceso se colgaba y Render devolvía 502.
+    """
+    from db import Conexion
+
+    c = Conexion.__new__(Conexion)          # sin abrir nada
+    c.url, c.postgres = "postgresql://x/y", True
+    c._lock = __import__("threading").RLock()
+    c._conn, c._esquema, c._migraciones, c._aplicando = None, [], [], False
+
+    llamadas = []
+    c._abrir = lambda: llamadas.append("abrir")
+
+    c.preparar("CREATE TABLE IF NOT EXISTS demo (id INTEGER);",
+               migracion=lambda conn: llamadas.append("migrar"))
+
+    assert llamadas == []                    # ni conectó ni migró
+    assert len(c._esquema) == 1 and len(c._migraciones) == 1
+
+
+def test_el_esquema_y_la_migracion_se_aplican_al_conectar(tmp_path):
+    """Lo registrado se aplica en cuanto hay conexión, incluida la migración."""
+    ruta = str(tmp_path / "t.db")
+    c = conectar(ruta)
+    c.executescript("CREATE TABLE IF NOT EXISTS demo (id INTEGER PRIMARY KEY AUTOINCREMENT);")
+
+    def migracion(conn):
+        if "nombre" not in conn.columnas("demo"):
+            conn.execute("ALTER TABLE demo ADD COLUMN nombre TEXT")
+
+    c.preparar("CREATE TABLE IF NOT EXISTS demo2 (id INTEGER);", migracion=migracion)
+    assert "nombre" in c.columnas("demo")
+    assert c.execute("SELECT * FROM demo2").fetchall() == []
+
+
+def test_una_migracion_que_falla_no_tumba_la_conexion(tmp_path):
+    c = conectar(str(tmp_path / "t.db"))
+
+    def rota(conn):
+        raise RuntimeError("boom")
+
+    c.preparar("CREATE TABLE IF NOT EXISTS demo (id INTEGER);", migracion=rota)
+    # La app sigue funcionando: la tabla está y se puede escribir.
+    c.execute("INSERT INTO demo (id) VALUES (?)", (1,))
+    c.commit()
+    assert c.execute("SELECT id FROM demo").fetchone()["id"] == 1

@@ -31,7 +31,7 @@ class Almacen:
         self._crear_tablas()
 
     def _crear_tablas(self) -> None:
-        self.conn.executescript("""
+        self.conn.preparar("""
             CREATE TABLE IF NOT EXISTS productos (
                 asin TEXT PRIMARY KEY,
                 titulo TEXT NOT NULL,
