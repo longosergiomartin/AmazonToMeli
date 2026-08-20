@@ -66,6 +66,12 @@ class Conexion:
         # reconectar, así el esquema queda listo aunque la base estuviera
         # dormida cuando arrancó la app.
         self._esquema: list[str] = []
+        # Migraciones (ALTER TABLE) que corren después del esquema, sobre la
+        # conexión recién abierta.
+        self._migraciones: list[Callable[["Conexion"], None]] = []
+        # Mientras se aplica el esquema no se intenta reconectar: ya estamos
+        # dentro de `_abrir` y reentrar sería una recursión infinita.
+        self._aplicando = False
         # La conexión se abre perezosamente: si la base todavía está
         # despertando (Neon "scale to zero"), la app no muere al arrancar.
         if not self.postgres:
@@ -87,9 +93,20 @@ class Conexion:
         self._aplicar_esquema()
 
     def _aplicar_esquema(self) -> None:
-        """Reaplica los CREATE TABLE IF NOT EXISTS sobre la conexión nueva."""
-        for script in self._esquema:
-            self._ejecutar_script(self._conn, script)
+        """Aplica los CREATE TABLE IF NOT EXISTS y las migraciones sobre la
+        conexión nueva. Es el único momento en que se tocan: registrarlos no
+        abre la conexión, así el arranque no depende de la base."""
+        self._aplicando = True
+        try:
+            for script in self._esquema:
+                self._ejecutar_script(self._conn, script)
+            for migracion in self._migraciones:
+                try:
+                    migracion(self)
+                except Exception:  # noqa: BLE001 - una migración no debe tumbar la app
+                    pass
+        finally:
+            self._aplicando = False
 
     def _ejecutar_script(self, conn, script: str) -> None:
         if self.postgres:
@@ -113,6 +130,10 @@ class Conexion:
         posterior devolvía 500 para siempre.
         """
         with self._lock:
+            # Dentro de `_aplicar_esquema` ya estamos sobre una conexión recién
+            # abierta: se ejecuta y punto, sin reconectar.
+            if self._aplicando and self._conn is not None:
+                return operacion(self._conn)
             ultimo = None
             for intento in range(intentos):
                 try:
@@ -200,6 +221,24 @@ class Conexion:
         except Exception as e:  # noqa: BLE001
             if not self._es_error_de_conexion(e):
                 raise
+
+    def preparar(self, script: str = "",
+                 migracion: Optional[Callable[["Conexion"], None]] = None) -> None:
+        """Registra el esquema **sin tocar la base**.
+
+        Se aplica recién al abrir la conexión. Es lo que permite que la app
+        levante con la base dormida: Neon apaga la instancia por inactividad y
+        despertarla tarda; si eso pasaba durante el arranque, el proceso se
+        colgaba intentando conectar y Render devolvía 502 en vez de servir el
+        panel. Con SQLite (ya conectado) se aplica en el acto, como antes.
+        """
+        with self._lock:
+            if script and script not in self._esquema:
+                self._esquema.append(script)
+            if migracion is not None:
+                self._migraciones.append(migracion)
+            if self._vivo():
+                self._aplicar_esquema()
 
     def columnas(self, tabla: str) -> list[str]:
         """Nombres de columna de una tabla (para migraciones)."""

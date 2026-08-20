@@ -46,7 +46,7 @@ class ColaImportacion:
         # Filtro: quedarse solo con sets LEGO (no accesorios ni otras marcas).
         self.solo_lego = solo_lego
         self.precio_min_usd = precio_min_usd
-        self.conn.executescript("""
+        self.conn.preparar("""
             CREATE TABLE IF NOT EXISTS cola_importacion (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asin TEXT, url TEXT,

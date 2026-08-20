@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from arbitraje.config import Config, CONFIG_DEFAULT, PRESETS_FISCALES
 from arbitraje.importacion import calcular_costo
@@ -80,17 +80,26 @@ class Catalogo:
     """Almacenamiento + lógica de negocio del catálogo."""
 
     def __init__(self, conn, cfg: Config = CONFIG_DEFAULT,
-                 cotizacion: Optional[dict] = None):
+                 cotizacion: Optional[dict] = None,
+                 proveedor_cotizacion: Optional[Callable[[], dict]] = None):
         self.conn = conn
         self.cfg = cfg
         # Cotización en vivo {oficial, tarjeta}. Si está, manda sobre la config.
         self.cotizacion = cotizacion
+        # Si no se pasa hecha, se busca en el primer uso: pedirla al arrancar
+        # deja el arranque a merced de que la API del dólar responda.
+        self._proveedor_cotizacion = proveedor_cotizacion
         self._crear_tablas()
 
     def _cfg_efectivo(self) -> Config:
         """Config con el tipo de cambio en vivo, el dólar elegido para el costo
         y la condición fiscal."""
         cfg = self.cfg
+        if self.cotizacion is None and self._proveedor_cotizacion is not None:
+            try:
+                self.cotizacion = self._proveedor_cotizacion() or {}
+            except Exception:  # noqa: BLE001 - sin cotización se usa la de config
+                self.cotizacion = {}
         c = self.cotizacion
         if c and c.get("oficial") and c.get("tarjeta"):
             recargo = c["tarjeta"] / c["oficial"] - 1
@@ -163,8 +172,19 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
+    @staticmethod
+    def _migrar(conn) -> None:
+        """Columnas agregadas después de la primera versión. Corre al abrir la
+        conexión, no al arrancar la app."""
+        cols = conn.columnas("catalogo")
+        for columna, tipo in (("pictures", "TEXT"),
+                              ("dias_preparacion", "INTEGER DEFAULT 25"),
+                              ("descripcion", "TEXT")):
+            if columna not in cols:
+                conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
+
     def _crear_tablas(self) -> None:
-        self.conn.executescript("""
+        self.conn.preparar("""
             CREATE TABLE IF NOT EXISTS catalogo (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 creado TEXT NOT NULL, actualizado TEXT NOT NULL,
@@ -189,21 +209,7 @@ class Catalogo:
                 tipo TEXT NOT NULL, campo TEXT,
                 valor_anterior TEXT, valor_nuevo TEXT, nota TEXT
             );
-        """)
-        # Migración para bases creadas antes de columnas nuevas. Si la base
-        # está caída (ej. Neon despertando), no se aborta el arranque: en el
-        # próximo inicio se vuelve a intentar.
-        try:
-            cols = self.conn.columnas("catalogo")
-            if "pictures" not in cols:
-                self.conn.execute("ALTER TABLE catalogo ADD COLUMN pictures TEXT")
-            if "dias_preparacion" not in cols:
-                self.conn.execute("ALTER TABLE catalogo ADD COLUMN dias_preparacion INTEGER DEFAULT 25")
-            if "descripcion" not in cols:
-                self.conn.execute("ALTER TABLE catalogo ADD COLUMN descripcion TEXT")
-            self.conn.commit()
-        except Exception:  # noqa: BLE001 - base no disponible al arrancar
-            pass
+        """, migracion=self._migrar)
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
 
