@@ -296,3 +296,28 @@ def test_vista_previa_expone_precio_y_margen(cat):
     vp = vista_previa(p, pictures=["http://img/1.jpg"])
     assert vp["precio_ars"] == round(p.precio_sugerido_ars, 2)
     assert vp["marca"] == "HISEA"
+
+
+def test_sin_gtin_pero_con_motivo_declarado_se_puede_publicar(cat):
+    """El código de barras de los sets no siempre se consigue. MercadoLibre
+    contempla el caso: declarando el motivo de GTIN vacío deja de exigirlo.
+    Sin esto, los 72 productos del lote quedaban trabados pidiendo un dato
+    que no existe."""
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"}]
+    p = cat.agregar(_prod(titulo_ml="LEGO Star Wars 75339", ml_category_id="MLA1157",
+                          ml_attributes={"EMPTY_GTIN_REASON": "Otra razón"}))
+    assert faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"]) == []
+
+
+def test_sin_gtin_y_sin_motivo_sigue_faltando(cat):
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"}]
+    p = cat.agregar(_prod(titulo_ml="LEGO Star Wars 75339", ml_category_id="MLA1157"))
+    faltan = faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"])
+    assert any("Código universal" in f for f in faltan)
+
+
+def test_con_gtin_no_hace_falta_el_motivo(cat):
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"}]
+    p = cat.agregar(_prod(titulo_ml="LEGO", ml_category_id="MLA1157",
+                          ml_attributes={"GTIN": "5702016914498"}))
+    assert faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"]) == []

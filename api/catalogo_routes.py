@@ -481,6 +481,28 @@ def registrar_catalogo(app: FastAPI, conn,
     # aprueba y publica los que ya quedaron completos. Nada se publica sin que
     # el usuario apriete el botón: la aprobación sigue siendo un acto explícito.
 
+    # Los atributos de una categoría se preguntan una sola vez: en un lote de 70
+    # productos la categoría se repite y no tiene sentido pedir lo mismo 70 veces.
+    _cache_attrs: dict = {}
+
+    def _defs_categoria(cli: Optional[MeliClient], categoria: str) -> dict:
+        """{"obligatorios": [...], "todos": {id: attr}} de la categoría."""
+        if not categoria or cli is None:
+            return {"obligatorios": [], "todos": {}}
+        if categoria not in _cache_attrs:
+            obligatorios: list = []
+            todos: dict = {}
+            try:
+                obligatorios = cli.atributos_obligatorios(categoria)
+            except MeliAPIError:
+                pass
+            try:
+                todos = {a.get("id"): a for a in cli.atributos(categoria) if a.get("id")}
+            except MeliAPIError:
+                pass
+            _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
+        return _cache_attrs[categoria]
+
     def _preparar_uno(p: ProductoCatalogo, cli: Optional[MeliClient]) -> ProductoCatalogo:
         """Completa lo que se pueda deducir solo: marca, categoría, fotos, GTIN
         y los atributos administrativos con valor fijo."""
@@ -511,16 +533,23 @@ def registrar_catalogo(app: FastAPI, conn,
                     attrs["GTIN"] = r["gtin"]
             except Exception:  # noqa: BLE001 - el GTIN es opcional
                 pass
-        if categoria and cli is not None:
-            try:
-                for a in cli.atributos_obligatorios(categoria):
-                    aid = a.get("id")
-                    if aid and not (attrs.get(aid) or "").strip():
-                        valor = valor_por_defecto(a)
-                        if valor:
-                            attrs[aid] = valor
-            except MeliAPIError:
-                pass
+        defs = _defs_categoria(cli, categoria)
+        obligatorios = defs["obligatorios"]
+        for a in obligatorios:
+            aid = a.get("id")
+            if aid and not (attrs.get(aid) or "").strip():
+                valor = valor_por_defecto(a)
+                if valor:
+                    attrs[aid] = valor
+        # El código de barras de los sets no siempre se consigue. La vía oficial
+        # de MercadoLibre para ese caso es declarar el motivo de GTIN vacío; sin
+        # eso el producto queda trabado pidiendo un dato que no existe.
+        if (attrs.get("GTIN") or "").strip():
+            attrs.pop("EMPTY_GTIN_REASON", None)
+        elif not (attrs.get("EMPTY_GTIN_REASON") or "").strip():
+            attrs["EMPTY_GTIN_REASON"] = valor_por_defecto(
+                defs["todos"].get("EMPTY_GTIN_REASON")
+                or {"id": "EMPTY_GTIN_REASON", "values": []})
         if attrs != (p.ml_attributes or {}):
             datos["ml_attributes"] = attrs
 
