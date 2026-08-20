@@ -169,6 +169,9 @@ def test_publicar_reintenta_con_title_si_ml_pide_family_name(tmp_path, monkeypat
         def atributos_obligatorios(self, cat_id):
             return []
 
+        def valores_permitidos(self, cat_id):
+            return {}
+
         def publicar(self, item):
             enviados.append(item)
             if "family_name" in item:
@@ -193,6 +196,79 @@ def test_publicar_reintenta_con_title_si_ml_pide_family_name(tmp_path, monkeypat
     assert len(enviados) == 2                     # primer intento + reintento
     assert "family_name" in enviados[0] and "title" not in enviados[0]
     assert "title" in enviados[1] and "family_name" not in enviados[1]
+
+
+def test_publicar_manda_la_marca_limpia_con_value_id(tmp_path, monkeypatch):
+    """El caso real: el producto quedó guardado con "Visit the LEGO Store" y ML
+    lo rechazaba. Ahora se resuelve contra los valores de la categoría."""
+    import api.catalogo_routes as rutas
+
+    enviados = []
+
+    class _CliFalso:
+        def atributos_obligatorios(self, cat_id):
+            return [{"id": "BRAND", "name": "Marca"}]
+
+        def valores_permitidos(self, cat_id):
+            return {"BRAND": [{"id": "9155", "name": "LEGO"}]}
+
+        def publicar(self, item):
+            enviados.append(item)
+            return {"id": "MLA123", "permalink": "http://ml/x"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "marca.db")))
+    pid = _alta(c, marca="Visit the LEGO Store", titulo_ml="LEGO Icons ECTO-1 10274",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    brand = next(a for a in enviados[0]["attributes"] if a["id"] == "BRAND")
+    assert brand == {"id": "BRAND", "value_id": "9155"}
+
+
+def test_listar_catalogo_repara_las_marcas_viejas(tmp_path):
+    """Al abrir el panel se corrigen las marcas que quedaron sucias, sin que el
+    usuario tenga que hacer nada."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "rep.db")))
+    _alta(c, marca="Visit the LEGO Store")
+    assert c.get("/api/catalogo").json()[0]["marca"] == "LEGO"
+
+
+def test_describir_error_separa_lo_que_bloquea_de_las_advertencias():
+    from mercadolibre.client import describir_error
+    cuerpo = {
+        "cause": [
+            {"type": "warning", "code": "item.attributes.value_name.invalid",
+             "references": ["BRAND"], "message": "Attribute BRAND has an invalid value name."},
+            {"type": "error", "code": "item.attributes.missing_required",
+             "references": ["item.attributes"],
+             "message": "The attributes [BRAND] are required for category MLA1157"},
+            {"type": "warning", "code": "item.shipping.mandatory_free_shipping",
+             "references": [], "message": "Mandatory free shipping added"},
+        ],
+        "message": "Validation error", "error": "validation_error", "status": 400,
+    }
+    texto = describir_error(cuerpo)
+    lineas = texto.splitlines()
+    assert lineas[0].startswith("The attributes [BRAND] are required")  # lo que bloquea
+    assert "Advertencias (no bloquean)" in lineas[1]
+    assert "Mandatory free shipping" in lineas[1]
+
+
+def test_describir_error_sin_causas_no_se_rompe():
+    from mercadolibre.client import describir_error
+    assert "invalid" in describir_error(
+        {"cause": [], "error": "The fields [title] are invalid.", "status": 400})
+    assert describir_error("texto pelado") == "texto pelado"
 
 
 def test_almacenamiento_avisa_si_no_es_persistente(client):

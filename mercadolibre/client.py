@@ -28,6 +28,41 @@ class MeliAPIError(RuntimeError):
         self.cuerpo = cuerpo
 
 
+def describir_error(cuerpo) -> str:
+    """Traduce el cuerpo de error de MercadoLibre a algo legible.
+
+    ML devuelve una lista `cause` que mezcla lo que realmente bloquea la
+    publicación (`type: error`) con advertencias que no la impiden (envío
+    gratis agregado, atributos de catálogo sugeridos). Mostrar el dict crudo
+    hace imposible saber qué hay que corregir, así que se separan.
+    """
+    if not isinstance(cuerpo, dict):
+        return str(cuerpo)
+    causas = cuerpo.get("cause")
+    if not isinstance(causas, list) or not causas:
+        return str(cuerpo.get("error") or cuerpo.get("message") or cuerpo)
+
+    def _linea(c) -> str:
+        if not isinstance(c, dict):
+            return str(c)
+        refs = [r for r in (c.get("references") or []) if r]
+        detalle = f" ({', '.join(refs)})" if refs else ""
+        return f"{c.get('message') or c.get('code') or ''}{detalle}".strip()
+
+    errores = [_linea(c) for c in causas
+               if isinstance(c, dict) and c.get("type") == "error"]
+    avisos = [_linea(c) for c in causas
+              if isinstance(c, dict) and c.get("type") != "error"]
+    partes = []
+    if errores:
+        partes.append(" · ".join(errores))
+    else:
+        partes.append(str(cuerpo.get("error") or cuerpo.get("message") or "error"))
+    if avisos:
+        partes.append("Advertencias (no bloquean): " + " · ".join(avisos))
+    return "\n".join(partes)
+
+
 class MeliClient:
     def __init__(self, token_provider: Callable[[], str],
                  site: str = "MLA", base_url: str = API_BASE,
@@ -85,6 +120,21 @@ class MeliClient:
                     "values": [v.get("name") for v in (a.get("values") or [])][:20],
                 })
         return req
+
+    def valores_permitidos(self, category_id: str) -> dict[str, list[dict]]:
+        """{attr_id: [{"id", "name"}]} con los valores que MercadoLibre acepta
+        en la categoría. Sirve para mandar `value_id` en vez de texto libre:
+        es la forma que ML valida sin objetar (evita el clásico "Attribute
+        BRAND has an invalid value name")."""
+        out: dict[str, list[dict]] = {}
+        for a in self.atributos(category_id):
+            aid = a.get("id")
+            vals = [{"id": v.get("id"), "name": v.get("name")}
+                    for v in (a.get("values") or [])
+                    if v.get("id") and v.get("name")]
+            if aid and vals:
+                out[aid] = vals
+        return out
 
     # ---- publicación y gestión ------------------------------------------
 

@@ -23,7 +23,7 @@ from amazon_import import importar_desde_url
 from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
 from importador import ColaImportacion
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
-from mercadolibre.client import MeliClient, MeliAPIError
+from mercadolibre.client import MeliClient, MeliAPIError, describir_error
 from mercadolibre.listing import (construir_item, vista_previa,
                                   faltantes_para_publicar, valor_por_defecto)
 
@@ -274,8 +274,21 @@ def registrar_catalogo(app: FastAPI, conn,
 
     # ---- catálogo --------------------------------------------------------
 
+    @app.post("/api/catalogo/limpiar-marcas")
+    def limpiar_marcas():
+        """Arregla las marcas guardadas con el texto del byline de Amazon
+        ("Visit the LEGO Store" → "LEGO"), que MercadoLibre rechaza."""
+        return {"corregidos": cat.limpiar_marcas()}
+
+    # Se corre una vez por proceso, la primera vez que se lista el catálogo (no
+    # al arrancar: si la base está dormida, el arranque no debe depender de ella).
+    reparado = {"marcas": False}
+
     @app.get("/api/catalogo")
     def listar():
+        if not reparado["marcas"]:
+            reparado["marcas"] = True
+            cat.limpiar_marcas()
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -482,13 +495,22 @@ def registrar_catalogo(app: FastAPI, conn,
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         if faltan:
             raise HTTPException(422, {"faltantes": faltan})
+        # 3) Valores que ML acepta en la categoría: nos dejan mandar `value_id`
+        #    en vez de texto libre y evitan el "invalid value name" (la marca
+        #    de Amazon viene como "Visit the LEGO Store").
+        permitidos = {}
+        try:
+            permitidos = cli.valores_permitidos(p.ml_category_id)
+        except MeliAPIError:
+            pass
         # MercadoLibre migró de `title` a `family_name` y no acepta los dos.
         # Probamos con el campo nuevo y, si la categoría todavía espera el
         # viejo, reintentamos una vez con `title`.
         def _armar(campo: str) -> dict:
             return construir_item(p, pictures=pics,
                                   listing_type_id=body.listing_type_id,
-                                  campo_titulo=campo)
+                                  campo_titulo=campo,
+                                  valores_permitidos=permitidos)
 
         try:
             creado = cli.publicar(_armar("family_name"))
@@ -497,9 +519,11 @@ def registrar_catalogo(app: FastAPI, conn,
                 try:
                     creado = cli.publicar(_armar("title"))
                 except MeliAPIError as e2:
-                    raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e2.cuerpo}")
+                    raise HTTPException(502, "MercadoLibre rechazó la publicación: "
+                                        + describir_error(e2.cuerpo))
             else:
-                raise HTTPException(502, f"MercadoLibre rechazó la publicación: {e.cuerpo}")
+                raise HTTPException(502, "MercadoLibre rechazó la publicación: "
+                                    + describir_error(e.cuerpo))
         item_id = creado.get("id", "")
         # La descripción va en un endpoint aparte, después de crear el ítem.
         if item_id and (p.descripcion or "").strip():

@@ -147,6 +147,22 @@ class Catalogo:
             self._calcular(p)
             self._guardar(p)
 
+    def limpiar_marcas(self) -> int:
+        """Arregla las marcas que quedaron con el texto del byline de Amazon
+        ("Visit the LEGO Store" en vez de "LEGO"). Los productos importados
+        antes de la corrección tienen ese valor guardado y MercadoLibre lo
+        rechaza. Devuelve cuántos se corrigieron."""
+        from marcas import limpiar_marca
+        arreglados = 0
+        for p in self.todos():
+            limpia = limpiar_marca(p.marca)
+            if limpia and limpia != p.marca:
+                anterior, p.marca = p.marca, limpia
+                self._guardar(p)
+                self._log(p.id, "marca", "marca", anterior, limpia)
+                arreglados += 1
+        return arreglados
+
     def _crear_tablas(self) -> None:
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS catalogo (
