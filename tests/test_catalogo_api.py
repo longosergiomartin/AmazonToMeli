@@ -777,3 +777,60 @@ def test_diagnostico_explica_donde_se_corta(client):
     assert d["piezas"] == "1005"
     assert d["consulta"] == "LEGO 75256"
     assert d["error"]                        # sin sesión de ML, lo dice
+
+
+def test_vaciar_deja_encolar_los_mismos_asin_de_nuevo(tmp_path):
+    """Lo que hace falta para empezar de cero: si se borra el catálogo pero
+    queda la cola, `encolar` rebota los mismos ASIN como duplicados porque ya
+    figuran ahí como procesados."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "v.db")))
+    _alta(c, asin="B0VIEJO111", titulo_ml="LEGO viejo")
+    c.post("/api/importar/encolar", json={"entradas": "B0VIEJO111\nB0VIEJO222"})
+
+    r = c.post("/api/catalogo/vaciar", json={"confirmar": True})
+    assert r.status_code == 200
+    assert c.get("/api/catalogo").json() == []
+    assert c.get("/api/importar/estado").json()["pendientes"] == 0
+
+    # Y ahora los mismos ASIN entran de nuevo, que es el punto.
+    r2 = c.post("/api/importar/encolar", json={"entradas": "B0VIEJO111\nB0VIEJO222"})
+    assert r2.json()["nuevos"] == 2 and r2.json()["duplicados"] == 0
+
+
+def test_vaciar_exige_confirmacion(client):
+    _alta(client)
+    assert client.post("/api/catalogo/vaciar", json={}).status_code == 400
+    assert len(client.get("/api/catalogo").json()) == 1
+
+
+def test_vaciar_conserva_lo_publicado_en_mercadolibre(tmp_path):
+    """Borrarlos de acá no los baja de ML: solo se les pierde el rastro y ya no
+    se les puede tocar precio ni pausarlos desde el panel."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "v2.db")))
+    vivo = _alta(c, asin="B0PUB00001", titulo_ml="Publicado").json()["id"]
+    _alta(c, asin="B0BORR0001", titulo_ml="Borrador")
+    # Simulamos que ya está publicado en MercadoLibre.
+    from db import conectar
+    conn = conectar(str(tmp_path / "v2.db"))
+    conn.execute("UPDATE catalogo SET ml_item_id = 'MLA123', estado = 'publicado' "
+                 "WHERE id = ?", (vivo,))
+    conn.commit()
+
+    r = c.post("/api/catalogo/vaciar", json={"confirmar": True}).json()
+    assert r["conservados_publicados"] == 1
+    quedan = c.get("/api/catalogo").json()
+    assert [p["ml_item_id"] for p in quedan] == ["MLA123"]
+
+
+def test_vaciar_incluyendo_publicados_borra_todo(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "v3.db")))
+    pid = _alta(c, asin="B0PUB00002", titulo_ml="Publicado").json()["id"]
+    from db import conectar
+    conn = conectar(str(tmp_path / "v3.db"))
+    conn.execute("UPDATE catalogo SET ml_item_id = 'MLA9' WHERE id = ?", (pid,))
+    conn.commit()
+
+    r = c.post("/api/catalogo/vaciar",
+               json={"confirmar": True, "incluir_publicados": True}).json()
+    assert r["conservados_publicados"] == 0
+    assert c.get("/api/catalogo").json() == []

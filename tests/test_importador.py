@@ -158,3 +158,70 @@ def test_bookmarklet_de_pagina_encola(tmp_path):
     r = c.get("/importar/capturar", params={"asins": "B0000000A1,B0000000A2"})
     assert r.status_code == 200 and "2 producto(s) encolado(s)" in r.text
     assert c.get("/api/importar/estado").json()["pendientes"] == 2
+
+
+def _pagina_amazon(titulo, marca_byline, set_id, precio="59.99"):
+    return f"""<html><span id="productTitle">{titulo}</span>
+      <a id="bylineInfo">{marca_byline}</a>
+      <span class="a-offscreen">${precio}</span>
+      <table><tr><th>Marca</th><td>LEGO</td></tr>
+             <tr><th>Número de modelo del artículo</th><td>{set_id}</td></tr></table>
+      </html>"""
+
+
+def test_la_cola_deja_el_titulo_y_el_set_listos(tmp_path, monkeypatch):
+    """El arreglo de raíz: encolar una página de Amazon deja el borrador con la
+    marca limpia, el número de set del fabricante y un título de MercadoLibre
+    que conserva los dos — sin depender de que el título de Amazon los traiga."""
+    import amazon_import
+    from db import conectar
+    from arbitraje.config import Config
+    from catalogo import Catalogo
+    from importador import ColaImportacion
+
+    # Título traducido sin número de set: el caso que venía fallando.
+    titulo = "Set de construcción Star Wars de LEGO, Darth Vader, talla única"
+
+    class _Resp:
+        status_code = 200
+        text = _pagina_amazon(titulo, "Visit the LEGO Store", "75304")
+
+    monkeypatch.setattr(amazon_import.requests, "get", lambda *a, **k: _Resp())
+
+    cat = Catalogo(conectar(str(tmp_path / "c.db")), cfg=Config(),
+                   cotizacion={"oficial": 1000.0, "tarjeta": 1300.0})
+    cola = ColaImportacion(cat.conn, cat)
+    cola.encolar(["B0TESTAAAA"])
+    r = cola.procesar_uno()
+
+    assert r["hecho"] is True, r
+    p = cat.todos()[0]
+    assert p.marca == "LEGO"
+    assert p.modelo_fabricante == "75304"          # de la ficha, no del título
+    assert p.titulo_ml.startswith("LEGO ")
+    assert p.titulo_ml.endswith("75304")           # sobrevive al límite de 60
+    assert len(p.titulo_ml) <= 60
+
+
+def test_si_la_ficha_no_declara_el_set_se_usa_el_del_titulo(tmp_path, monkeypatch):
+    import amazon_import
+    from db import conectar
+    from arbitraje.config import Config
+    from catalogo import Catalogo
+    from importador import ColaImportacion
+
+    titulo = "LEGO Star Wars Death Star 75339 Kit de construcción (802 piezas)"
+
+    class _Resp:
+        status_code = 200
+        text = _pagina_amazon(titulo, "LEGO", "")   # sin número en la ficha
+
+    monkeypatch.setattr(amazon_import.requests, "get", lambda *a, **k: _Resp())
+
+    cat = Catalogo(conectar(str(tmp_path / "c2.db")), cfg=Config(),
+                   cotizacion={"oficial": 1000.0, "tarjeta": 1300.0})
+    cola = ColaImportacion(cat.conn, cat)
+    cola.encolar(["B0TESTBBBB"])
+    cola.procesar_uno()
+
+    assert cat.todos()[0].modelo_fabricante == "75339"

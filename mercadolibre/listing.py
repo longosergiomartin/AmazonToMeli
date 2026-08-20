@@ -201,6 +201,7 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         # editable para poder corregirla antes de publicar.
         "marca": elegir_marca(producto.marca, producto.titulo_ml or producto.modelo or ""),
         "modelo": producto.modelo,
+        "modelo_fabricante": getattr(producto, "modelo_fabricante", "") or "",
         "descripcion": getattr(producto, "descripcion", "") or "",
         "atributos": producto.ml_attributes,
         "fotos": pictures or [],

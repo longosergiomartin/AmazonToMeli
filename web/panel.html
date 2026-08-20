@@ -199,6 +199,10 @@
     <span class="msg" id="lote-msg"></span>
   </div>
 
+  <div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
+  </div>
+
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
@@ -467,6 +471,22 @@
       api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
   };
 
+  // Vaciar todo para arrancar de cero: borra el catálogo y también la cola,
+  // porque encolar descarta los ASIN que ya figuran ahí aunque estén procesados.
+  $("vaciar").onclick=function(){
+    if(!confirm("Esto borra TODO el catálogo y la cola de importación, para "
+                +"volver a empezar.\n\nLas publicaciones que ya estén en "
+                +"MercadoLibre NO se dan de baja: se conservan en la lista para "
+                +"no perderles el rastro.\n\n¿Seguimos?")) return;
+    api("POST","/api/catalogo/vaciar",{confirmar:true}).then(function(r){
+      var msg="Catálogo vaciado.";
+      if(r.conservados_publicados)
+        msg+=" Se conservaron "+r.conservados_publicados+" publicación/es en MercadoLibre.";
+      alert(msg+"\n\nYa podés encolar los productos de nuevo.");
+      cargar(); cargarCola();
+    }).catch(err);
+  };
+
   function acciones(p){
     var c=document.getElementById("act-"+p.id); c.innerHTML="";
     // Solo la acción principal queda a la vista; el resto entra en un menú, así
@@ -491,6 +511,8 @@
       if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
     });
     b("Historial",function(){historial(p.id);});
+    // Por qué no se consigue el GTIN de este producto, paso por paso.
+    b("Diagnóstico",function(){ window.open("/api/catalogo/"+p.id+"/diagnostico","_blank"); });
     b("Borrar",function(){ if(confirm("¿Borrar este producto del catálogo?")) api("DELETE","/api/catalogo/"+p.id).then(cargar).catch(err); });
     c.appendChild(d);
   }
@@ -541,7 +563,9 @@
       '<div class="grid2">'+
       '<div class="f"><label>Marca *</label><input id="ed-marca" value="'+esc(v.marca||"")+'" placeholder="LEGO">'+
         '<span class="hint">Solo el nombre: <b>LEGO</b>, no "Visit the LEGO Store".</span></div>'+
-      '<div class="f"><label>Modelo</label><input id="ed-modelo" value="'+esc(v.modelo||"")+'"></div></div>'+
+      '<div class="f"><label>N° de set / modelo</label><input id="ed-set" value="'+esc(v.modelo_fabricante||"")+'" placeholder="75304">'+
+        '<span class="hint">El número de la caja. Con esto la herramienta encuentra el producto en el catálogo de MercadoLibre y no necesita el código de barras.</span></div></div>'+
+      '<div class="f"><label>Modelo</label><input id="ed-modelo" value="'+esc(v.modelo||"")+'"></div>'+
       '<div class="f"><label>Categoría de MercadoLibre *</label>'+
         '<select id="ed-cat"><option value="">(elegí una)</option>'+catOpts+
         '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
@@ -654,6 +678,7 @@
     var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
     return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs,
             marca:($("ed-marca").value||"").trim(), modelo:($("ed-modelo").value||"").trim(),
+            modelo_fabricante:($("ed-set").value||"").trim(),
             pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }

@@ -85,3 +85,59 @@ def test_importar_parsea_pagina(monkeypatch):
     assert d["peso_kg"] == round(28.76 * 0.453592, 2)
     assert "7541 piezas" in d["descripcion"] and "minifiguras" in d["descripcion"]
     assert d["imagenes"] == ["https://m.media-amazon.com/images/I/91abc.jpg"]
+
+
+def test_detalles_del_producto_traen_marca_y_numero_de_modelo():
+    """Lo que arregla la carga en lote: el título es marketing traducido, pero
+    la ficha declara marca y número de set con etiqueta."""
+    from amazon_import import _parse_detalles, _de_detalles
+    from amazon_import import _ETIQUETAS_MODELO, _ETIQUETAS_MARCA
+    html = """
+    <table id="productDetails_detailBullets_sections1">
+      <tr><th>Marca</th><td>LEGO</td></tr>
+      <tr><th>Número de modelo del artículo</th><td>75304</td></tr>
+      <tr><th>Peso del producto</th><td>1.2 Kilogramos</td></tr>
+    </table>"""
+    d = _parse_detalles(html)
+    assert _de_detalles(d, _ETIQUETAS_MARCA) == "LEGO"
+    assert _de_detalles(d, _ETIQUETAS_MODELO) == "75304"
+
+
+def test_detalles_en_formato_de_vinetas():
+    """Amazon usa dos formatos según la página; los dos tienen que andar."""
+    from amazon_import import _parse_detalles, _de_detalles, _ETIQUETAS_MODELO
+    html = """
+    <div id="detailBullets_feature_div"><ul>
+      <li><span><span class="a-text-bold">Item model number  :</span>
+          <span>75256</span></span></li>
+    </ul></div>"""
+    assert _de_detalles(_parse_detalles(html), _ETIQUETAS_MODELO) == "75256"
+
+
+def test_numero_de_modelo_se_limpia():
+    from amazon_import import _numero_de_modelo
+    assert _numero_de_modelo("LEGO 75304") == "75304"
+    assert _numero_de_modelo("75304-1") == "75304"
+    assert _numero_de_modelo("  75304  ") == "75304"
+    assert _numero_de_modelo("") == ""
+
+
+def test_importar_prefiere_la_marca_de_la_ficha_sobre_el_byline(monkeypatch):
+    """El byline viene con texto ("Visit the LEGO Store") o con HTML del
+    scraping; la ficha declara la marca limpia."""
+    import amazon_import
+
+    html = """<html><span id="productTitle">Set de construcción Star Wars</span>
+      <a id="bylineInfo">Visit the LEGO Store</a>
+      <span class="a-offscreen">$59.99</span>
+      <table><tr><th>Marca</th><td>LEGO</td></tr>
+             <tr><th>Número de modelo del artículo</th><td>75304</td></tr></table>
+      </html>"""
+
+    class _Resp:
+        status_code, text = 200, html
+
+    monkeypatch.setattr(amazon_import.requests, "get", lambda *a, **k: _Resp())
+    d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
+    assert d["marca"] == "LEGO"
+    assert d["modelo_fabricante"] == "75304"

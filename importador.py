@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from amazon_import import extraer_asin, importar_desde_url
+from titulos import numero_de_set, titulo_para_ml
 from catalogo import Catalogo, ProductoCatalogo
 from filtros import PRECIO_MIN_USD, es_set_lego
 
@@ -107,15 +108,23 @@ class ColaImportacion:
 
     def _crear_producto(self, datos: dict) -> ProductoCatalogo:
         """Arma el borrador con todo lo que se pudo leer de la ficha."""
+        titulo = datos.get("modelo", "") or datos.get("asin", "")
+        marca = datos.get("marca", "")
+        # El número de set: primero el que declara el fabricante en la ficha de
+        # Amazon, y si no está, el que aparezca en el título.
+        set_id = datos.get("modelo_fabricante", "") or numero_de_set(titulo)
         p = ProductoCatalogo(
             amazon_link=datos.get("amazon_link", ""),
             asin=datos.get("asin", ""),
-            marca=datos.get("marca", ""),
-            modelo=datos.get("modelo", "") or datos.get("asin", ""),
+            marca=marca,
+            modelo=titulo,
+            modelo_fabricante=set_id,
             precio_usd=float(datos.get("precio_usd") or 0.0),
             peso_kg=float(datos.get("peso_kg") or 0.5),
             regimen="landed",          # el envío+importación se estima con el %
-            titulo_ml=(datos.get("modelo") or "")[:60],
+            # Recortar el título de Amazon a 60 caracteres deja afuera el número
+            # de set y la marca queda en el medio. Se arma uno propio.
+            titulo_ml=titulo_para_ml(marca, titulo, set_id),
             descripcion=datos.get("descripcion", ""),
             pictures=list(datos.get("imagenes") or []),
         )
@@ -204,6 +213,17 @@ class ColaImportacion:
         self.conn.execute(
             "UPDATE cola_importacion SET estado = ?, mensaje = '' WHERE estado = ?",
             (PENDIENTE, BLOQUEADO))
+        self.conn.commit()
+        return self.estado()
+
+    def vaciar(self) -> dict:
+        """Borra la cola entera, incluidos los ya procesados.
+
+        Hace falta al empezar de cero: `encolar` descarta los ASIN que figuran
+        en la cola aunque estén en estado "listo" o "descartado", así que sin
+        esto los mismos productos volverían a rebotar como duplicados.
+        """
+        self.conn.execute("DELETE FROM cola_importacion")
         self.conn.commit()
         return self.estado()
 
