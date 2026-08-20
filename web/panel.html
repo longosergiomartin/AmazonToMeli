@@ -421,6 +421,13 @@
     var fotos=(v.fotos||[]).join("\n");
     $("dlg-b").innerHTML=
       '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
+      // La marca es obligatoria en casi todas las categorías y MercadoLibre la
+      // valida: si viene mal, rechaza la publicación entera. Editable porque lo
+      // que trae Amazon no siempre sirve.
+      '<div class="grid2">'+
+      '<div class="f"><label>Marca *</label><input id="ed-marca" value="'+esc(v.marca||"")+'" placeholder="LEGO">'+
+        '<span class="hint">Solo el nombre: <b>LEGO</b>, no "Visit the LEGO Store".</span></div>'+
+      '<div class="f"><label>Modelo</label><input id="ed-modelo" value="'+esc(v.modelo||"")+'"></div></div>'+
       '<div class="f"><label>Categoría de MercadoLibre *</label>'+
         '<select id="ed-cat"><option value="">(elegí una)</option>'+catOpts+
         '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
@@ -531,11 +538,19 @@
     var attrs={}; attrIds.forEach(function(aid){ var el=$("ed-attr-"+aid); if(el&&el.value.trim()) attrs[aid]=el.value.trim(); });
     var fotos=($("ed-fotos").value||"").split(/[\n,]/).map(function(s){return s.trim();}).filter(Boolean);
     var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
-    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs, pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
+    return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs,
+            marca:($("ed-marca").value||"").trim(), modelo:($("ed-modelo").value||"").trim(),
+            pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 
   function publicarFlow(id,attrIds){
+    // Sin marca MercadoLibre rechaza el ítem entero: mejor frenar acá.
+    if(!($("ed-marca").value||"").trim()){
+      alert("Cargá la Marca antes de publicar (por ejemplo: LEGO).\n"
+            +"MercadoLibre la exige en esta categoría y rechaza la publicación sin ella.");
+      $("ed-marca").focus(); return;
+    }
     // GTIN debe ser el código de barras (solo números), no el ASIN de Amazon.
     var g=$("ed-attr-GTIN");
     if(g && g.value.trim() && !/^[0-9]{8,14}$/.test(g.value.trim())){

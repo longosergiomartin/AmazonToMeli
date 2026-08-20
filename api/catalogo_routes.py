@@ -26,6 +26,7 @@ from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
 from mercadolibre.client import MeliClient, MeliAPIError, describir_error
 from mercadolibre.listing import (construir_item, vista_previa,
                                   faltantes_para_publicar, valor_por_defecto)
+from marcas import elegir_marca
 
 
 class AltaProducto(BaseModel):
@@ -69,6 +70,8 @@ class CodigoOAuth(BaseModel):
 
 class Publicacion(BaseModel):
     titulo_ml: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
     ml_category_id: Optional[str] = None
     ml_attributes: Optional[dict] = None
     pictures: Optional[list[str]] = None
@@ -468,6 +471,28 @@ def registrar_catalogo(app: FastAPI, conn,
         datos = {k: v for k, v in body.model_dump().items() if v is not None}
         return _dict(cat.actualizar_publicacion(pid, **datos))
 
+    @app.get("/api/catalogo/{pid}/payload")
+    def payload(pid: int):
+        """Exactamente el JSON que se le va a mandar a MercadoLibre, sin
+        publicar nada. Sirve para ver qué valor está viajando cuando ML rechaza
+        el ítem sin decir cuál es el que no le gusta."""
+        p = _p(pid)
+        permitidos = {}
+        if store.hay_sesion() and cred.configurado and p.ml_category_id:
+            try:
+                permitidos = _client().valores_permitidos(p.ml_category_id)
+            except (MeliAPIError, HTTPException):
+                pass
+        marca_ml = permitidos.get("BRAND") or []
+        return {
+            "item": construir_item(p, pictures=p.pictures, valores_permitidos=permitidos),
+            "marca_guardada": p.marca,
+            "marca_resuelta": elegir_marca(p.marca, p.titulo_ml or p.modelo or "",
+                                           permitidos.get("BRAND")),
+            "ml_conoce_valores_de_marca": bool(marca_ml),
+            "marcas_de_ejemplo": [v["name"] for v in marca_ml[:15]],
+        }
+
     @app.post("/api/catalogo/{pid}/aprobar")
     def aprobar(pid: int):
         _p(pid)
@@ -503,6 +528,15 @@ def registrar_catalogo(app: FastAPI, conn,
             permitidos = cli.valores_permitidos(p.ml_category_id)
         except MeliAPIError:
             pass
+        # La marca es el rechazo más común: si no se puede resolver, se corta acá
+        # con un mensaje que dice qué campo llenar, en vez de mandarlo y que
+        # MercadoLibre conteste "The attributes [BRAND] are required".
+        marca_final = elegir_marca(p.marca, p.titulo_ml or p.modelo or "",
+                                   permitidos.get("BRAND"))
+        if not marca_final:
+            raise HTTPException(422, {"faltantes": [
+                "marca: cargala en el campo Marca del editor (por ejemplo: LEGO). "
+                "MercadoLibre la exige y rechaza la publicación sin ella."]})
         # MercadoLibre migró de `title` a `family_name` y no acepta los dos.
         # Probamos con el campo nuevo y, si la categoría todavía espera el
         # viejo, reintentamos una vez con `title`.
@@ -512,6 +546,13 @@ def registrar_catalogo(app: FastAPI, conn,
                                   campo_titulo=campo,
                                   valores_permitidos=permitidos)
 
+        def _rechazo(cuerpo) -> HTTPException:
+            # Se incluye la marca enviada: es el dato que más veces provoca el
+            # rechazo y el que no se ve en el mensaje de MercadoLibre.
+            return HTTPException(502, "MercadoLibre rechazó la publicación: "
+                                 + describir_error(cuerpo)
+                                 + f"\n(se mandó Marca = «{marca_final}»)")
+
         try:
             creado = cli.publicar(_armar("family_name"))
         except MeliAPIError as e:
@@ -519,11 +560,9 @@ def registrar_catalogo(app: FastAPI, conn,
                 try:
                     creado = cli.publicar(_armar("title"))
                 except MeliAPIError as e2:
-                    raise HTTPException(502, "MercadoLibre rechazó la publicación: "
-                                        + describir_error(e2.cuerpo))
+                    raise _rechazo(e2.cuerpo)
             else:
-                raise HTTPException(502, "MercadoLibre rechazó la publicación: "
-                                    + describir_error(e.cuerpo))
+                raise _rechazo(e.cuerpo)
         item_id = creado.get("id", "")
         # La descripción va en un endpoint aparte, después de crear el ítem.
         if item_id and (p.descripcion or "").strip():

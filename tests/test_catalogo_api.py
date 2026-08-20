@@ -235,6 +235,98 @@ def test_publicar_manda_la_marca_limpia_con_value_id(tmp_path, monkeypatch):
     assert brand == {"id": "BRAND", "value_id": "9155"}
 
 
+def test_publicar_usa_la_marca_del_titulo_si_amazon_no_la_trajo(tmp_path, monkeypatch):
+    """Caso real: la cola importó el producto sin marca (Amazon no respondió el
+    byline) y ML no lista valores para BRAND. Antes se mandaba el atributo vacío
+    y ML rechazaba con "The attributes [BRAND] are required"."""
+    import api.catalogo_routes as rutas
+
+    enviados = []
+
+    class _CliFalso:
+        def atributos_obligatorios(self, cat_id):
+            return [{"id": "BRAND", "name": "Marca"}]
+
+        def valores_permitidos(self, cat_id):
+            return {}  # ML no devuelve valores para BRAND en esta categoría
+
+        def publicar(self, item):
+            enviados.append(item)
+            return {"id": "MLA456", "permalink": "http://ml/x"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "sinmarca.db")))
+    pid = _alta(c, marca="", titulo_ml="LEGO Technic Ferrari Daytona SP3 42143",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    brand = next(a for a in enviados[0]["attributes"] if a["id"] == "BRAND")
+    assert brand["value_name"] == "LEGO"
+
+
+def test_publicar_sin_marca_resoluble_avisa_antes_de_llamar_a_ml(tmp_path, monkeypatch):
+    import api.catalogo_routes as rutas
+
+    class _CliFalso:
+        def atributos_obligatorios(self, cat_id):
+            return []
+
+        def valores_permitidos(self, cat_id):
+            return {}
+
+        def publicar(self, item):
+            raise AssertionError("no debería llegar a MercadoLibre")
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "nomarca.db")))
+    pid = _alta(c, marca="", titulo_ml="Set de bloques", modelo="",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 422
+    assert "Marca" in str(r.json())
+
+
+def test_editar_marca_y_modelo_desde_el_editor(client):
+    pid = _alta(client, marca="Visit the LEGO Store", modelo="viejo").json()["id"]
+    r = client.patch(f"/api/catalogo/{pid}/publicacion",
+                     json={"marca": "LEGO", "modelo": "Icons ECTO-1 10274"})
+    assert r.status_code == 200
+    p = client.get(f"/api/catalogo/{pid}").json()
+    assert p["marca"] == "LEGO" and p["modelo"] == "Icons ECTO-1 10274"
+
+
+def test_payload_muestra_lo_que_se_le_manda_a_ml(client):
+    """Endpoint de diagnóstico: qué viaja realmente, sin publicar."""
+    pid = _alta(client, marca="Visit the LEGO Store",
+                titulo_ml="LEGO Icons ECTO-1", ml_category_id="MLA1157").json()["id"]
+    d = client.get(f"/api/catalogo/{pid}/payload").json()
+    assert d["marca_guardada"] in ("Visit the LEGO Store", "LEGO")
+    assert d["marca_resuelta"] == "LEGO"
+    assert d["item"]["family_name"] == "LEGO Icons ECTO-1"
+    assert any(a["id"] == "BRAND" for a in d["item"]["attributes"])
+
+
+def test_vista_previa_muestra_la_marca_resuelta(client):
+    pid = _alta(client, marca="Visit the LEGO Store", titulo_ml="LEGO Icons").json()["id"]
+    v = client.post(f"/api/catalogo/{pid}/borrador", json={}).json()["preview"]
+    assert v["marca"] == "LEGO"
+
+
 def test_listar_catalogo_repara_las_marcas_viejas(tmp_path):
     """Al abrir el panel se corrigen las marcas que quedaron sucias, sin que el
     usuario tenga que hacer nada."""

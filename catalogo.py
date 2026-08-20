@@ -335,14 +335,20 @@ class Catalogo:
 
     def actualizar_publicacion(self, pid: int, titulo_ml=None, ml_category_id=None,
                                ml_attributes=None, pictures=None,
-                               dias_preparacion=None, descripcion=None) -> ProductoCatalogo:
+                               dias_preparacion=None, descripcion=None,
+                               marca=None, modelo=None) -> ProductoCatalogo:
         """Completa/edita los datos necesarios para publicar: título, categoría
-        de MercadoLibre, atributos obligatorios, fotos y días de preparación."""
+        de MercadoLibre, marca, modelo, atributos obligatorios, fotos y días de
+        preparación."""
         p = self.obtener(pid)
         if not p:
             raise KeyError(pid)
         if titulo_ml is not None:
             p.titulo_ml = titulo_ml
+        if marca is not None:
+            p.marca = marca
+        if modelo is not None:
+            p.modelo = modelo
         if ml_category_id is not None:
             p.ml_category_id = ml_category_id
         if ml_attributes is not None:
