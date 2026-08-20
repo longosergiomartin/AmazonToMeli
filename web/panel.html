@@ -491,6 +491,8 @@
       if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
     });
     b("Historial",function(){historial(p.id);});
+    // Por qué no se consigue el GTIN de este producto, paso por paso.
+    b("Diagnóstico",function(){ window.open("/api/catalogo/"+p.id+"/diagnostico","_blank"); });
     b("Borrar",function(){ if(confirm("¿Borrar este producto del catálogo?")) api("DELETE","/api/catalogo/"+p.id).then(cargar).catch(err); });
     c.appendChild(d);
   }
