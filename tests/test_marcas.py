@@ -59,6 +59,31 @@ def test_elegir_marca_no_inventa_si_no_hay_de_donde():
                         permitidas=[{"id": "1", "name": "LEGO"}]) == ""
 
 
+def test_elegir_marca_usa_el_titulo_aunque_ml_no_liste_valores():
+    """MercadoLibre no siempre devuelve valores para BRAND. Si igual no
+    mandamos marca, el ítem se rechaza entero: se usa la del título."""
+    assert elegir_marca("", "LEGO Icons Ghostbusters ECTO-1 10274") == "LEGO"
+    assert elegir_marca("", "Playmobil City Action 70443") == "Playmobil"
+
+
+def test_elegir_marca_manda_texto_si_la_marca_no_esta_en_la_lista_de_ml():
+    """La lista de ML es de sugerencias: una marca que no figura igual se manda."""
+    assert elegir_marca("", "HISEA Waders neopreno",
+                        permitidas=[{"id": "1", "name": "LEGO"}]) == "HISEA"
+
+
+@pytest.mark.parametrize("titulo", [
+    "Set de bloques de construcción",
+    "Juego de mesa familiar",
+    "New arrivals 2024",
+    "2352 piezas de construcción",
+    "",
+])
+def test_marca_del_titulo_no_toma_palabras_genericas(titulo):
+    from marcas import marca_del_titulo
+    assert marca_del_titulo(titulo) == ""
+
+
 def test_elegir_marca_desconocida_se_manda_igual():
     """Una marca que no está en la lista de ML se manda como texto: la lista
     de valores es de sugerencias, no cierra el universo de marcas."""

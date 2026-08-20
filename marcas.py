@@ -86,8 +86,6 @@ def elegir_marca(marca: str, titulo: str = "",
     """
     limpia = limpiar_marca(marca)
     opciones = [v for v in (permitidas or []) if v.get("name")]
-    if not opciones:
-        return limpia
 
     if limpia:
         objetivo = normalizar_texto(limpia)
@@ -96,12 +94,44 @@ def elegir_marca(marca: str, titulo: str = "",
                 return v["name"]
         return limpia
 
-    # Sin marca usable: buscarla en el título, quedándose con la más larga
-    # (entre "LEGO" y "LEGO Duplo" gana la específica).
+    # Sin marca usable, se busca en el título. Con la lista de MercadoLibre se
+    # elige la coincidencia más larga (entre "LEGO" y "LEGO Duplo" gana la
+    # específica); sin lista, se usa la primera palabra, que en los títulos de
+    # Amazon es la marca ("LEGO Icons Ghostbusters ECTO-1 10274").
     t = normalizar_texto(titulo)
     candidatas = [v["name"] for v in opciones
                   if len(normalizar_texto(v["name"])) >= 3
                   and re.search(r"\b" + re.escape(normalizar_texto(v["name"])) + r"\b", t)]
     if candidatas:
         return max(candidatas, key=len)
-    return ""
+    # La lista de MercadoLibre es de sugerencias, no cierra el universo de
+    # marcas: si no hubo match conviene mandar el texto igual, porque mandar el
+    # atributo vacío es un rechazo seguro ("The attributes [BRAND] are required").
+    return marca_del_titulo(titulo)
+
+
+# Palabras con las que puede arrancar un título sin ser la marca.
+_NO_ES_MARCA = {
+    "set", "sets", "kit", "juego", "juegos", "juguete", "juguetes", "pack",
+    "nuevo", "nueva", "new", "the", "el", "la", "los", "las", "un", "una",
+    "bloques", "building", "toy", "toys", "figura", "coleccion", "colección",
+}
+
+
+def marca_del_titulo(titulo: str) -> str:
+    """Primera palabra del título cuando parece una marca.
+
+    Los títulos de Amazon arrancan con la marca. Es una estimación, no un dato:
+    por eso el panel muestra el campo Marca editable para corregirla.
+    """
+    palabras = re.findall(r"[0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ&.\-]+", titulo or "")
+    if not palabras:
+        return ""
+    primera = palabras[0].strip(".-&")
+    if len(primera) < 2 or len(primera) > 30:
+        return ""
+    if normalizar_texto(primera) in _NO_ES_MARCA:
+        return ""
+    if not re.search(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]", primera):
+        return ""  # arrancaba con un número: no es una marca
+    return primera

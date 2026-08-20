@@ -162,7 +162,9 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         "stock": producto.stock,
         "dias_preparacion": int(getattr(producto, "dias_preparacion", 0) or 0),
         "condicion": "nuevo",
-        "marca": producto.marca,
+        # La marca resuelta, que es la que se va a mandar: el panel la muestra
+        # editable para poder corregirla antes de publicar.
+        "marca": elegir_marca(producto.marca, producto.titulo_ml or producto.modelo or ""),
         "modelo": producto.modelo,
         "descripcion": getattr(producto, "descripcion", "") or "",
         "atributos": producto.ml_attributes,
