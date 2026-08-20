@@ -543,7 +543,9 @@
       '<div class="grid2">'+
       '<div class="f"><label>Marca *</label><input id="ed-marca" value="'+esc(v.marca||"")+'" placeholder="LEGO">'+
         '<span class="hint">Solo el nombre: <b>LEGO</b>, no "Visit the LEGO Store".</span></div>'+
-      '<div class="f"><label>Modelo</label><input id="ed-modelo" value="'+esc(v.modelo||"")+'"></div></div>'+
+      '<div class="f"><label>N° de set / modelo</label><input id="ed-set" value="'+esc(v.modelo_fabricante||"")+'" placeholder="75304">'+
+        '<span class="hint">El número de la caja. Con esto la herramienta encuentra el producto en el catálogo de MercadoLibre y no necesita el código de barras.</span></div></div>'+
+      '<div class="f"><label>Modelo</label><input id="ed-modelo" value="'+esc(v.modelo||"")+'"></div>'+
       '<div class="f"><label>Categoría de MercadoLibre *</label>'+
         '<select id="ed-cat"><option value="">(elegí una)</option>'+catOpts+
         '<option value="__manual__">Otra (escribir ID manual)…</option></select>'+
@@ -656,6 +658,7 @@
     var dias=parseInt($("ed-dias").value,10); if(!isFinite(dias))dias=25;
     return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs,
             marca:($("ed-marca").value||"").trim(), modelo:($("ed-modelo").value||"").trim(),
+            modelo_fabricante:($("ed-set").value||"").trim(),
             pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }

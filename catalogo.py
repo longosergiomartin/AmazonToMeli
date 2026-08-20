@@ -42,6 +42,10 @@ class ProductoCatalogo:
     asin: str = ""
     marca: str = ""
     modelo: str = ""
+    # Número de modelo que declara el fabricante en la ficha de Amazon. En LEGO
+    # es el número de set (75304): el identificador con el que MercadoLibre
+    # tiene cargado el producto en su catálogo.
+    modelo_fabricante: str = ""
     precio_usd: float = 0.0
     peso_kg: float = 0.5
     costo_envio_usd: float = 0.0
@@ -179,7 +183,8 @@ class Catalogo:
         """Columnas agregadas después de la primera versión. Corre al abrir la
         conexión, no al arrancar la app."""
         cols = conn.columnas("catalogo")
-        for columna, tipo in (("pictures", "TEXT"),
+        for columna, tipo in (("modelo_fabricante", "TEXT"),
+                              ("pictures", "TEXT"),
                               ("dias_preparacion", "INTEGER DEFAULT 25"),
                               ("descripcion", "TEXT")):
             if columna not in cols:
@@ -191,6 +196,7 @@ class Catalogo:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 creado TEXT NOT NULL, actualizado TEXT NOT NULL,
                 amazon_link TEXT, asin TEXT, marca TEXT, modelo TEXT,
+                modelo_fabricante TEXT,
                 precio_usd REAL, peso_kg REAL, costo_envio_usd REAL,
                 disponibilidad TEXT, regimen TEXT, arancel_pct REAL,
                 categoria TEXT, margen_deseado REAL, stock INTEGER,
@@ -272,7 +278,8 @@ class Catalogo:
 
     # ---- persistencia ----------------------------------------------------
 
-    _CAMPOS = ["amazon_link", "asin", "marca", "modelo", "precio_usd", "peso_kg",
+    _CAMPOS = ["amazon_link", "asin", "marca", "modelo", "modelo_fabricante",
+               "precio_usd", "peso_kg",
                "costo_envio_usd", "disponibilidad", "regimen", "arancel_pct",
                "categoria", "margen_deseado", "stock", "dias_preparacion",
                "titulo_ml", "descripcion",
@@ -344,7 +351,8 @@ class Catalogo:
     def actualizar_publicacion(self, pid: int, titulo_ml=None, ml_category_id=None,
                                ml_attributes=None, pictures=None,
                                dias_preparacion=None, descripcion=None,
-                               marca=None, modelo=None) -> ProductoCatalogo:
+                               marca=None, modelo=None,
+                               modelo_fabricante=None) -> ProductoCatalogo:
         """Completa/edita los datos necesarios para publicar: título, categoría
         de MercadoLibre, marca, modelo, atributos obligatorios, fotos y días de
         preparación."""
@@ -357,6 +365,8 @@ class Catalogo:
             p.marca = marca
         if modelo is not None:
             p.modelo = modelo
+        if modelo_fabricante is not None:
+            p.modelo_fabricante = modelo_fabricante
         if ml_category_id is not None:
             p.ml_category_id = ml_category_id
         if ml_attributes is not None:

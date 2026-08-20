@@ -102,6 +102,74 @@ def _parse_imagenes(texto: str, limite: int = 8) -> list:
     return urls[:limite]
 
 
+def _parse_detalles(texto: str) -> dict:
+    """Tabla de "Detalles del producto" / "Product information" de Amazon.
+
+    Es la fuente buena de los datos duros: el título es marketing traducido y a
+    veces omite el número de set, pero acá el fabricante los declara con
+    etiqueta. Devuelve {etiqueta_normalizada: valor}.
+    """
+    detalles: dict = {}
+
+    def _guardar(etiqueta: str, valor: str) -> None:
+        et = re.sub(r"\s+", " ", _texto(etiqueta)).strip(" :‎‏").lower()
+        val = re.sub(r"\s+", " ", _texto(valor)).strip(" :‎‏")
+        if et and val and et not in detalles:
+            detalles[et] = val
+
+    # Tablas (productDetails_detailBullets_sections1, techSpec, etc.).
+    for th, td in re.findall(r"<tr[^>]*>\s*<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>",
+                             texto, re.S | re.I):
+        _guardar(th, td)
+    # Lista de viñetas (detailBullets_feature_div).
+    for li in re.findall(r"<li[^>]*>(.*?)</li>", texto, re.S | re.I):
+        m = re.search(r'class="a-text-bold"[^>]*>(.*?)</span>(.*)', li, re.S | re.I)
+        if m:
+            _guardar(m.group(1), m.group(2))
+    return detalles
+
+
+# Cómo llama Amazon al número de modelo del fabricante, que en LEGO es el
+# número de set (75304) — el dato con el que MercadoLibre tiene cargados los
+# productos en su catálogo.
+_ETIQUETAS_MODELO = (
+    "numero de modelo del articulo", "número de modelo del artículo",
+    "item model number", "numero de parte del fabricante",
+    "número de pieza del fabricante", "manufacturer part number",
+    "numero de modelo", "modelo",
+)
+_ETIQUETAS_MARCA = ("marca", "brand", "fabricante", "manufacturer")
+
+
+def _de_detalles(detalles: dict, etiquetas) -> str:
+    for et in etiquetas:
+        clave = _norm_etiqueta(et)
+        for k, v in detalles.items():
+            if _norm_etiqueta(k) == clave:
+                return v
+    return ""
+
+
+def _numero_de_modelo(valor: str) -> str:
+    """Limpia el número de modelo que declara el fabricante.
+
+    Viene con ruido según el vendedor: "75304", "LEGO 75304", "75304-1",
+    "6379837". Nos quedamos con el bloque de dígitos, que es lo que después se
+    busca en el catálogo de MercadoLibre.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        return ""
+    m = re.search(r"\b(\d{4,7})\b", valor)
+    return m.group(1) if m else valor[:30]
+
+
+def _norm_etiqueta(t: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFD", t or "")
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").lower().strip()
+
+
 def _parse_peso_kg(texto: str) -> Optional[float]:
     m = re.search(r'(?:Item Weight|Peso del (?:producto|art[íi]culo))[^0-9]{0,40}'
                   r'([0-9]+\.?[0-9]*)\s*(pounds|libras|lb|lbs|kilograms|kg|onzas|ounces|oz)',
@@ -122,7 +190,8 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     pudo leer la página."""
     url = (url or "").strip()
     datos = {"asin": extraer_asin(url), "amazon_link": url, "ok": False,
-             "marca": "", "modelo": "", "precio_usd": None, "peso_kg": None,
+             "marca": "", "modelo": "", "modelo_fabricante": "", "detalles": {},
+             "precio_usd": None, "peso_kg": None,
              "descripcion": "", "imagenes": [], "mensaje": "",
              # `status` y `bloqueado` permiten a la cola de importación
              # distinguir "no pude leer la página" de "Amazon me está
@@ -165,8 +234,16 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     marca = _buscar([r'id="bylineInfo"[^>]*>([^<]{2,80})<',
                      r'"brand"\s*:\s*"([^"]{2,80})"',
                      r'>\s*(?:Marca|Brand)\s*</span>.*?<span[^>]*>([^<]{2,80})<'], texto)
+    # La ficha del producto gana sobre el byline y sobre el título: ahí el
+    # fabricante declara marca y número de modelo con etiqueta, sin traducciones
+    # ni recortes de marketing.
+    detalles = _parse_detalles(texto)
+    datos["detalles"] = detalles
+    datos["modelo_fabricante"] = _numero_de_modelo(
+        _de_detalles(detalles, _ETIQUETAS_MODELO))
     datos["modelo"] = (titulo or "")[:120]
-    datos["marca"] = limpiar_marca(marca or "")
+    datos["marca"] = (limpiar_marca(_de_detalles(detalles, _ETIQUETAS_MARCA))
+                      or limpiar_marca(marca or ""))
     datos["precio_usd"] = _parse_precio(texto)
     datos["peso_kg"] = _parse_peso_kg(texto)
     datos["descripcion"] = _parse_descripcion(texto)

@@ -33,6 +33,51 @@ def numero_de_set(titulo: str) -> str:
     return candidatos[-1] if candidatos else ""
 
 
+# Arranques de marketing que Amazon le pone a los títulos traducidos y que no
+# aportan nada en MercadoLibre.
+_PREFIJOS_MARKETING = (
+    r"set de construcci[óo]n( de)?", r"juego de construcci[óo]n( de)?",
+    r"juguete para armar", r"kit de construcci[óo]n( de)?",
+    r"juego de", r"set de", r"kit de", r"building (kit|set|toy)",
+)
+
+
+def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
+                   limite: int = 60) -> str:
+    """Título para MercadoLibre: marca adelante y número de set al final.
+
+    El título de Amazon es marketing traducido ("Set de construcción Star Wars
+    de LEGO, Darth Vader, talla única") y recortarlo a 60 caracteres deja afuera
+    justo el número de set. Acá se arma uno que entra en el límite conservando
+    lo que sirve para buscar y para que el comprador entienda qué es.
+    """
+    base = re.sub(r"\s+", " ", (titulo or "")).strip()
+    for p in _PREFIJOS_MARKETING:
+        base = re.sub(r"^" + p + r"\s*", "", base, flags=re.I).strip()
+    marca = (marca or "").strip()
+    if marca:
+        # La marca va una sola vez y adelante: en los títulos traducidos aparece
+        # en el medio ("...Star Wars de LEGO, Darth Vader").
+        base = re.sub(r"\bde\s+" + re.escape(marca) + r"\b", "", base, flags=re.I)
+        base = re.sub(r"\b" + re.escape(marca) + r"\b", "", base, flags=re.I)
+    # El número de set se saca del cuerpo y se vuelve a poner al final: si se
+    # deja donde estaba, el recorte a 60 caracteres se lo come justo a él, que
+    # es el dato con el que después se busca el producto en el catálogo.
+    if numero_set:
+        base = re.sub(r"\b" + re.escape(numero_set) + r"\b", "", base)
+    base = re.sub(r"\s*[,;·|]\s*", " ", base)
+    base = re.sub(r"\s+", " ", base).strip(" ,-–—")
+
+    sufijo = f" {numero_set}" if numero_set else ""
+    prefijo = f"{marca} " if marca else ""
+    espacio = limite - len(prefijo) - len(sufijo)
+    if espacio < 1:
+        return (prefijo + sufijo.strip())[:limite].strip()
+    if len(base) > espacio:
+        base = base[:espacio].rsplit(" ", 1)[0].strip(" ,-–—")
+    return (prefijo + base + sufijo).strip()
+
+
 def piezas_del_titulo(titulo: str) -> str:
     """Cantidad de piezas anunciada en el título ("(802 piezas)" → "802").
 

@@ -45,6 +45,7 @@ class AltaProducto(BaseModel):
     margen_deseado: float = 0.35
     stock: int = 1
     dias_preparacion: int = 25
+    modelo_fabricante: str = ""
     titulo_ml: str = ""
     descripcion: str = ""
     pictures: list[str] = []
@@ -74,6 +75,7 @@ class Publicacion(BaseModel):
     titulo_ml: Optional[str] = None
     marca: Optional[str] = None
     modelo: Optional[str] = None
+    modelo_fabricante: Optional[str] = None
     ml_category_id: Optional[str] = None
     ml_attributes: Optional[dict] = None
     pictures: Optional[list[str]] = None
@@ -505,7 +507,8 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
-    def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient]) -> dict:
+    def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
+                        set_declarado: str = "") -> dict:
         """Producto del catálogo de MercadoLibre que corresponde a este título.
 
         Se busca por el número de set del fabricante, que es inequívoco. Ojo con
@@ -513,9 +516,11 @@ def registrar_catalogo(app: FastAPI, conn,
         recortado a 60 caracteres y ahí el número suele quedar cortado
         ("...Kylo Ren 752" por 75256).
         """
-        if cli is None or not titulo_completo:
+        if cli is None:
             return {}
-        set_id = numero_de_set(titulo_completo)
+        # El número que declara el fabricante en la ficha de Amazon es más
+        # confiable que el que se pesca del título, que a veces no lo trae.
+        set_id = (set_declarado or "").strip() or numero_de_set(titulo_completo)
         if not set_id:
             return {}
         try:
@@ -523,13 +528,14 @@ def registrar_catalogo(app: FastAPI, conn,
         except MeliAPIError:
             return {}
 
-    def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient]) -> str:
+    def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient],
+                     set_declarado: str = "") -> str:
         """Código de barras del producto, probando de la fuente más confiable a
         la menos: el catálogo de MercadoLibre (que ya tiene los sets cargados
         con su GTIN) y después la búsqueda web por ASIN."""
         from gtin_lookup import buscar_gtin, validar_gtin
 
-        ficha = _ficha_catalogo(titulo, cli)
+        ficha = _ficha_catalogo(titulo, cli, set_declarado)
         if ficha.get("gtin") and validar_gtin(ficha["gtin"]):
             return ficha["gtin"]
         if asin:
@@ -569,7 +575,8 @@ def registrar_catalogo(app: FastAPI, conn,
 
         attrs = dict(p.ml_attributes or {})
         if not (attrs.get("GTIN") or "").strip():
-            gtin = _buscar_gtin(titulo_completo, p.asin, cli)
+            gtin = _buscar_gtin(titulo_completo, p.asin, cli,
+                                p.modelo_fabricante)
             if gtin:
                 attrs["GTIN"] = gtin
         defs = _defs_categoria(cli, categoria)
@@ -688,11 +695,12 @@ def registrar_catalogo(app: FastAPI, conn,
         """
         p = _p(pid)
         completo = p.modelo or p.titulo_ml or ""
-        set_id = numero_de_set(completo)
+        set_id = (p.modelo_fabricante or "").strip() or numero_de_set(completo)
         out = {
             "titulo_completo": completo,
             "titulo_ml_recortado": p.titulo_ml,
             "numero_de_set": set_id or "(no se pudo extraer)",
+            "numero_declarado_por_amazon": p.modelo_fabricante or "(no vino en la ficha)",
             "piezas": piezas_del_titulo(completo) or "(no figura en el título)",
             "gtin_guardado": (p.ml_attributes or {}).get("GTIN", ""),
             "consulta": f"LEGO {set_id}" if set_id else "(sin número de set)",
@@ -752,7 +760,8 @@ def registrar_catalogo(app: FastAPI, conn,
         #    el resto de los atributos, así que no hay nada más que validar. Es
         #    la única forma de publicar los sets cuyo código de barras no se
         #    consigue, y además deja la publicación bien matcheada.
-        ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli)
+        ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli,
+                                p.modelo_fabricante)
         creado = None
         if ficha.get("product_id"):
             try:
