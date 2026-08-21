@@ -147,12 +147,17 @@ def test_un_producto_trabado_no_frena_a_los_demas(cat):
     _prod(cat, asin="B0AGFALLA1", ml_category_id="MLA1157", pictures=["http://i/1.jpg"])
     _prod(cat, asin="B0AGFALLA2", ml_category_id="MLA1157", pictures=["http://i/1.jpg"])
 
-    primero, segundo = ag.tick(), ag.tick()
-    assert primero["accion"] == "trabado" and primero["nombre"]
-    assert segundo["accion"] == CODIGO          # el segundo avanzó igual
-    # El que falló no se vuelve a tocar: el agente sigue con el otro.
-    tercero = ag.tick()
-    assert tercero["accion"] == "listo" and tercero["id"] == segundo["id"]
+    acciones = []
+    for _ in range(8):
+        r = ag.tick()
+        if r["accion"] == "sin_trabajo":
+            break
+        acciones.append(r["accion"])
+
+    # Uno consiguió su código y el otro no, pero los dos llegaron a estar listos
+    # para publicar: el que falló no frenó al agente ni se quedó pegado.
+    assert "sin_codigo" in acciones and CODIGO in acciones
+    assert acciones.count("listo") == 2
 
 
 def test_un_error_no_tumba_al_agente(cat):
@@ -169,14 +174,32 @@ def test_un_error_no_tumba_al_agente(cat):
 
 
 def test_encender_de_nuevo_reintenta_los_trabados(cat):
-    ag = _agente(cat, codigo=lambda p: {"gtin": "", "fuente": "", "bloqueado": True})
-    ag.config = {"encendido": True}
-    _prod(cat, ml_category_id="MLA1157", pictures=["http://i/1.jpg"])
+    def _explota(p):
+        raise RuntimeError("MercadoLibre rechazó la publicación")
 
-    assert ag.tick()["accion"] == "trabado"
+    ag = _agente(cat, preparar=_explota)
+    ag.config = {"encendido": True}
+    _prod(cat, ml_category_id="", pictures=[])
+
+    assert ag.tick()["accion"] == "error"
     assert ag.tick()["accion"] == "sin_trabajo"
     ag.config = {"encendido": True}                 # apagar y encender
-    assert ag.tick()["accion"] == "trabado"         # lo reintenta
+    assert ag.tick()["accion"] == "error"           # lo reintenta
+
+
+def test_sin_codigo_igual_intenta_publicar(cat):
+    """La vía del catálogo de MercadoLibre no necesita GTIN: exigirlo antes de
+    intentar era bloquearse solo."""
+    publicados = []
+    ag = _agente(cat,
+                 codigo=lambda p: {"gtin": "", "fuente": "", "bloqueado": True},
+                 publicar=lambda p: publicados.append(p.id) or {"ml_item_id": "MLA3"})
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    p = _prod(cat, ml_category_id="MLA1157", pictures=["http://i/1.jpg"])
+
+    assert ag.tick()["accion"] == "sin_codigo"
+    assert ag.tick()["accion"] == PUBLICAR
+    assert publicados == [p.id]
 
 
 def test_la_configuracion_persiste_en_la_base(cat):
