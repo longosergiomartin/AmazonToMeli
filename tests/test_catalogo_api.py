@@ -1165,3 +1165,51 @@ def test_pagina_asistida_arma_el_boton_con_los_asin_pendientes(tmp_path):
     assert "1 producto(s)" in r.text
     # El botón corre en el navegador y manda el resultado de vuelta.
     assert "javascript:" in r.text and "/codigos/recibir" in r.text
+
+
+def test_agente_arranca_apagado_y_no_publica_solo(client):
+    """Publicar mueve plata: el agente no lo hace hasta que lo habilitás."""
+    e = client.get("/api/agente").json()
+    assert e["encendido"] is False and e["publicar"] is False
+    assert client.post("/api/agente/tick", json={}).json()["accion"] == "apagado"
+
+
+def test_agente_recorre_el_catalogo_de_punta_a_punta(tmp_path, monkeypatch):
+    """El circuito completo: preparar, conseguir el código y publicar."""
+    enviados = []
+    cli = _cli_lote(enviados, gtin_catalogo={
+        "gtin": "5702017155326", "product_id": "MLA5", "nombre": "LEGO 75339"})
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "ag.db")))
+    titulo = "LEGO Star Wars Death Star Diorama 75339"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
+                asin="B0AGENT001").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.patch("/api/agente", json={"encendido": True, "publicar": True,
+                                 "margen_minimo": 0, "max_publicaciones": 5})
+
+    acciones = []
+    for _ in range(6):
+        r = c.post("/api/agente/tick", json={}).json()
+        acciones.append(r["accion"])
+        if r["accion"] in ("sin_trabajo", "apagado"):
+            break
+
+    assert "publicar" in acciones, acciones
+    p = c.get(f"/api/catalogo/{pid}").json()
+    assert p["estado"] == "publicado" and p["ml_item_id"]
+
+
+def test_agente_sin_fotos_deja_el_producto_trabado_con_el_motivo(tmp_path, monkeypatch):
+    _con_ml(monkeypatch, _cli_lote([]))
+    c = TestClient(crear_app(db_path=str(tmp_path / "ag2.db")))
+    _alta(c, marca="LEGO", titulo_ml="LEGO sin fotos", asin="B0AGENT002")
+    c.patch("/api/agente", json={"encendido": True})
+
+    r = c.post("/api/agente/tick", json={}).json()
+    assert r["accion"] == "error" and "fotos" in r["detalle"]
+
+
+def test_agente_config_invalida_da_400(client):
+    assert client.patch("/api/agente", json={"margen_minimo": "mucho"}).status_code == 400

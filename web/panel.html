@@ -211,6 +211,27 @@
       <span class="msg" id="add-msg"></span></div>
   </div>
 
+  <div class="card" style="margin-top:16px">
+    <h2>Agente</h2>
+    <p class="hint" style="margin:0 0 12px">Recorre el catálogo completando lo que
+      falta —marca, categoría, atributos, código de barras— y publica los que
+      quedan listos. Va de a un producto por vez: podés frenarlo cuando quieras.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="primary" id="ag-toggle">▶ Encender</button>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
+        <input type="checkbox" id="ag-publicar" style="width:auto"> También publicar
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
+        Tope <input type="number" id="ag-tope" min="0" max="50" style="width:70px">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
+        Margen mín. <input type="number" id="ag-margen" min="0" style="width:70px"> %
+      </label>
+    </div>
+    <div id="ag-estado" class="hist" style="margin-top:12px"></div>
+    <div id="ag-log" class="hist" style="max-height:180px;overflow:auto"></div>
+  </div>
+
   <div class="lote off" id="lote">
     <b id="lote-n">0 seleccionados</b>
     <button type="button" class="sm" id="lote-codigos" title="Busca el código de barras de cada uno y lo guarda">🔎 Buscar códigos</button>
@@ -550,6 +571,72 @@
       api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
   };
 
+  // ---- Agente ----------------------------------------------------------
+  // El bucle vive en el navegador: mientras el panel esté abierto y el agente
+  // encendido, pide un paso por vez. Así no hace falta un worker aparte (que en
+  // el plan gratis de Render no existe) y el avance se ve en vivo.
+  var agTimer=null;
+
+  function pintarAgente(e){
+    $("ag-publicar").checked=!!e.publicar;
+    if(document.activeElement!==$("ag-tope")) $("ag-tope").value=e.max_publicaciones;
+    if(document.activeElement!==$("ag-margen")) $("ag-margen").value=e.margen_minimo;
+    $("ag-toggle").textContent=e.encendido?"■ Frenar":"▶ Encender";
+    $("ag-toggle").className=e.encendido?"":"primary";
+    var partes=["Por preparar: "+e.por_preparar, "Sin código: "+e.sin_codigo,
+                "Listos: "+e.listos_para_publicar, "Publicados: "+e.publicados];
+    if(e.trabados) partes.push("Trabados: "+e.trabados);
+    var html="<div>"+partes.join(" · ")+"</div>";
+    (e.detalle_trabados||[]).forEach(function(t){
+      html+="<div style='color:var(--warn)'>#"+t.id+": "+esc(t.motivo)+"</div>";});
+    $("ag-estado").innerHTML=html;
+  }
+
+  function logAgente(r){
+    if(r.accion==="apagado"||r.accion==="sin_trabajo") return;
+    var color=(r.accion==="publicar")?"var(--good)"
+             :(r.accion==="error"||r.accion==="trabado")?"var(--warn)":"var(--muted)";
+    var d=document.createElement("div");
+    d.style.color=color;
+    d.textContent=r.accion.toUpperCase()+" · "+(r.nombre||"")+" — "+(r.detalle||"");
+    $("ag-log").insertBefore(d,$("ag-log").firstChild);
+  }
+
+  function tick(){
+    api("POST","/api/agente/tick",{}).then(function(r){
+      pintarAgente(r); logAgente(r);
+      if(r.accion==="publicar") cargar();
+      if(!r.encendido){ pararAgente(); return; }
+      if(r.accion==="sin_trabajo"){
+        $("ag-estado").innerHTML+="<div>No queda nada por hacer.</div>";
+        pararAgente(); api("PATCH","/api/agente",{encendido:false}).catch(function(){});
+        return;
+      }
+      // Pausa entre pasos: los que salen a la red no deben ir en ráfaga.
+      agTimer=setTimeout(tick, r.accion==="listo"?300:2000);
+    }).catch(function(e){ err(e); pararAgente(); });
+  }
+
+  function pararAgente(){ if(agTimer){clearTimeout(agTimer);agTimer=null;} }
+
+  $("ag-toggle").onclick=function(){
+    api("GET","/api/agente").then(function(e){
+      var nuevo=!e.encendido;
+      api("PATCH","/api/agente",{encendido:nuevo}).then(function(e2){
+        pintarAgente(e2);
+        if(nuevo){ $("ag-log").innerHTML=""; tick(); } else pararAgente();
+      }).catch(err);
+    }).catch(err);
+  };
+  ["ag-publicar","ag-tope","ag-margen"].forEach(function(id){
+    $(id).onchange=function(){
+      api("PATCH","/api/agente",{publicar:$("ag-publicar").checked,
+          max_publicaciones:parseInt($("ag-tope").value,10)||0,
+          margen_minimo:parseFloat($("ag-margen").value)||0}).then(pintarAgente).catch(err);
+    };
+  });
+  function cargarAgente(){ api("GET","/api/agente").then(pintarAgente).catch(function(){}); }
+
   // Carga manual de códigos: la salida garantizada cuando ninguna fuente los tiene.
   $("cod-cargar").onclick=function(){
     var v=($("cod-lineas").value||"").trim();
@@ -853,7 +940,7 @@
   });
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes(); cargar();
+  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes(); cargarAgente(); cargar();
 })();
 </script>
 </body>
