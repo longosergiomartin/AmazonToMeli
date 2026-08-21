@@ -574,6 +574,18 @@ def registrar_catalogo(app: FastAPI, conn,
         utiles = [w for w in t.split() if normalizar(w) not in _VACIAS]
         return " ".join(utiles[:palabras])
 
+    def _set_declarado(valor: str) -> str:
+        """El modelo que declara Amazon, solo si parece número de set.
+
+        Amazon a veces pone un código interno de 7 dígitos (6332955 en vez del
+        set 10282). Buscar por ese número no devuelve nada útil: el catálogo
+        contesta cualquier cosa que lo contenga y no hay match posible.
+        """
+        import re
+
+        v = (valor or "").strip()
+        return v if re.fullmatch(r"\d{4,6}", v) else ""
+
     def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
                         set_declarado: str = "", marca: str = "") -> dict:
         """Producto del catálogo de MercadoLibre que corresponde a este título.
@@ -590,14 +602,15 @@ def registrar_catalogo(app: FastAPI, conn,
         if cli is None:
             return {}
         candidatos = []
-        for n in (numero_de_set(titulo_completo), (set_declarado or "").strip()):
+        for n in (numero_de_set(titulo_completo), _set_declarado(set_declarado)):
             if n and n not in candidatos:
                 candidatos.append(n)
         prefijo = (marca or "").strip()
         for numero in candidatos:
             consulta = f"{prefijo} {numero}".strip()
             try:
-                ficha = cli.ficha_de_catalogo(consulta, debe_contener=numero)
+                ficha = cli.ficha_de_catalogo(consulta, debe_contener=numero,
+                                              marca=marca)
             except MeliAPIError:
                 continue
             if ficha.get("product_id"):
@@ -609,7 +622,8 @@ def registrar_catalogo(app: FastAPI, conn,
         if len(consulta) > 3:
             try:
                 ficha = cli.ficha_de_catalogo(consulta[:120],
-                                              parecido_a=titulo_completo)
+                                              parecido_a=titulo_completo,
+                                              marca=marca)
             except MeliAPIError:
                 return {}
             if ficha.get("product_id"):
@@ -942,7 +956,7 @@ def registrar_catalogo(app: FastAPI, conn,
         filas = []
         for p in pendientes[:max(1, min(cantidad, 15))]:
             completo = p.modelo or p.titulo_ml or ""
-            numero = (p.modelo_fabricante or "").strip() or numero_de_set(completo)
+            numero = _set_declarado(p.modelo_fabricante) or numero_de_set(completo)
             consulta = f"{p.marca} {numero}".strip() if numero else \
                 f"{p.marca} {_limpiar_para_buscar(completo)}".strip()
             fila = {"nombre": p.titulo_ml or p.modelo, "numero": numero or "—",

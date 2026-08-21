@@ -63,6 +63,20 @@ def describir_error(cuerpo) -> str:
     return "\n".join(partes)
 
 
+def _marca_en(marca_norm: str, nombre_norm: str) -> bool:
+    """¿El nombre del candidato es de esta marca?
+
+    Se piden todas las palabras de la marca ("Fisher Price" no puede matchear
+    con "Fisher"), cada una como palabra suelta: si no, "lego" daría positivo
+    dentro de "legomanía" y marcas cortas engancharían cualquier cosa.
+    """
+    import re
+
+    palabras = [p for p in marca_norm.split() if p]
+    return all(re.search(rf"(?<!\w){re.escape(p)}(?!\w)", nombre_norm)
+               for p in palabras)
+
+
 class MeliClient:
     def __init__(self, token_provider: Callable[[], str],
                  site: str = "MLA", base_url: str = API_BASE,
@@ -194,26 +208,37 @@ class MeliClient:
 
     def ficha_de_catalogo(self, query: str, debe_contener: str = "",
                           limit: int = 5, parecido_a: str = "",
-                          minimo_parecido: float = 0.5) -> dict:
+                          minimo_parecido: float = 0.5, marca: str = "") -> dict:
         """Busca el producto en el catálogo de MercadoLibre y devuelve su ficha.
 
         Es la fuente más confiable que tenemos: los sets ya están cargados en el
         catálogo de ML, con su GTIN y sus atributos. Devuelve
         {product_id, nombre, gtin} o {} si no hay match seguro.
 
-        Hay dos guardas contra quedarse con otro producto, y se usa una u otra:
+        Guardas contra quedarse con otro producto:
 
-          - `debe_contener` (el número de set, "75339"): si el nombre del
-            candidato no lo trae, se descarta. Es la más precisa.
+          - `debe_contener` (el número de set, "75339"): tiene que aparecer como
+            **palabra suelta** en el nombre del candidato. Como subcadena no
+            alcanzaba: "1103 Piezas" contiene "110".
+          - `marca`: el número solo no identifica nada. Buscando "LEGO 75551" el
+            catálogo devuelve primero "Babero Para Bebés Little Treasure 75551",
+            y el set de Minions viene segundo; sin exigir la marca nos quedábamos
+            con el babero. Es la guarda que más falsos positivos saca.
           - `parecido_a` (el título del producto): cuando no hay número, se
             compara el nombre y se exige un mínimo de coincidencia.
         """
-        from titulos import parecido
+        import re as _re
+
+        from titulos import normalizar, parecido
 
         clave = (debe_contener or "").strip().lower()
+        marca_n = normalizar(marca or "").strip()
         for prod in self.buscar_productos_catalogo(query, limit=limit):
             nombre = prod.get("nombre") or ""
-            if clave and clave not in nombre.lower():
+            if clave and not _re.search(rf"(?<!\d){_re.escape(clave)}(?!\d)",
+                                        nombre.lower()):
+                continue
+            if marca_n and not _marca_en(marca_n, normalizar(nombre)):
                 continue
             if parecido_a and parecido(parecido_a, nombre) < minimo_parecido:
                 continue

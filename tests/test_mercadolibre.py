@@ -214,3 +214,62 @@ def test_ficha_de_catalogo_por_nombre_no_agarra_otro_set():
     r = cli.ficha_de_catalogo("LEGO Ideas Magic of Disney",
                               parecido_a="LEGO Ideas Magic of Disney 21352")
     assert r == {}
+
+
+# ---- casos reales del diagnóstico contra el catálogo de MLA --------------
+# Los nombres son los que devolvió MercadoLibre de verdad, copiados de la
+# pantalla de diagnóstico. Sin la marca como guarda, el primer resultado que
+# contiene el número gana, y suele no ser el producto.
+
+def test_no_agarra_un_babero_como_ficha_del_set_de_lego():
+    """Buscando "LEGO 75551" el catálogo devuelve primero un babero que trae
+    ese número. El set de Minions viene segundo: hay que llegar hasta él."""
+    cli = _cli_con(
+        [{"id": "MLA1", "name": "Babero Para Bebés Little Treasure 75551"},
+         {"id": "MLA2", "name": "Lego Minions Gru 75551 Brick-build Minions "
+                                "And Their Lair Cantidad De Piezas 876"}],
+        {"/products/MLA2": {"attributes": [
+            {"id": "GTIN", "value_name": "5702016913354"}]}})
+    r = cli.ficha_de_catalogo("LEGO 75551", debe_contener="75551", marca="LEGO")
+    assert r["product_id"] == "MLA2"
+    assert r["gtin"] == "5702016913354"
+
+
+def test_descarta_repuestos_que_solo_comparten_el_numero():
+    """Para el set 21042 el catálogo devuelve cinco repuestos IMC con ese
+    número. Ninguno es LEGO: no hay ficha, y está bien que no la haya."""
+    cli = _cli_con(
+        [{"id": "MLA1", "name": "IMC 499 21042 401"},
+         {"id": "MLA2", "name": "IMC 499 21042 534"},
+         {"id": "MLA3", "name": "IMC 800 21042 065"}],
+        {})
+    assert cli.ficha_de_catalogo("LEGO 21042", debe_contener="21042",
+                                 marca="LEGO") == {}
+
+
+def test_encuentra_la_ficha_aunque_el_nombre_este_en_castellano():
+    """El nombre en ML no se parece al de Amazon —está en castellano y con
+    otro orden— pero es el producto: marca y número alcanzan."""
+    cli = _cli_con(
+        [{"id": "MLA23181154",
+          "name": "Set De Construcción Lego Ideas 21352 1103 Piezas En Caja"}],
+        {"/products/MLA23181154": {"attributes": [
+            {"id": "GTIN", "value_name": "5702017424101"}]}})
+    r = cli.ficha_de_catalogo("LEGO 21352", debe_contener="21352", marca="LEGO")
+    assert r["product_id"] == "MLA23181154"
+
+
+def test_el_numero_tiene_que_ser_palabra_suelta():
+    """Como subcadena, "1103 Piezas" contiene "110" y cualquier set de tres
+    dígitos engancharía fichas ajenas."""
+    cli = _cli_con(
+        [{"id": "MLA1", "name": "Lego Ideas 21352 1103 Piezas"}], {})
+    assert cli.ficha_de_catalogo("LEGO 110", debe_contener="110",
+                                 marca="LEGO") == {}
+
+
+def test_marca_de_varias_palabras_no_matchea_con_media():
+    cli = _cli_con(
+        [{"id": "MLA1", "name": "Fisher Juguete 12345"}], {})
+    assert cli.ficha_de_catalogo("Fisher Price 12345", debe_contener="12345",
+                                 marca="Fisher Price") == {}
