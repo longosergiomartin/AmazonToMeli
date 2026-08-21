@@ -1213,3 +1213,80 @@ def test_agente_sin_fotos_deja_el_producto_trabado_con_el_motivo(tmp_path, monke
 
 def test_agente_config_invalida_da_400(client):
     assert client.patch("/api/agente", json={"margen_minimo": "mucho"}).status_code == 400
+
+
+def test_publicar_falla_si_ml_no_devuelve_id(tmp_path, monkeypatch):
+    """Antes se marcaba como publicado igual, y el panel mostraba un éxito que
+    no existía en MercadoLibre."""
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: {}
+    cli.publicar = lambda item: {"permalink": "http://ml/x"}   # sin id
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "noid.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO X", ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"pictures": ["http://i/1.jpg"],
+                  "ml_attributes": {"GTIN": "5702017155326", "IVA": "21 %"}})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+    assert r.status_code == 502 and "sin id" in r.text
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "aprobado"
+
+
+def test_publicar_falla_si_ml_lo_deja_en_revision(tmp_path, monkeypatch):
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: {}
+    cli.publicar = lambda item: {"id": "MLA55", "status": "under_review",
+                                 "permalink": "http://ml/x"}
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "rev.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO X", ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"pictures": ["http://i/1.jpg"],
+                  "ml_attributes": {"GTIN": "5702017155326", "IVA": "21 %"}})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+    assert r.status_code == 502 and "under_review" in r.text
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] != "publicado"
+
+
+def test_verificar_corrige_lo_que_no_esta_publicado_de_verdad(tmp_path, monkeypatch):
+    """El caso real: el panel decía 18 publicados y en MercadoLibre no había
+    ninguno."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    class _Cli:
+        def mis_items(self, limit=200):
+            return ["MLA_VIVO"]
+
+        def obtener(self, item_id):
+            if item_id == "MLA_VIVO":
+                return {"status": "active", "permalink": "http://ml/vivo"}
+            raise MeliAPIError("MercadoLibre GET /items → 404")
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _Cli())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "ver.db")))
+    vivo = _alta(c, asin="B0VER00001", titulo_ml="Vivo").json()["id"]
+    fantasma = _alta(c, asin="B0VER00002", titulo_ml="Fantasma").json()["id"]
+    from db import conectar
+    conn = conectar(str(tmp_path / "ver.db"))
+    conn.execute("UPDATE catalogo SET ml_item_id='MLA_VIVO', estado='publicado' "
+                 "WHERE id = ?", (vivo,))
+    conn.execute("UPDATE catalogo SET ml_item_id='MLA_FANTASMA', estado='publicado' "
+                 "WHERE id = ?", (fantasma,))
+    conn.commit()
+
+    d = c.post("/api/catalogo/verificar", json={}).json()
+    assert d["publicaciones_en_la_cuenta"] == 1
+    assert d["corregidos"] == 1
+    # El que no existe deja de figurar como publicado.
+    assert c.get(f"/api/catalogo/{fantasma}").json()["estado"] == "borrador"
+    assert c.get(f"/api/catalogo/{vivo}").json()["estado"] == "publicado"

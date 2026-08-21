@@ -259,6 +259,7 @@
   </details>
 
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button type="button" class="sm" id="verificar" title="Contrasta el estado local con lo que hay de verdad en tu cuenta">🔍 Verificar en MercadoLibre</button>
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
 
@@ -661,6 +662,21 @@
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
     }).catch(function(){});
   }
+
+  // El estado local puede mentir: MercadoLibre responde 200 a un ítem que
+  // después queda en revisión. Esto pregunta y corrige.
+  $("verificar").onclick=function(){
+    var b=$("verificar"); b.disabled=true; b.textContent="Verificando…";
+    api("POST","/api/catalogo/verificar",{}).then(function(d){
+      b.disabled=false; b.textContent="🔍 Verificar en MercadoLibre";
+      var lineas=(d.revisados||[]).map(function(r){
+        return (r.estado_ml==="active"?"✓":"✕")+" "+r.nombre+" — MercadoLibre dice: "+r.estado_ml;});
+      alert("Publicaciones en tu cuenta de MercadoLibre: "+d.publicaciones_en_la_cuenta+"\n"
+            +"Revisados: "+d.total+" · Corregidos: "+d.corregidos+"\n\n"
+            +lineas.slice(0,25).join("\n"));
+      cargar(); cargarAgente();
+    }).catch(function(e){ b.disabled=false; b.textContent="🔍 Verificar en MercadoLibre"; err(e); });
+  };
 
   // Vaciar todo para arrancar de cero: borra el catálogo y también la cola,
   // porque encolar descarta los ASIN que ya figuran ahí aunque estén procesados.
