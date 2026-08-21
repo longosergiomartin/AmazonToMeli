@@ -213,6 +213,7 @@
 
   <div class="lote off" id="lote">
     <b id="lote-n">0 seleccionados</b>
+    <button type="button" class="sm" id="lote-codigos" title="Busca el código de barras de cada uno y lo guarda">🔎 Buscar códigos</button>
     <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
     <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
@@ -504,6 +505,26 @@
     correrLote("/api/catalogo/lote/publicar","lote-publicar",
       "Vas a publicar {n} producto(s) en MercadoLibre, con el precio sugerido de cada uno.\n\n¿Confirmás?");
   };
+  // Conversor aplicado al catálogo: sin GTIN, MercadoLibre no deja publicar.
+  $("lote-codigos").onclick=function(){
+    var ids=seleccionados();
+    if(!ids.length) return;
+    var b=$("lote-codigos"); b.disabled=true;
+    $("lote-msg").textContent="Buscando códigos… va de a uno y con pausa, "
+      +"así que con muchos productos tarda un rato.";
+    api("POST","/api/catalogo/lote/codigos",{ids:ids}).then(function(d){
+      b.disabled=false;
+      var m=d.encontrados+" de "+d.total+" con código.";
+      if(d.detenido) m+=" Amazon nos limitó: frenamos acá, seguí más tarde.";
+      if(d.pendientes) m+=" Quedaron "+d.pendientes+" sin procesar.";
+      var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
+      if(sin.length) m+="\nSin código: "+sin.map(function(r){
+        return r.nombre;}).join(" · ");
+      $("lote-msg").textContent=m;
+      cargar();
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
   $("lote-borrar").onclick=function(){
     var ids=seleccionados();
     if(ids.length && confirm("¿Borrar "+ids.length+" producto(s) del catálogo?"))
