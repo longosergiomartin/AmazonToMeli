@@ -922,6 +922,78 @@ def registrar_catalogo(app: FastAPI, conn,
                 "publicaciones_en_la_cuenta": len(en_la_cuenta),
                 "total": len(revisados)}
 
+    @app.get("/codigos/diagnostico", response_class=HTMLResponse)
+    def diagnostico_codigos(cantidad: int = 6):
+        """Por qué no se encuentra el código, para varios productos de una.
+
+        Muestra el paso a paso —número de set, consulta, qué devolvió el
+        catálogo de MercadoLibre— en una sola pantalla. El diagnóstico por
+        producto existe, pero mirarlos de a uno no deja ver el patrón.
+        """
+        pendientes = [p for p in cat.todos()
+                      if p.asin and not (p.ml_attributes or {}).get("GTIN")]
+        cli = None
+        error_cliente = ""
+        try:
+            cli = _client()
+        except HTTPException as e:
+            error_cliente = str(e.detail)
+
+        filas = []
+        for p in pendientes[:max(1, min(cantidad, 15))]:
+            completo = p.modelo or p.titulo_ml or ""
+            numero = (p.modelo_fabricante or "").strip() or numero_de_set(completo)
+            consulta = f"{p.marca} {numero}".strip() if numero else \
+                f"{p.marca} {_limpiar_para_buscar(completo)}".strip()
+            fila = {"nombre": p.titulo_ml or p.modelo, "numero": numero or "—",
+                    "consulta": consulta, "resultados": [], "error": ""}
+            if cli is not None and consulta:
+                try:
+                    fila["resultados"] = cli.buscar_productos_catalogo(consulta, limit=5)
+                except MeliAPIError as e:
+                    fila["error"] = f"{e}"
+                except Exception as e:  # noqa: BLE001
+                    fila["error"] = f"{type(e).__name__}: {e}"
+            filas.append(fila)
+
+        def _esc(s):
+            return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;"))
+
+        bloques = []
+        for f in filas:
+            res = f["resultados"]
+            if f["error"]:
+                detalle = f"<div style='color:#c0392b'>ERROR: {_esc(f['error'])}</div>"
+            elif not res:
+                detalle = "<div style='color:#9a6410'>Sin resultados.</div>"
+            else:
+                detalle = "<ul>" + "".join(
+                    f"<li><code>{_esc(r.get('id',''))}</code> — {_esc(r.get('nombre',''))}</li>"
+                    for r in res) + "</ul>"
+            bloques.append(
+                f"<div style='border:1px solid #ddd;border-radius:9px;padding:12px;"
+                f"margin-bottom:12px'><b>{_esc(f['nombre'])}</b>"
+                f"<div>N° de set: <code>{_esc(f['numero'])}</code></div>"
+                f"<div>Consulta al catálogo: <code>{_esc(f['consulta'])}</code></div>"
+                f"{detalle}</div>")
+
+        cabecera = (f"<p style='color:#c0392b'><b>Sin sesión de MercadoLibre:</b> "
+                    f"{_esc(error_cliente)}</p>" if error_cliente else
+                    f"<p>Sesión de MercadoLibre activa. Productos sin código: "
+                    f"<b>{len(pendientes)}</b>.</p>")
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'>"
+            "<title>Diagnóstico de códigos</title>"
+            "<div style=\"font-family:system-ui;max-width:820px;margin:32px auto;"
+            "padding:0 16px;line-height:1.55\">"
+            "<h1>Diagnóstico de códigos</h1>"
+            "<p>Qué se le pregunta al catálogo de MercadoLibre por cada producto "
+            "y qué contesta. Si acá no aparecen resultados, el problema está en "
+            "la búsqueda, no en el producto.</p>"
+            + cabecera + "".join(bloques) +
+            "<p><a href='/panel'>← Volver al panel</a></p></div>")
+
     @app.get("/api/codigos/pendientes")
     def codigos_pendientes(limite: int = 40):
         """Productos del catálogo que todavía no tienen código de barras."""
@@ -1075,6 +1147,15 @@ def registrar_catalogo(app: FastAPI, conn,
         if not item_id:
             raise HTTPException(502, "MercadoLibre respondió sin id de "
                                 f"publicación: {str(creado)[:200]}")
+        # `paused` no es un fallo: el ítem existe y solo hay que activarlo.
+        # MercadoLibre crea así algunas publicaciones de catálogo.
+        if estado_ml == "paused":
+            try:
+                cli.reactivar(item_id)
+                estado_ml = (cli.obtener(item_id).get("status") or "").strip()
+            except MeliAPIError as e:
+                raise HTTPException(502, f"MercadoLibre creó el ítem {item_id} "
+                                    f"pausado y no se pudo activar: {e}")
         try:
             return _registrar(pid, p, creado, cli, item_id, estado_ml)
         except ValueError as e:
