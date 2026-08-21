@@ -229,6 +229,9 @@
       placeholder="75339;5702017155326&#10;B0BBHHT8LY;673419281423"></textarea>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
       <button type="button" id="cod-cargar">Cargar códigos</button>
+      <a href="/codigos/asistido" target="_blank" rel="noopener"
+         style="font-size:.82rem;color:var(--accent);font-weight:600">
+         🔖 …o completalos leyendo Amazon desde tu navegador</a>
       <span class="hint" id="cod-fuentes"></span>
     </div>
     <div class="msg" id="cod-msg"></div>
@@ -564,10 +567,10 @@
   function cargarFuentes(){
     api("GET","/api/codigos/fuentes").then(function(f){
       var partes=[];
-      if(f.brickset) partes.push("Brickset ✓");
-      else partes.push("Brickset ✕ (configurá BRICKSET_API_KEY para LEGO)");
       partes.push("MercadoLibre "+(f.mercadolibre?"✓":"✕"));
       partes.push("UPCitemdb ✓");
+      partes.push("tu navegador ✓");
+      if(f.brickset) partes.push("Brickset ✓");
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
     }).catch(function(){});
   }

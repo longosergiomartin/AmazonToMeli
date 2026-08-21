@@ -863,6 +863,50 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"aplicados": aplicados, "sin_producto": sin_producto,
                 "invalidos": invalidos, "total": len(aplicados)}
 
+    @app.get("/api/codigos/pendientes")
+    def codigos_pendientes(limite: int = 40):
+        """Productos del catálogo que todavía no tienen código de barras."""
+        faltan = [{"id": p.id, "asin": p.asin,
+                   "nombre": p.titulo_ml or p.modelo or p.asin}
+                  for p in cat.todos()
+                  if p.asin and not (p.ml_attributes or {}).get("GTIN")]
+        return {"total": len(faltan), "items": faltan[:max(1, min(limite, 100))]}
+
+    @app.get("/codigos/recibir", response_class=HTMLResponse)
+    def codigos_recibir(datos: str = "", corto: str = ""):
+        """Destino del botón que lee las fichas de Amazon desde el navegador.
+
+        Llega `ASIN:codigo,ASIN:codigo`. Se valida cada código antes de
+        guardarlo: el botón ya lo hizo del lado del navegador, pero lo que llega
+        por la URL no es de fiar.
+        """
+        from gtin_lookup import validar_gtin
+        productos = {p.asin.upper(): p for p in cat.todos() if p.asin}
+        guardados, ignorados = 0, 0
+        for par in (datos or "").split(","):
+            asin, _, codigo = par.partition(":")
+            asin, codigo = asin.strip().upper(), codigo.strip()
+            p = productos.get(asin)
+            if not p or not validar_gtin(codigo):
+                ignorados += 1 if par.strip() else 0
+                continue
+            attrs = dict(p.ml_attributes or {})
+            attrs["GTIN"] = codigo
+            attrs.pop("EMPTY_GTIN_REASON", None)
+            cat.actualizar_publicacion(p.id, ml_attributes=attrs)
+            guardados += 1
+        aviso = ("<p>Amazon pidió verificación antes de terminar: volvé a tocar "
+                 "el botón más tarde para los que falten.</p>" if corto else "")
+        return HTMLResponse(
+            "<!doctype html><meta charset='utf-8'>"
+            "<div style=\"font-family:system-ui;text-align:center;margin-top:70px;"
+            "line-height:1.6\">"
+            f"<h1>✅ {guardados} código(s) guardado(s)</h1>"
+            + (f"<p>{ignorados} no se pudieron aplicar.</p>" if ignorados else "")
+            + aviso +
+            "<p>Volvé al panel: ya podés preparar los borradores y publicar.</p>"
+            "<p><a href='/panel'>← Ir al panel</a></p></div>")
+
     @app.get("/api/codigos/fuentes")
     def fuentes_de_codigos():
         """Qué fuentes de código están disponibles ahora mismo."""

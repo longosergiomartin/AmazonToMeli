@@ -1097,3 +1097,71 @@ def test_fuentes_de_codigos_reporta_lo_disponible(client, monkeypatch):
     assert f["brickset"] is False and f["upcitemdb"] is True
     monkeypatch.setenv("BRICKSET_API_KEY", "abc")
     assert client.get("/api/codigos/fuentes").json()["brickset"] is True
+
+
+def test_codigos_pendientes_lista_los_que_faltan(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "pend.db")))
+    con = _alta(c, asin="B0PEND0001", titulo_ml="Ya tiene").json()["id"]
+    _alta(c, asin="B0PEND0002", titulo_ml="Le falta")
+    c.patch(f"/api/catalogo/{con}/publicacion",
+            json={"ml_attributes": {"GTIN": "5702016914498"}})
+
+    d = c.get("/api/codigos/pendientes").json()
+    assert d["total"] == 1
+    assert d["items"][0]["asin"] == "B0PEND0002"
+
+
+def test_recibir_codigos_del_navegador(tmp_path):
+    """El botón lee las fichas de Amazon desde el navegador del usuario —cuya IP
+    Amazon sí atiende— y devuelve los pares ASIN:código por la URL."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "recib.db")))
+    a = _alta(c, asin="B0RECI0001", titulo_ml="Uno").json()["id"]
+    b = _alta(c, asin="B0RECI0002", titulo_ml="Dos").json()["id"]
+
+    r = c.get("/codigos/recibir",
+              params={"datos": "B0RECI0001:5702017155326,B0RECI0002:673419281423"})
+    assert r.status_code == 200 and "2 código(s) guardado(s)" in r.text
+    assert c.get(f"/api/catalogo/{a}").json()["ml_attributes"]["GTIN"] == "5702017155326"
+    assert c.get(f"/api/catalogo/{b}").json()["ml_attributes"]["GTIN"] == "673419281423"
+
+
+def test_recibir_codigos_valida_lo_que_llega_por_la_url(tmp_path):
+    """Lo que viene por la URL no es de fiar aunque el botón ya haya validado."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "recib2.db")))
+    pid = _alta(c, asin="B0RECI0003", titulo_ml="Uno").json()["id"]
+
+    r = c.get("/codigos/recibir", params={
+        "datos": "B0RECI0003:1234567890123,B0NOEXISTE:5702017155326"})
+    assert "0 código(s) guardado(s)" in r.text
+    assert not c.get(f"/api/catalogo/{pid}").json()["ml_attributes"].get("GTIN")
+
+
+def test_recibir_codigos_saca_el_motivo_de_gtin_vacio(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "recib3.db")))
+    pid = _alta(c, asin="B0RECI0004", titulo_ml="Uno").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"ml_attributes": {"EMPTY_GTIN_REASON": "Otra razón"}})
+
+    c.get("/codigos/recibir", params={"datos": "B0RECI0004:5702017155326"})
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702017155326" and "EMPTY_GTIN_REASON" not in attrs
+
+
+def test_recibir_codigos_avisa_si_amazon_corto(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "recib4.db")))
+    _alta(c, asin="B0RECI0005", titulo_ml="Uno")
+    r = c.get("/codigos/recibir",
+              params={"datos": "B0RECI0005:5702017155326", "corto": "1"})
+    assert "verificación" in r.text
+
+
+def test_pagina_asistida_arma_el_boton_con_los_asin_pendientes(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "asist.db")))
+    _alta(c, asin="B0ASIS0001", titulo_ml="Sin código")
+
+    r = c.get("/codigos/asistido")
+    assert r.status_code == 200
+    assert "B0ASIS0001" in r.text          # el ASIN va embebido en el botón
+    assert "1 producto(s)" in r.text
+    # El botón corre en el navegador y manda el resultado de vuelta.
+    assert "javascript:" in r.text and "/codigos/recibir" in r.text

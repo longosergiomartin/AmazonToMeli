@@ -310,23 +310,33 @@ confiable a la menos:
 | # | Fuente | Cómo funciona | ¿Sirve desde la nube? |
 |---|--------|---------------|------------------------|
 | 1 | Tu catálogo | Otro producto tuyo con el mismo ASIN ya lo tiene | Sí, instantáneo |
-| 2 | **Brickset** | API oficial de la base de LEGO, por número de set | **Sí** |
-| 3 | Catálogo de MercadoLibre | Su ficha del producto, por número o por nombre | **Sí** |
-| 4 | UPCitemdb | Base genérica de códigos, por nombre | Sí (límite diario) |
-| 5 | Amazon / buscador web | Lee la página del producto | **No**: bloquea servidores |
+| 2 | Catálogo de MercadoLibre | Su ficha del producto, por número o por nombre | **Sí** |
+| 3 | UPCitemdb | Base genérica de códigos, por nombre | Sí (límite diario) |
+| 4 | Amazon / buscador web | Lee la página del producto | **No**: bloquea servidores |
 
-La última fila es la clave: **Amazon rechaza las IP de datacenter**, así que
-desde Render esa fuente casi nunca responde. Por eso las de arriba son APIs
-de verdad, que no bloquean.
+La última fila es el problema: **Amazon rechaza las IP de datacenter**, así que
+desde Render esa fuente casi nunca responde.
 
-**Brickset** (gratis, 2 minutos): registrate en
-[brickset.com/api](https://brickset.com/api/), pedí una API key y cargala como
-`BRICKSET_API_KEY`. Para LEGO es la fuente autoritativa: el dato sale de la caja
-real y se consulta por número de set, sin ambigüedad.
+#### El botón que lo resuelve para cualquier rubro
 
-Si aun así algún producto queda sin código, el panel tiene **"Cargar códigos de
-barras a mano"**: se pegan líneas `número de set;código` o `ASIN;código` y se
-aplican en lote.
+`/codigos/asistido` arma un bookmarklet que **lee las fichas de Amazon desde tu
+navegador**, con tu conexión hogareña. Amazon te responde normal a vos aunque
+rechace al servidor. Lo abrís desde cualquier página de amazon.com, va de a una
+ficha con pausa entre cada una, corta solo si Amazon pide verificación y guarda
+lo que consiguió.
+
+Sirve para **cualquier producto**, porque lee el código de la propia ficha: LEGO,
+herramientas, electrónica, lo que sea. Es el mismo principio que los otros
+botones de la herramienta: leer lo que vos ya podés ver.
+
+#### Últimos recursos
+
+- **Cargar códigos de barras a mano** (en el panel): se pegan líneas
+  `número de set;código` o `ASIN;código` y se aplican en lote. Acepta pegar
+  desde una planilla.
+- **`BRICKSET_API_KEY`** *(opcional, solo LEGO)*: si tenés una API key de
+  [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
+  hace falta configurarla.
 
 > Notas del plan gratis:
 > - El servicio **se duerme** tras un rato sin uso; la primera carga puede
