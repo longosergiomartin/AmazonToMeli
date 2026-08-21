@@ -19,6 +19,7 @@ de búsqueda como plan B).
 
 from __future__ import annotations
 
+import html as _html
 import re
 from collections import Counter
 from typing import Optional
@@ -68,6 +69,58 @@ def _de_buscador(asin: str, timeout: int) -> list[str]:
     if resp.status_code != 200:
         return []
     return _candidatos(resp.text)
+
+
+def buscar_asin(gtin: str, timeout: int = 12) -> dict:
+    """ASIN a partir del código de barras: busca el código en Amazon.
+
+    Es el camino inverso de `buscar_gtin`. Amazon indexa los EAN/UPC, así que
+    buscar el número devuelve la ficha del producto. Devuelve
+    {ok, asin, titulo, bloqueado, mensaje}.
+    """
+    gtin = re.sub(r"\D", "", gtin or "")
+    if not validar_gtin(gtin):
+        return {"ok": False, "asin": "", "titulo": "", "bloqueado": False,
+                "mensaje": "Código inválido: no pasa el dígito verificador "
+                           "(EAN/UPC de 8, 12, 13 o 14 números)."}
+    try:
+        resp = requests.get("https://www.amazon.com/s", params={"k": gtin},
+                            headers={"User-Agent": _UA,
+                                     "Accept-Language": "en-US,en;q=0.9"},
+                            timeout=timeout)
+    except requests.RequestException as e:
+        return {"ok": False, "asin": "", "titulo": "", "bloqueado": False,
+                "mensaje": f"No se pudo consultar Amazon ({e})."}
+
+    if resp.status_code != 200:
+        bloqueado = resp.status_code in (403, 429, 503)
+        return {"ok": False, "asin": "", "titulo": "", "bloqueado": bloqueado,
+                "mensaje": f"Amazon respondió {resp.status_code}."
+                           + (" Conviene frenar y seguir más tarde."
+                              if bloqueado else "")}
+
+    texto = resp.text
+    if "captcha" in texto[:4000].lower():
+        return {"ok": False, "asin": "", "titulo": "", "bloqueado": True,
+                "mensaje": "Amazon pidió verificación (captcha). Frenar y seguir "
+                           "más tarde."}
+
+    m = re.search(r'data-asin="([A-Z0-9]{10})"[^>]*data-component-type="s-search-result"',
+                  texto) or re.search(r'data-component-type="s-search-result"[^>]*'
+                                      r'data-asin="([A-Z0-9]{10})"', texto)
+    if not m:
+        m = re.search(r'data-asin="([A-Z0-9]{10})"', texto)
+    if not m:
+        return {"ok": False, "asin": "", "titulo": "", "bloqueado": False,
+                "mensaje": "Amazon no devolvió resultados para ese código."}
+
+    asin = m.group(1)
+    t = re.search(r'data-asin="' + asin + r'".*?<h2[^>]*>.*?<span[^>]*>(.*?)</span>',
+                  texto, re.S)
+    titulo = re.sub(r"\s+", " ", _html.unescape(t.group(1))).strip() if t else ""
+    return {"ok": True, "asin": asin, "titulo": titulo[:200], "bloqueado": False,
+            "mensaje": f"ASIN encontrado en Amazon ({asin}). Verificá que sea el "
+                       "producto correcto."}
 
 
 def buscar_gtin(asin: str, timeout: int = 12) -> dict:

@@ -278,6 +278,12 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         ruta = Path(__file__).resolve().parent.parent / "web" / "panel.html"
         return ruta.read_text(encoding="utf-8")
 
+    @app.get("/codigos", response_class=HTMLResponse)
+    def codigos():
+        """Conversor ASIN ⇄ código de barras (EAN/UPC/ISBN)."""
+        ruta = Path(__file__).resolve().parent.parent / "web" / "codigos.html"
+        return ruta.read_text(encoding="utf-8")
+
     return app
 
 

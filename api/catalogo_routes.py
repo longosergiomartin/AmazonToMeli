@@ -289,6 +289,27 @@ def registrar_catalogo(app: FastAPI, conn,
             f"<p>{r['duplicados']} ya estaban · {r['pendientes']} pendientes en total.</p>"
             "<p>Volvé al panel y tocá <b>Procesar cola</b>.</p></div>")
 
+    # ---- conversor ASIN ⇄ código de barras --------------------------------
+
+    @app.post("/api/codigos")
+    def codigos(body: dict):
+        """Convierte ASIN ⇄ GTIN (EAN/UPC/ISBN), de a varios.
+
+        Sin límite diario: primero mira el catálogo propio, después el de
+        MercadoLibre y recién al final sale a Amazon.
+        """
+        from codigos import convertir_lote
+        crudo = (body or {}).get("entradas", "")
+        entradas = crudo if isinstance(crudo, list) else str(crudo).splitlines()
+        cli = None
+        if store.hay_sesion() and cred.configurado:
+            try:
+                cli = _client()
+            except HTTPException:
+                pass
+        return convertir_lote(entradas, catalogo=cat, cliente_ml=cli,
+                              maximo=int((body or {}).get("maximo", 25)))
+
     # ---- búsqueda automática del GTIN por ASIN ---------------------------
 
     @app.post("/api/gtin")

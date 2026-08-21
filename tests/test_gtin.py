@@ -73,3 +73,52 @@ def test_endpoint_gtin(tmp_path, monkeypatch):
     c = TestClient(crear_app(db_path=str(tmp_path / "t.db")))
     r = c.post("/api/gtin", json={"asin": "B075SDMMMV"}).json()
     assert r["ok"] is True and r["gtin"] == "673419281423"
+
+
+def _resp(status=200, text=""):
+    class _R:
+        status_code, text = status, ""
+    _R.status_code, _R.text = status, text
+    return _R()
+
+
+def test_buscar_asin_encuentra_el_producto(monkeypatch):
+    import gtin_lookup
+    html = ('<div data-component-type="s-search-result" data-asin="B075SDMMMV">'
+            '<h2><span>LEGO Star Wars X-Wing 75301</span></h2></div>')
+    monkeypatch.setattr(gtin_lookup.requests, "get", lambda *a, **k: _resp(200, html))
+    r = gtin_lookup.buscar_asin("5702016914498")
+    assert r["ok"] and r["asin"] == "B075SDMMMV"
+    assert "X-Wing" in r["titulo"]
+
+
+def test_buscar_asin_rechaza_codigo_invalido(monkeypatch):
+    import gtin_lookup
+    llamadas = []
+    monkeypatch.setattr(gtin_lookup.requests, "get",
+                        lambda *a, **k: llamadas.append(1) or _resp())
+    r = gtin_lookup.buscar_asin("1234567890123")   # no pasa el verificador
+    assert r["ok"] is False and not llamadas
+    assert "verificador" in r["mensaje"]
+
+
+def test_buscar_asin_detecta_el_bloqueo(monkeypatch):
+    import gtin_lookup
+    monkeypatch.setattr(gtin_lookup.requests, "get", lambda *a, **k: _resp(503))
+    r = gtin_lookup.buscar_asin("5702016914498")
+    assert r["ok"] is False and r["bloqueado"] is True
+
+
+def test_buscar_asin_detecta_el_captcha(monkeypatch):
+    import gtin_lookup
+    monkeypatch.setattr(gtin_lookup.requests, "get",
+                        lambda *a, **k: _resp(200, "Enter the characters captcha"))
+    assert gtin_lookup.buscar_asin("5702016914498")["bloqueado"] is True
+
+
+def test_buscar_asin_sin_resultados(monkeypatch):
+    import gtin_lookup
+    monkeypatch.setattr(gtin_lookup.requests, "get",
+                        lambda *a, **k: _resp(200, "<div>sin resultados</div>"))
+    r = gtin_lookup.buscar_asin("5702016914498")
+    assert r["ok"] is False and r["bloqueado"] is False
