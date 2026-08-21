@@ -294,10 +294,49 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `MELI_CLIENT_ID` = tu App ID.
    - `MELI_CLIENT_SECRET` = tu Secret Key.
    - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
+   - `BRICKSET_API_KEY` = tu clave de [brickset.com/api](https://brickset.com/api/)
+     (**opcional pero muy recomendada si vendés LEGO**, ver abajo).
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
    MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
+
+### El código de barras (GTIN) y por qué importa
+
+MercadoLibre exige el código de barras en varias categorías: sin él, la
+publicación se rechaza. La herramienta lo busca sola, probando de la fuente más
+confiable a la menos:
+
+| # | Fuente | Cómo funciona | ¿Sirve desde la nube? |
+|---|--------|---------------|------------------------|
+| 1 | Tu catálogo | Otro producto tuyo con el mismo ASIN ya lo tiene | Sí, instantáneo |
+| 2 | Catálogo de MercadoLibre | Su ficha del producto, por número o por nombre | **Sí** |
+| 3 | UPCitemdb | Base genérica de códigos, por nombre | Sí (límite diario) |
+| 4 | Amazon / buscador web | Lee la página del producto | **No**: bloquea servidores |
+
+La última fila es el problema: **Amazon rechaza las IP de datacenter**, así que
+desde Render esa fuente casi nunca responde.
+
+#### El botón que lo resuelve para cualquier rubro
+
+`/codigos/asistido` arma un bookmarklet que **lee las fichas de Amazon desde tu
+navegador**, con tu conexión hogareña. Amazon te responde normal a vos aunque
+rechace al servidor. Lo abrís desde cualquier página de amazon.com, va de a una
+ficha con pausa entre cada una, corta solo si Amazon pide verificación y guarda
+lo que consiguió.
+
+Sirve para **cualquier producto**, porque lee el código de la propia ficha: LEGO,
+herramientas, electrónica, lo que sea. Es el mismo principio que los otros
+botones de la herramienta: leer lo que vos ya podés ver.
+
+#### Últimos recursos
+
+- **Cargar códigos de barras a mano** (en el panel): se pegan líneas
+  `número de set;código` o `ASIN;código` y se aplican en lote. Acepta pegar
+  desde una planilla.
+- **`BRICKSET_API_KEY`** *(opcional, solo LEGO)*: si tenés una API key de
+  [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
+  hace falta configurarla.
 
 > Notas del plan gratis:
 > - El servicio **se duerme** tras un rato sin uso; la primera carga puede

@@ -17,3 +17,19 @@ cot._cache["data"] = {
     "oficial": 1300.0, "tarjeta": 1690.0, "fuente": "test",
     "online": False, "actualizado": "2026-01-01T00:00:00+00:00",
 }
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _sin_red_para_codigos(monkeypatch):
+    """Los tests no salen a buscar códigos a internet.
+
+    `_codigo_de` consulta Brickset y UPCitemdb; sin esto cada test que prepara
+    borradores intentaba una conexión real, que en CI tarda hasta el timeout.
+    Los tests de esas fuentes parchean `requests` por su cuenta.
+    """
+    import fuentes_gtin
+    monkeypatch.setattr(fuentes_gtin, "gtin_de_brickset", lambda *a, **k: {})
+    monkeypatch.setattr(fuentes_gtin, "gtin_de_upcitemdb", lambda *a, **k: {})

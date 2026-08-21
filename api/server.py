@@ -57,6 +57,50 @@ _BOOKMARKLET_LOTE = (
     "})();"
 )
 
+# Tercer bookmarklet: completa los códigos de barras que falten, leyendo las
+# fichas de Amazon **desde el navegador del usuario**.
+#
+# Por qué así y no desde el servidor: Amazon rechaza las IP de datacenter, así
+# que desde la nube la lectura falla siempre. Desde el navegador del usuario
+# —su IP hogareña, su sesión— las páginas responden normal. Es el mismo
+# principio de los otros dos botones: leer lo que el usuario ya puede ver.
+#
+# Va de a una página, con pausa entre cada una, y corta apenas Amazon pide
+# verificación. La lista de ASIN viene embebida (__ASINS__) para no depender de
+# permisos entre dominios.
+_BOOKMARKLET_CODIGOS = (
+    "javascript:(function(){"
+    "var B='__BASE__',A=__ASINS__,P=__PAUSA__;"
+    "if(location.hostname.indexOf('amazon.')<0){alert('Abrí primero cualquier página de amazon.com y después tocá este botón.');return;}"
+    "if(!A.length){alert('No hay productos sin código.');return;}"
+    "if(!confirm('Voy a leer '+A.length+' ficha(s) de Amazon desde tu navegador.\\nTarda ~'+Math.ceil(A.length*P/1000)+' segundos. ¿Seguimos?'))return;"
+    # Dígito verificador GTIN: el mismo cálculo que hace el lector del súper.
+    "function ok(c){if(!/^(\\d{8}|\\d{12}|\\d{13}|\\d{14})$/.test(c))return false;"
+    "var d=c.split('').map(Number),v=d.pop(),s=0;d.reverse().forEach(function(x,i){s+=x*(i%2===0?3:1);});"
+    "return (10-s%10)%10===v;}"
+    "var res=[],i=0,corto=false;"
+    "var caja=document.createElement('div');"
+    "caja.style.cssText='position:fixed;z-index:99999;right:16px;bottom:16px;background:#111;color:#fff;"
+    "padding:12px 16px;border-radius:10px;font:14px system-ui;box-shadow:0 4px 20px rgba(0,0,0,.4)';"
+    "document.body.appendChild(caja);"
+    "function paso(){"
+    "if(corto||i>=A.length){fin();return;}"
+    "var a=A[i++];"
+    "caja.textContent='Leyendo '+i+' de '+A.length+'… ('+res.length+' con código)';"
+    "fetch('https://www.amazon.com/dp/'+a,{credentials:'omit'}).then(function(r){return r.text();}).then(function(h){"
+    "if(/captcha/i.test(h.slice(0,4000))&&h.indexOf('productTitle')<0){corto=true;return;}"
+    "var m=h.match(/(?:EAN|UPC|GTIN|C[oó]digo de barras)[^0-9]{0,60}(\\d{8,14})/i);"
+    "if(m&&ok(m[1]))res.push(a+':'+m[1]);"
+    "}).catch(function(){}).then(function(){setTimeout(paso,P);});}"
+    "function fin(){"
+    "caja.textContent='Listo: '+res.length+' código(s). Guardando…';"
+    "if(!res.length){alert('No encontré códigos'+(corto?' (Amazon pidió verificación: probá más tarde).':'. Puede que estas fichas no los publiquen.'));caja.remove();return;}"
+    "window.open(B+'/codigos/recibir?datos='+encodeURIComponent(res.join(','))+(corto?'&corto=1':''),'_blank');"
+    "caja.remove();}"
+    "paso();"
+    "})();"
+)
+
 _BOOKMARKLET_TPL = (
     "javascript:(function(){"
     "var B='__BASE__';"
@@ -87,6 +131,49 @@ _BOOKMARKLET_TPL = (
     "})();"
 )
 
+_PAGINA_CODIGOS = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Completar códigos de barras</title>
+<style>
+ body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.6}}
+ .btn{{display:inline-block;background:#0E7C66;color:#fff;padding:12px 20px;border-radius:9px;
+      text-decoration:none;font-weight:700;font-size:1.05rem}}
+ .nota{{background:#f4f4ef;border-radius:9px;padding:12px 16px;margin:18px 0;font-size:.92rem}}
+ li{{margin:8px 0}}
+ a{{color:#0E7C66}}
+</style></head><body>
+<h1>Completar códigos de barras</h1>
+<p>Hay <strong>{n} producto(s)</strong> sin código de barras. MercadoLibre lo
+exige para publicar en varias categorías.</p>
+
+<p>Este botón lee las fichas de Amazon <strong>desde tu navegador</strong>, con tu
+conexión. Amazon rechaza a los servidores de la nube, pero a vos te responde
+normal — por eso funciona esto y no la búsqueda automática desde Render.</p>
+
+<h2>Cómo se usa</h2>
+<ol>
+ <li>Arrastrá este botón a tu barra de favoritos:<br><br>
+     <a class="btn" href="{bm}">🔖 Completar códigos</a></li>
+ <li>Abrí <a href="https://www.amazon.com" target="_blank" rel="noopener">amazon.com</a>
+     en otra pestaña (cualquier página sirve).</li>
+ <li>Tocá el botón desde el favorito. Va a ir leyendo las fichas de a una, con
+     pausa entre cada una, mostrándote el avance abajo a la derecha.</li>
+ <li>Al terminar se abre una pestaña que guarda todo en tu catálogo.</li>
+</ol>
+
+<div class="nota">
+ <b>Sirve para cualquier rubro.</b> Lee el código de la propia ficha del
+ producto, así que funciona igual con LEGO, herramientas, electrónica o lo que
+ cargues.<br><br>
+ <b>Va despacio a propósito.</b> Una ficha cada 2,5 segundos. Si Amazon pide
+ verificación, corta solo y guarda lo que consiguió: volvés a tocar el botón más
+ tarde para el resto.<br><br>
+ <b>Si algún producto no tiene el código en la ficha</b>, se carga a mano desde
+ el panel (<i>Cargar códigos de barras a mano</i>).
+</div>
+
+<p><a href="/panel">← Volver al panel</a></p>
+</body></html>"""
+
 _PAGINA_INICIO = """<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>API de Arbitraje</title>
 <style>
@@ -98,7 +185,8 @@ _PAGINA_INICIO = """<!doctype html>
 </style></head><body>
 <h1>🛒 Tu API de arbitraje</h1>
 <p>Estado: <strong>funcionando</strong> · {n} producto(s) capturado(s)</p>
-<p><a class="btn" href="/panel">📋 Panel de publicación en MercadoLibre</a></p>
+<p><a class="btn" href="/panel">📋 Panel de publicación en MercadoLibre</a>
+   <a class="btn" href="/codigos/asistido" style="background:#0E7C66">🔖 Completar códigos de barras</a></p>
 <h2>Los botones mágicos</h2>
 <p>Arrastrá estos botones a tu <strong>barra de favoritos</strong> (una sola vez):</p>
 <p><a class="btn" href="{bm}">➜ Capturar producto</a>
@@ -277,6 +365,24 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
     def panel():
         ruta = Path(__file__).resolve().parent.parent / "web" / "panel.html"
         return ruta.read_text(encoding="utf-8")
+
+    @app.get("/codigos/asistido", response_class=HTMLResponse)
+    def codigos_asistido(request: Request):
+        """Arma el botón que completa los códigos leyendo Amazon desde tu
+        navegador. La lista de ASIN va embebida en el propio botón."""
+        import json as _json
+        base = str(request.base_url).rstrip("/")
+        try:
+            from catalogo import Catalogo
+            cat = Catalogo(almacen.conn)
+            faltan = [p.asin for p in cat.todos()
+                      if p.asin and not (p.ml_attributes or {}).get("GTIN")][:40]
+        except Exception:  # noqa: BLE001 - base dormida
+            faltan = []
+        bm = (_BOOKMARKLET_CODIGOS.replace("__BASE__", base)
+              .replace("__ASINS__", _json.dumps(faltan))
+              .replace("__PAUSA__", "2500").replace('"', "&quot;"))
+        return _PAGINA_CODIGOS.format(n=len(faltan), bm=bm)
 
     @app.get("/codigos", response_class=HTMLResponse)
     def codigos():
