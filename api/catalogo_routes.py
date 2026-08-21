@@ -615,6 +615,9 @@ def registrar_catalogo(app: FastAPI, conn,
         está limitando, para poder frenar un lote en vez de seguir insistiendo.
         """
         from gtin_lookup import buscar_gtin, validar_gtin
+        from fuentes_gtin import gtin_de_brickset, gtin_de_upcitemdb
+
+        numero = (set_declarado or "").strip() or numero_de_set(titulo)
 
         # 1) Lo que ya tenemos cargado de otro producto con el mismo ASIN.
         if asin:
@@ -622,12 +625,34 @@ def registrar_catalogo(app: FastAPI, conn,
                 otro = (p.ml_attributes or {}).get("GTIN", "")
                 if p.asin.upper() == asin.upper() and otro and validar_gtin(otro):
                     return {"gtin": otro, "fuente": "tu catálogo", "bloqueado": False}
-        # 2) El catálogo de MercadoLibre: oficial y sin riesgo de bloqueo.
+
+        # 2) Brickset: la base de referencia de LEGO, por número de set. Es una
+        #    API de verdad, no bloquea servidores y el dato viene de la caja.
+        if numero and (marca or "").strip().upper() == "LEGO":
+            try:
+                r = gtin_de_brickset(numero)
+            except Exception:  # noqa: BLE001 - una fuente caída no frena al resto
+                r = {}
+            if r.get("gtin"):
+                return {"gtin": r["gtin"], "fuente": "Brickset", "bloqueado": False}
+
+        # 3) El catálogo de MercadoLibre: oficial y donde ya estamos autenticados.
         ficha = _ficha_catalogo(titulo, cli, set_declarado, marca)
         if ficha.get("gtin") and validar_gtin(ficha["gtin"]):
             return {"gtin": ficha["gtin"], "fuente": "catálogo de MercadoLibre",
                     "bloqueado": False}
-        # 3) Amazon y la web.
+
+        # 4) UPCitemdb: base genérica de códigos de barras, para cualquier rubro.
+        consulta = f"{marca} {_limpiar_para_buscar(titulo)}".strip()
+        try:
+            r = gtin_de_upcitemdb(consulta, parecido_a=titulo)
+        except Exception:  # noqa: BLE001
+            r = {}
+        if r.get("gtin"):
+            return {"gtin": r["gtin"], "fuente": "UPCitemdb", "bloqueado": False}
+
+        # 5) Amazon y la web. Va última porque bloquea a los servidores de la
+        #    nube: desde Render casi siempre falla, desde una PC hogareña no.
         if asin:
             try:
                 r = buscar_gtin(asin)
@@ -792,6 +817,62 @@ def registrar_catalogo(app: FastAPI, conn,
                 "encontrados": sum(1 for r in resultados if r["ok"]),
                 "total": len(resultados),
                 "pendientes": max(0, len(ids) - len(resultados))}
+
+    @app.post("/api/catalogo/codigos/cargar")
+    def cargar_codigos(body: dict):
+        """Carga códigos de barras a mano, en lote.
+
+        La salida garantizada cuando ninguna fuente automática lo tiene: se
+        pegan líneas `clave;código`, donde la clave es el ASIN o el número de
+        set. Para LEGO, Brickset deja exportar esa lista de una.
+        """
+        import re as _re
+        from gtin_lookup import validar_gtin
+
+        crudo = (body or {}).get("lineas", "")
+        lineas = crudo if isinstance(crudo, list) else str(crudo).splitlines()
+        productos = cat.todos()
+        aplicados, sin_producto, invalidos = [], [], []
+
+        for linea in lineas:
+            partes = [p.strip() for p in _re.split(r"[;,\t|]+|\s{2,}", linea.strip())
+                      if p.strip()]
+            if len(partes) < 2:
+                if linea.strip():
+                    invalidos.append(linea.strip()[:60])
+                continue
+            clave, codigo = partes[0], _re.sub(r"\D", "", partes[-1])
+            if not validar_gtin(codigo):
+                invalidos.append(f"{clave}: {partes[-1]} no es un código válido")
+                continue
+            destino = next(
+                (p for p in productos
+                 if p.asin.upper() == clave.upper()
+                 or (p.modelo_fabricante or "") == clave
+                 or numero_de_set(p.modelo or p.titulo_ml or "") == clave), None)
+            if not destino:
+                sin_producto.append(clave)
+                continue
+            attrs = dict(destino.ml_attributes or {})
+            attrs["GTIN"] = codigo
+            attrs.pop("EMPTY_GTIN_REASON", None)
+            cat.actualizar_publicacion(destino.id, ml_attributes=attrs)
+            aplicados.append({"id": destino.id, "clave": clave, "gtin": codigo,
+                              "nombre": destino.titulo_ml or destino.modelo})
+
+        return {"aplicados": aplicados, "sin_producto": sin_producto,
+                "invalidos": invalidos, "total": len(aplicados)}
+
+    @app.get("/api/codigos/fuentes")
+    def fuentes_de_codigos():
+        """Qué fuentes de código están disponibles ahora mismo."""
+        from fuentes_gtin import brickset_configurado
+        return {
+            "brickset": brickset_configurado(),
+            "mercadolibre": store.hay_sesion() and cred.configurado,
+            "upcitemdb": True,       # nivel de prueba, sin registro
+            "amazon": True,          # disponible, pero bloquea servidores
+        }
 
     @app.post("/api/catalogo/lote/publicar")
     def lote_publicar(body: dict):

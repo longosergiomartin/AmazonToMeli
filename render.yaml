@@ -22,3 +22,9 @@ services:
       # pierden la sesión de MercadoLibre y el catálogo en cada reinicio.
       - key: DATABASE_URL
         sync: false
+      # Brickset (brickset.com/api): la base de referencia de LEGO. Es la fuente
+      # más confiable del código de barras y, a diferencia de Amazon, no bloquea
+      # servidores. La API key es gratuita. Opcional: sin ella se usan las demás
+      # fuentes, pero para LEGO conviene tenerla.
+      - key: BRICKSET_API_KEY
+        sync: false

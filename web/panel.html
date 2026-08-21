@@ -220,6 +220,20 @@
     <span class="msg" id="lote-msg"></span>
   </div>
 
+  <details class="card" style="margin-top:14px">
+    <summary style="margin:0">Cargar códigos de barras a mano</summary>
+    <p class="hint" style="margin:10px 0">Cuando ninguna fuente automática tiene el
+      código. Pegá una línea por producto, con el <b>ASIN o el número de set</b>,
+      después el código:</p>
+    <textarea id="cod-lineas" rows="4"
+      placeholder="75339;5702017155326&#10;B0BBHHT8LY;673419281423"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
+      <button type="button" id="cod-cargar">Cargar códigos</button>
+      <span class="hint" id="cod-fuentes"></span>
+    </div>
+    <div class="msg" id="cod-msg"></div>
+  </details>
+
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
@@ -533,6 +547,31 @@
       api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
   };
 
+  // Carga manual de códigos: la salida garantizada cuando ninguna fuente los tiene.
+  $("cod-cargar").onclick=function(){
+    var v=($("cod-lineas").value||"").trim();
+    if(!v){ $("cod-msg").textContent="Pegá al menos una línea."; return; }
+    api("POST","/api/catalogo/codigos/cargar",{lineas:v}).then(function(d){
+      var m=d.total+" código(s) cargado(s).";
+      if(d.sin_producto.length) m+=" Sin producto en el catálogo: "+d.sin_producto.join(", ")+".";
+      if(d.invalidos.length) m+=" Inválidos: "+d.invalidos.join(" · ")+".";
+      $("cod-msg").textContent=m;
+      if(d.total) $("cod-lineas").value="";
+      cargar();
+    }).catch(err);
+  };
+
+  function cargarFuentes(){
+    api("GET","/api/codigos/fuentes").then(function(f){
+      var partes=[];
+      if(f.brickset) partes.push("Brickset ✓");
+      else partes.push("Brickset ✕ (configurá BRICKSET_API_KEY para LEGO)");
+      partes.push("MercadoLibre "+(f.mercadolibre?"✓":"✕"));
+      partes.push("UPCitemdb ✓");
+      $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
+    }).catch(function(){});
+  }
+
   // Vaciar todo para arrancar de cero: borra el catálogo y también la cola,
   // porque encolar descarta los ASIN que ya figuran ahí aunque estén procesados.
   $("vaciar").onclick=function(){
@@ -811,7 +850,7 @@
   });
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargar();
+  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes(); cargar();
 })();
 </script>
 </body>

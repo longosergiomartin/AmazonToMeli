@@ -294,10 +294,39 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `MELI_CLIENT_ID` = tu App ID.
    - `MELI_CLIENT_SECRET` = tu Secret Key.
    - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
+   - `BRICKSET_API_KEY` = tu clave de [brickset.com/api](https://brickset.com/api/)
+     (**opcional pero muy recomendada si vendés LEGO**, ver abajo).
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
    MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
+
+### El código de barras (GTIN) y por qué importa
+
+MercadoLibre exige el código de barras en varias categorías: sin él, la
+publicación se rechaza. La herramienta lo busca sola, probando de la fuente más
+confiable a la menos:
+
+| # | Fuente | Cómo funciona | ¿Sirve desde la nube? |
+|---|--------|---------------|------------------------|
+| 1 | Tu catálogo | Otro producto tuyo con el mismo ASIN ya lo tiene | Sí, instantáneo |
+| 2 | **Brickset** | API oficial de la base de LEGO, por número de set | **Sí** |
+| 3 | Catálogo de MercadoLibre | Su ficha del producto, por número o por nombre | **Sí** |
+| 4 | UPCitemdb | Base genérica de códigos, por nombre | Sí (límite diario) |
+| 5 | Amazon / buscador web | Lee la página del producto | **No**: bloquea servidores |
+
+La última fila es la clave: **Amazon rechaza las IP de datacenter**, así que
+desde Render esa fuente casi nunca responde. Por eso las de arriba son APIs
+de verdad, que no bloquean.
+
+**Brickset** (gratis, 2 minutos): registrate en
+[brickset.com/api](https://brickset.com/api/), pedí una API key y cargala como
+`BRICKSET_API_KEY`. Para LEGO es la fuente autoritativa: el dato sale de la caja
+real y se consulta por número de set, sin ambigüedad.
+
+Si aun así algún producto queda sin código, el panel tiene **"Cargar códigos de
+barras a mano"**: se pegan líneas `número de set;código` o `ASIN;código` y se
+aplican en lote.
 
 > Notas del plan gratis:
 > - El servicio **se duerme** tras un rato sin uso; la primera carga puede

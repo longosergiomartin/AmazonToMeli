@@ -1002,3 +1002,98 @@ def test_la_cascada_llega_a_la_busqueda_por_nombre(tmp_path, monkeypatch):
     assert any(q[1] for q in consultas) and any(q[2] for q in consultas)
     attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
     assert attrs["GTIN"] == "5702017425627"
+
+
+def test_brickset_gana_sobre_todo_lo_demas(tmp_path, monkeypatch):
+    """Para LEGO, Brickset es la fuente autoritativa: el dato sale de la caja.
+    Si responde, no hace falta consultar a nadie más."""
+    import fuentes_gtin
+    otras = []
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: otras.append("ml") or {}
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr(fuentes_gtin, "gtin_de_brickset",
+                        lambda *a, **k: {"gtin": "5702017155326",
+                                         "nombre": "Death Star", "fuente": "Brickset"})
+    monkeypatch.setattr(fuentes_gtin, "gtin_de_upcitemdb",
+                        lambda *a, **k: otras.append("upc") or {})
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda a: otras.append("amazon") or {"ok": False, "gtin": ""})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "bs.db")))
+    titulo = "LEGO Star Wars Death Star Diorama 75339"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
+                asin="B0BS000001").json()["id"]
+
+    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
+    assert d["resultados"][0]["fuente"] == "Brickset"
+    assert otras == []          # ninguna otra fuente se consultó
+    assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == "5702017155326"
+
+
+def test_upcitemdb_cubre_los_rubros_que_no_son_lego(tmp_path, monkeypatch):
+    """Brickset solo sirve para LEGO; para el resto está la base genérica."""
+    import fuentes_gtin
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: {}
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr(fuentes_gtin, "gtin_de_upcitemdb",
+                        lambda *a, **k: {"gtin": "3165140857710",
+                                         "nombre": "Bosch", "fuente": "UPCitemdb"})
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda a: {"ok": False, "gtin": "", "bloqueado": True})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "upc.db")))
+    titulo = "Bosch Professional GSB 13 RE Taladro percutor 600W"
+    pid = _alta(c, marca="Bosch", modelo=titulo, titulo_ml=titulo,
+                asin="B0UPC00001").json()["id"]
+
+    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
+    assert d["resultados"][0]["fuente"] == "UPCitemdb"
+    assert d["detenido"] is False       # no llegó a Amazon
+
+
+def test_cargar_codigos_a_mano_por_numero_de_set(tmp_path):
+    """La salida garantizada: pegar los códigos cuando ninguna fuente los tiene."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "man.db")))
+    titulo = "LEGO Star Wars Death Star Diorama 75339 Kit"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
+                asin="B0MAN00001").json()["id"]
+
+    d = c.post("/api/catalogo/codigos/cargar",
+               json={"lineas": "75339;5702017155326"}).json()
+    assert d["total"] == 1 and d["aplicados"][0]["id"] == pid
+    assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == "5702017155326"
+
+
+def test_cargar_codigos_a_mano_por_asin_y_varios_separadores(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "man2.db")))
+    a = _alta(c, asin="B0MAN00002", titulo_ml="Uno").json()["id"]
+    b = _alta(c, asin="B0MAN00003", titulo_ml="Dos").json()["id"]
+
+    d = c.post("/api/catalogo/codigos/cargar", json={
+        "lineas": "B0MAN00002;5702017155326\nB0MAN00003, 673419281423"}).json()
+    assert d["total"] == 2
+    for pid, gtin in ((a, "5702017155326"), (b, "673419281423")):
+        assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == gtin
+
+
+def test_cargar_codigos_a_mano_avisa_lo_que_no_pudo(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "man3.db")))
+    _alta(c, asin="B0MAN00004", titulo_ml="Existe")
+
+    d = c.post("/api/catalogo/codigos/cargar", json={
+        "lineas": ("B0MAN00004;1234567890123\n"      # código inválido
+                   "B0NOEXISTE;5702017155326\n"      # no está en el catálogo
+                   "una linea suelta")}).json()
+    assert d["total"] == 0
+    assert d["sin_producto"] == ["B0NOEXISTE"]
+    assert len(d["invalidos"]) == 2
+
+
+def test_fuentes_de_codigos_reporta_lo_disponible(client, monkeypatch):
+    monkeypatch.delenv("BRICKSET_API_KEY", raising=False)
+    f = client.get("/api/codigos/fuentes").json()
+    assert f["brickset"] is False and f["upcitemdb"] is True
+    monkeypatch.setenv("BRICKSET_API_KEY", "abc")
+    assert client.get("/api/codigos/fuentes").json()["brickset"] is True
