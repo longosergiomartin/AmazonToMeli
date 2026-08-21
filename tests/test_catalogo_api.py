@@ -834,3 +834,23 @@ def test_vaciar_incluyendo_publicados_borra_todo(tmp_path):
                json={"confirmar": True, "incluir_publicados": True}).json()
     assert r["conservados_publicados"] == 0
     assert c.get("/api/catalogo").json() == []
+
+
+def test_filtro_por_defecto_no_esta_atado_a_una_marca(client):
+    """La herramienta sirve para cualquier rubro: sin marca configurada entra
+    todo lo que no sea accesorio."""
+    f = client.get("/api/filtro").json()
+    assert f["marca"] == ""
+    assert f["descartar_accesorios"] is True
+
+
+def test_configurar_el_filtro_persiste(client):
+    r = client.patch("/api/filtro", json={"marca": "Bosch", "precio_min_usd": 50,
+                                          "descartar_accesorios": False})
+    assert r.json() == {"marca": "Bosch", "precio_min_usd": 50.0,
+                        "descartar_accesorios": False}
+    assert client.get("/api/filtro").json()["marca"] == "Bosch"
+
+
+def test_filtro_con_precio_invalido_da_400(client):
+    assert client.patch("/api/filtro", json={"precio_min_usd": "mucho"}).status_code == 400

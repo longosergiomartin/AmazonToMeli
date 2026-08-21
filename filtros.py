@@ -1,9 +1,16 @@
 """
-Filtro de productos: quedarse solo con sets LEGO de verdad.
+Filtro de productos: decide qué entra al catálogo.
 
 El botón "Encolar toda la página" captura TODO lo que hay en una búsqueda de
-Amazon: patrocinados, accesorios de terceros y productos que ni son LEGO. Este
-módulo decide qué entra al catálogo.
+Amazon: patrocinados, accesorios, merchandising y réplicas de terceros. Este
+módulo separa lo que vale la pena de lo que no.
+
+Es configurable, porque la herramienta sirve para cualquier rubro:
+
+  - `marca`: si se indica, solo entra esa marca. Vacío = cualquiera.
+  - `descartar_accesorios`: saca luces, vitrinas, fundas, llaveros, remeras y
+    demás merchandising, que rara vez conviene importar.
+  - `precio_min`: piso de precio, para no cargar chucherías.
 
 Se aplica en dos momentos:
   1. En el bookmarklet, sobre el título del resultado, para no gastar pedidos
@@ -11,11 +18,6 @@ Se aplica en dos momentos:
      escaso: si nos pasamos, Amazon nos limita).
   2. Acá, al procesar, con el título y la marca reales de la ficha. Esta es la
      decisión que vale.
-
-Qué se descarta:
-  - Lo que no es LEGO (otras marcas, "compatible con LEGO").
-  - Accesorios: luces, vitrinas, mesas, organizadores, soportes, fundas.
-  - Cosas muy baratas (llaveros, sobres de minifiguras) según un precio mínimo.
 """
 
 from __future__ import annotations
@@ -47,9 +49,10 @@ _ACCESORIOS = [
     "disfraz", "remera", "camiseta", "taza",
 ]
 
-# Marcas de terceros que suelen aparecer en búsquedas de LEGO.
-_OTRAS_MARCAS = ["all4jig", "briksmax", "lightailing", "kyglaring", "vonado",
-                 "mould king", "cada", "sembo", "panlos", "lepin", "wange"]
+# Marcas de réplicas y accesorios que se cuelan en las búsquedas de sets de
+# construcción. Solo se aplican cuando se filtra por la marca LEGO.
+_REPLICAS_LEGO = ["all4jig", "briksmax", "lightailing", "kyglaring", "vonado",
+                  "mould king", "cada", "sembo", "panlos", "lepin", "wange"]
 
 
 def _norm(texto: str) -> str:
@@ -58,52 +61,73 @@ def _norm(texto: str) -> str:
     return "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
 
 
-def es_set_lego(titulo: str, marca: str = "", precio_usd: Optional[float] = None,
-                precio_min: float = PRECIO_MIN_USD) -> tuple[bool, str]:
-    """¿Es un set LEGO que vale la pena cargar? Devuelve (sí/no, motivo)."""
+def acepta(titulo: str, marca_producto: str = "",
+           precio_usd: Optional[float] = None,
+           marca: str = "", descartar_accesorios: bool = True,
+           precio_min: float = PRECIO_MIN_USD) -> tuple[bool, str]:
+    """¿Este producto entra al catálogo? Devuelve (sí/no, motivo).
+
+    `marca` vacío significa cualquier marca: la herramienta no está atada a un
+    rubro. Con una marca cargada, además se descartan las réplicas conocidas.
+    """
     t = _norm(titulo)
-    m = _norm(marca)
+    m = _norm(marca_producto)
+    buscada = _norm(marca).strip()
 
     if not t and not m:
         return False, "sin título"
 
-    # 1) Marcas de terceros que se cuelan en las búsquedas de LEGO.
-    for otra in _OTRAS_MARCAS:
-        if otra in t or otra in m:
-            return False, f"marca de terceros ({otra})"
+    if buscada:
+        # Réplicas y "compatible con X": se venden en las búsquedas de la marca
+        # pero no son el producto.
+        if buscada == "lego":
+            for otra in _REPLICAS_LEGO:
+                if otra in t or otra in m:
+                    return False, f"marca de terceros ({otra})"
+        # Palabra completa, para no aceptar "legolas" por "lego".
+        patron = r"\b" + re.escape(buscada) + r"\b"
+        if not (buscada in m or re.search(patron, t)):
+            return False, f"no es {marca}"
 
-    # 2) Accesorios y merchandising.
-    for palabra in _ACCESORIOS:
-        if palabra in t:
-            return False, f"accesorio ({palabra})"
+    if descartar_accesorios:
+        for palabra in _ACCESORIOS:
+            if palabra in t:
+                return False, f"accesorio ({palabra})"
 
-    # 3) Tiene que ser LEGO: por marca, o "lego" como palabra en el título.
-    #    Se exige palabra completa para no aceptar "legolas" ni similares.
-    es_lego = "lego" in m or bool(re.search(r"\blego\b", t))
-    if not es_lego:
-        return False, "no es LEGO"
-
-    # 4) Precio mínimo: descarta llaveros, polybags y repuestos baratos.
     if precio_usd is not None and precio_min > 0 and precio_usd < precio_min:
         return False, f"precio bajo (USD {precio_usd:.0f} < {precio_min:.0f})"
 
-    return True, "set LEGO"
+    return True, "aceptado"
 
 
-def filtro_js() -> str:
+def es_set_lego(titulo: str, marca: str = "", precio_usd: Optional[float] = None,
+                precio_min: float = PRECIO_MIN_USD) -> tuple[bool, str]:
+    """Compatibilidad: el filtro de antes, clavado a LEGO."""
+    return acepta(titulo, marca, precio_usd, marca="LEGO",
+                  descartar_accesorios=True, precio_min=precio_min)
+
+
+def filtro_js(marca: str = "", descartar_accesorios: bool = True) -> str:
     """Las mismas reglas, en JavaScript, para el bookmarklet.
 
     Es una versión simplificada (en la página de resultados solo hay título):
-    la decisión definitiva la toma `es_set_lego` con los datos de la ficha.
+    la decisión definitiva la toma `acepta` con los datos de la ficha.
     """
-    accesorios = ",".join(f"'{p}'" for p in _ACCESORIOS)
-    marcas = ",".join(f"'{p}'" for p in _OTRAS_MARCAS)
+    accesorios = ",".join(f"'{p}'" for p in _ACCESORIOS) if descartar_accesorios else ""
+    buscada = _norm(marca).strip()
+    replicas = (",".join(f"'{p}'" for p in _REPLICAS_LEGO)
+                if buscada == "lego" else "")
+    # Sin marca configurada el bookmarklet no filtra por marca: la herramienta
+    # sirve para cualquier rubro.
+    prueba = (f"if(!(new RegExp('\\\\b{buscada}\\\\b')).test(t))return false;"
+              if buscada else "")
     return (
         "function(t){"
         "t=(t||'').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'');"
-        f"var A=[{accesorios}],M=[{marcas}];"
+        f"var A=[{accesorios}],M=[{replicas}];"
         "for(var i=0;i<M.length;i++){if(t.indexOf(M[i])>=0)return false;}"
         "for(var j=0;j<A.length;j++){if(t.indexOf(A[j])>=0)return false;}"
-        "return /\\blego\\b/.test(t);"
+        f"{prueba}"
+        "return true;"
         "}"
     )

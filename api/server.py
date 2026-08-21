@@ -197,9 +197,19 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         # del bookmarklet, así siempre apunta adonde corresponde.
         base = str(request.base_url).rstrip("/")
         bm = _BOOKMARKLET_TPL.replace("__BASE__", base).replace('"', "&quot;")
+        # El filtro del bookmarklet sale de la configuración guardada: sin
+        # marca configurada no descarta nada por marca, así sirve para cualquier
+        # rubro y no solo para sets de construcción.
         from filtros import filtro_js
+        from catalogo import Catalogo
+        try:
+            f = Catalogo(almacen.conn).filtro
+        except Exception:  # noqa: BLE001 - base dormida: se usa el filtro abierto
+            f = {"marca": "", "descartar_accesorios": True}
+        js = filtro_js(marca=f["marca"],
+                       descartar_accesorios=f["descartar_accesorios"])
         bm_lote = (_BOOKMARKLET_LOTE.replace("__BASE__", base)
-                   .replace("__FILTRO__", filtro_js()).replace('"', "&quot;"))
+                   .replace("__FILTRO__", js).replace('"', "&quot;"))
         return _PAGINA_INICIO.format(n=n, bm=bm, bm_lote=bm_lote)
 
     @app.get("/capture", response_class=HTMLResponse)

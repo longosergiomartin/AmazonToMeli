@@ -190,6 +190,20 @@ def registrar_catalogo(app: FastAPI, conn,
         cat.recalcular_todos()  # los márgenes cambian con las alícuotas
         return fiscal()
 
+    # ---- qué productos entran al catálogo ---------------------------------
+
+    @app.get("/api/filtro")
+    def filtro():
+        return cat.filtro
+
+    @app.patch("/api/filtro")
+    def filtro_set(body: dict):
+        try:
+            cat.filtro = body or {}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return cat.filtro
+
     # ---- dólar con el que se valúa la compra en Amazon --------------------
 
     @app.get("/api/almacenamiento")
@@ -521,34 +535,43 @@ def registrar_catalogo(app: FastAPI, conn,
         return _cache_attrs[categoria]
 
     def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
-                        set_declarado: str = "") -> dict:
+                        set_declarado: str = "", marca: str = "") -> dict:
         """Producto del catálogo de MercadoLibre que corresponde a este título.
 
-        Se busca por el número de set del fabricante, que es inequívoco. Ojo con
-        el título: hay que pasarle el completo de Amazon, porque el de ML está
-        recortado a 60 caracteres y ahí el número suele quedar cortado
+        Se busca por el número de modelo del fabricante, que es inequívoco. Se
+        prueban los dos que tenemos —el del título y el que declara Amazon en la
+        ficha— porque ninguno es confiable solo: el título a veces no lo trae, y
+        Amazon a veces declara un código interno (6530082 en vez del set 10302).
+
+        Ojo con el título: hay que pasarle el completo de Amazon, porque el de
+        ML está recortado a 60 caracteres y ahí el número queda cortado
         ("...Kylo Ren 752" por 75256).
         """
         if cli is None:
             return {}
-        # El número que declara el fabricante en la ficha de Amazon es más
-        # confiable que el que se pesca del título, que a veces no lo trae.
-        set_id = (set_declarado or "").strip() or numero_de_set(titulo_completo)
-        if not set_id:
-            return {}
-        try:
-            return cli.ficha_de_catalogo(f"LEGO {set_id}", debe_contener=set_id)
-        except MeliAPIError:
-            return {}
+        candidatos = []
+        for n in (numero_de_set(titulo_completo), (set_declarado or "").strip()):
+            if n and n not in candidatos:
+                candidatos.append(n)
+        prefijo = (marca or "").strip()
+        for numero in candidatos:
+            consulta = f"{prefijo} {numero}".strip()
+            try:
+                ficha = cli.ficha_de_catalogo(consulta, debe_contener=numero)
+            except MeliAPIError:
+                continue
+            if ficha.get("product_id"):
+                return ficha
+        return {}
 
     def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient],
-                     set_declarado: str = "") -> str:
+                     set_declarado: str = "", marca: str = "") -> str:
         """Código de barras del producto, probando de la fuente más confiable a
         la menos: el catálogo de MercadoLibre (que ya tiene los sets cargados
         con su GTIN) y después la búsqueda web por ASIN."""
         from gtin_lookup import buscar_gtin, validar_gtin
 
-        ficha = _ficha_catalogo(titulo, cli, set_declarado)
+        ficha = _ficha_catalogo(titulo, cli, set_declarado, marca)
         if ficha.get("gtin") and validar_gtin(ficha["gtin"]):
             return ficha["gtin"]
         if asin:
@@ -589,7 +612,7 @@ def registrar_catalogo(app: FastAPI, conn,
         attrs = dict(p.ml_attributes or {})
         if not (attrs.get("GTIN") or "").strip():
             gtin = _buscar_gtin(titulo_completo, p.asin, cli,
-                                p.modelo_fabricante)
+                                p.modelo_fabricante, marca or p.marca)
             if gtin:
                 attrs["GTIN"] = gtin
         defs = _defs_categoria(cli, categoria)
@@ -774,7 +797,7 @@ def registrar_catalogo(app: FastAPI, conn,
         #    la única forma de publicar los sets cuyo código de barras no se
         #    consigue, y además deja la publicación bien matcheada.
         ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli,
-                                p.modelo_fabricante)
+                                p.modelo_fabricante, p.marca)
         creado = None
         if ficha.get("product_id"):
             try:

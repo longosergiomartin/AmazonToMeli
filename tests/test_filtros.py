@@ -85,7 +85,21 @@ def test_sin_titulo_ni_marca():
 # ---- el filtro que va al bookmarklet -------------------------------------
 
 def test_filtro_js_es_javascript_valido():
-    js = filtro_js()
+    js = filtro_js(marca="LEGO")
     assert js.startswith("function(t)") and js.rstrip().endswith("}")
     # Tiene que traer las listas de palabras.
     assert "compatible" in js and "lightailing" in js
+
+
+def test_filtro_js_sin_marca_no_filtra_por_marca():
+    """La herramienta sirve para cualquier rubro: sin marca configurada, el
+    bookmarklet no descarta nada por no ser de una marca puntual."""
+    js = filtro_js(marca="")
+    # Sin marca no se genera la prueba de marca (la lista de accesorios sí
+    # menciona "no lego", que es otra cosa: descarta los "compatible con").
+    assert "RegExp" not in js
+    assert "RegExp" in filtro_js(marca="LEGO")
+
+
+def test_filtro_js_sin_accesorios_no_trae_la_lista():
+    assert "vitrina" not in filtro_js(marca="", descartar_accesorios=False)

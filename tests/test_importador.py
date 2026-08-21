@@ -127,7 +127,8 @@ def test_acepta_set_lego_de_verdad(cola):
 
 
 def test_filtro_se_puede_desactivar(cola):
-    cola.solo_lego = False
+    cola.cat.filtro = {"marca": "", "descartar_accesorios": False,
+                       "precio_min_usd": 0}
     cola.encolar(["B0000000A1"])
     accesorio = {**_ficha("B0000000A1", 25.99),
                  "modelo": "Luces LED compatibles con Lego"}
@@ -225,3 +226,32 @@ def test_si_la_ficha_no_declara_el_set_se_usa_el_del_titulo(tmp_path, monkeypatc
     cola.procesar_uno()
 
     assert cat.todos()[0].modelo_fabricante == "75339"
+
+
+def test_sin_marca_configurada_entra_cualquier_rubro(cola):
+    """El pedido explícito: la herramienta tiene que servir para más que LEGO."""
+    cola.cat.filtro = {"marca": "", "descartar_accesorios": True, "precio_min_usd": 25}
+    cola.encolar(["B0BOSCH001"])
+    ficha = {**_ficha("B0BOSCH001", 129.0),
+             "modelo": "Bosch Professional GSB 13 RE Taladro percutor 600W",
+             "marca": "Bosch"}
+    assert cola.procesar_uno(importador=lambda url: ficha)["hecho"] is True
+    assert cola.cat.todos()[0].marca == "Bosch"
+
+
+def test_con_marca_configurada_se_descarta_el_resto(cola):
+    cola.cat.filtro = {"marca": "LEGO", "descartar_accesorios": True,
+                       "precio_min_usd": 25}
+    cola.encolar(["B0BOSCH002"])
+    ficha = {**_ficha("B0BOSCH002", 129.0),
+             "modelo": "Bosch Taladro percutor", "marca": "Bosch"}
+    r = cola.procesar_uno(importador=lambda url: ficha)
+    assert r["hecho"] is False and "no es LEGO" in r["mensaje"]
+
+
+def test_los_accesorios_se_descartan_aunque_no_haya_marca(cola):
+    cola.cat.filtro = {"marca": "", "descartar_accesorios": True, "precio_min_usd": 0}
+    cola.encolar(["B0ACCES001"])
+    ficha = {**_ficha("B0ACCES001", 40.0),
+             "modelo": "Vitrina acrílica para exhibir tu colección", "marca": "Genérica"}
+    assert cola.procesar_uno(importador=lambda url: ficha)["hecho"] is False
