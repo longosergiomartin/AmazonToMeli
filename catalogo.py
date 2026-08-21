@@ -214,7 +214,12 @@ class Catalogo:
         from titulos import titulo_para_ml
         arreglados = 0
         for p in self.todos():
-            if not re.search(r"\b\d{7,}\b", p.titulo_ml or ""):
+            # Restos de versiones anteriores: códigos internos de 7+ dígitos, y
+            # títulos que quedaron con basura de puntuación ("Set # – 1 103").
+            sucio = (re.search(r"\b\d{7,}\b", p.titulo_ml or "")
+                     or "#" in (p.titulo_ml or "")
+                     or re.search(r"\d\s+\d{3}\s", p.titulo_ml or ""))
+            if not sucio:
                 continue
             set_id = p.modelo_fabricante if re.fullmatch(
                 r"\d{4,6}", p.modelo_fabricante or "") else ""

@@ -1321,3 +1321,49 @@ def test_verificar_guarda_el_link_de_la_publicacion(tmp_path, monkeypatch):
     assert d["corregidos"] == 0
     assert d["revisados"][0]["permalink"].endswith("MLA-VIVO")
     assert c.get(f"/api/catalogo/{pid}").json()["ml_permalink"].endswith("MLA-VIVO")
+
+
+def test_publicar_que_queda_pausado_se_activa_solo(tmp_path, monkeypatch):
+    """MercadoLibre crea algunas publicaciones de catálogo en `paused`. El ítem
+    existe: hay que activarlo, no darlo por fallado."""
+    import api.catalogo_routes as rutas
+
+    activados = []
+
+    class _CliFalso:
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
+        def atributos_obligatorios(self, cat_id):
+            return []
+
+        def valores_permitidos(self, cat_id):
+            return {}
+
+        def publicar(self, item):
+            return {"id": "MLA777", "permalink": "http://ml/p", "status": "paused"}
+
+        def reactivar(self, item_id):
+            activados.append(item_id)
+            return {}
+
+        def obtener(self, item_id):
+            return {"status": "active", "permalink": "http://ml/p"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _CliFalso())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "pausado.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO Ninjago Máscara de Lobo 71721",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://img/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    assert activados == ["MLA777"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
