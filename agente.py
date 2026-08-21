@@ -144,8 +144,10 @@ class Agente:
                     return {"accion": CODIGO, "id": p.id, "nombre": nombre,
                             "detalle": f"código {r['gtin']} ({r.get('fuente','')})",
                             **self.estado()}
-                motivo = ("Amazon nos limitó" if r.get("bloqueado")
-                          else "no se encontró el código de barras")
+                motivo = ("sin código en ninguna fuente (Amazon además nos "
+                          "limitó: probá el botón que lee desde tu navegador)"
+                          if r.get("bloqueado")
+                          else "sin código en ninguna fuente: cargalo a mano")
                 self.trabados[p.id] = motivo
                 return {"accion": "trabado", "id": p.id, "nombre": nombre,
                         "detalle": motivo, "bloqueado": bool(r.get("bloqueado")),

@@ -347,6 +347,7 @@ def registrar_catalogo(app: FastAPI, conn,
         if not reparado["marcas"]:
             reparado["marcas"] = True
             cat.limpiar_marcas()
+            cat.limpiar_titulos()
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -555,15 +556,23 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
-    def _limpiar_para_buscar(titulo: str) -> str:
-        """Título reducido a lo que sirve para buscar: sin marketing, sin
-        cantidades de piezas ni edades, que solo ensucian la consulta."""
+    def _limpiar_para_buscar(titulo: str, palabras: int = 6) -> str:
+        """Consulta corta para buscar el producto en el catálogo de ML.
+
+        Los títulos de Amazon tienen 100+ caracteres de marketing ("Kit de
+        diorama para fanáticos, regalo coleccionable para adultos..."). Mandados
+        enteros, la búsqueda no devuelve nada: hay que quedarse con las primeras
+        palabras, que son las que identifican el producto.
+        """
         import re
+        from titulos import _VACIAS, normalizar
         t = re.sub(r"\(?\s*[\d.,]+\s*(piezas|pzas|pcs|pieces|bloques)\b\)?", " ",
                    titulo or "", flags=re.I)
         t = re.sub(r"\b\d+\s*\+\s*", " ", t)              # "18+"
+        t = re.sub(r"\b\d{7,}\b", " ", t)                 # códigos internos
         t = re.sub(r"[^0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ ]+", " ", t)
-        return re.sub(r"\s+", " ", t).strip()
+        utiles = [w for w in t.split() if normalizar(w) not in _VACIAS]
+        return " ".join(utiles[:palabras])
 
     def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
                         set_declarado: str = "", marca: str = "") -> dict:
@@ -863,6 +872,50 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"aplicados": aplicados, "sin_producto": sin_producto,
                 "invalidos": invalidos, "total": len(aplicados)}
 
+    @app.post("/api/catalogo/verificar")
+    def verificar():
+        """Contrasta lo que la herramienta cree con lo que hay en MercadoLibre.
+
+        Existe porque el estado local puede mentir: MercadoLibre responde 200 al
+        crear un ítem que después queda en revisión, o el ítem se cierra del lado
+        de ellos. Acá se pregunta por cada uno y **se corrige el estado local**:
+        lo que no está a la venta deja de figurar como publicado.
+        """
+        cli = _client()
+        try:
+            en_la_cuenta = set(cli.mis_items())
+        except MeliAPIError:
+            en_la_cuenta = set()
+
+        revisados, corregidos = [], 0
+        for p in cat.todos():
+            if p.estado != "publicado" and not p.ml_item_id:
+                continue
+            fila = {"id": p.id, "nombre": p.titulo_ml or p.modelo,
+                    "ml_item_id": p.ml_item_id, "estado_local": p.estado}
+            if not p.ml_item_id:
+                fila["estado_ml"] = "sin id"
+            else:
+                try:
+                    item = cli.obtener(p.ml_item_id)
+                    fila["estado_ml"] = item.get("status", "?")
+                    fila["permalink"] = item.get("permalink", "")
+                except MeliAPIError as e:
+                    fila["estado_ml"] = "no existe" if "404" in str(e) else f"error: {e}"
+            fila["en_mis_publicaciones"] = p.ml_item_id in en_la_cuenta
+            # Solo `active` es una publicación a la venta.
+            if p.estado == "publicado" and fila["estado_ml"] != "active":
+                cat.cambiar_estado(p.id, "borrador",
+                                   f"No está publicado en MercadoLibre "
+                                   f"({fila['estado_ml']})")
+                corregidos += 1
+                fila["corregido"] = True
+            revisados.append(fila)
+
+        return {"revisados": revisados, "corregidos": corregidos,
+                "publicaciones_en_la_cuenta": len(en_la_cuenta),
+                "total": len(revisados)}
+
     @app.get("/api/codigos/pendientes")
     def codigos_pendientes(limite: int = 40):
         """Productos del catálogo que todavía no tienen código de barras."""
@@ -1005,8 +1058,23 @@ def registrar_catalogo(app: FastAPI, conn,
         return _dict(cat.cambiar_estado(pid, "aprobado", "Aprobado para publicar"))
 
     def _publicado(pid: int, p: ProductoCatalogo, creado: dict, cli) -> dict:
-        """Cierre común de las dos vías de publicación."""
+        """Cierre común de las dos vías de publicación.
+
+        MercadoLibre responde 200 aunque el ítem quede sin publicar —en revisión
+        o esperando pago del tipo de publicación—, así que hay que mirar el
+        `status` que devuelve y no dar por publicado lo que no lo está.
+        """
         item_id = creado.get("id", "")
+        estado_ml = (creado.get("status") or "").strip()
+        if not item_id:
+            raise HTTPException(502, "MercadoLibre respondió sin id de "
+                                f"publicación: {str(creado)[:200]}")
+        try:
+            return _registrar(pid, p, creado, cli, item_id, estado_ml)
+        except ValueError as e:
+            raise HTTPException(502, str(e))
+
+    def _registrar(pid, p, creado, cli, item_id, estado_ml) -> dict:
         # La descripción va en un endpoint aparte, después de crear el ítem.
         if item_id and (p.descripcion or "").strip():
             try:
@@ -1014,7 +1082,8 @@ def registrar_catalogo(app: FastAPI, conn,
             except MeliAPIError:
                 pass  # el ítem ya se publicó; la descripción se puede reintentar
         return _dict(cat.registrar_publicacion(pid, item_id,
-                                               creado.get("permalink", "")))
+                                               creado.get("permalink", ""),
+                                               estado_ml))
 
     @app.post("/api/catalogo/{pid}/publicar")
     def publicar(pid: int, body: Borrador):

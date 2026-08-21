@@ -107,3 +107,18 @@ def test_parecido_sin_numeros_compara_solo_palabras():
     assert parecido("Bosch Taladro percutor profesional",
                     "Bosch Taladro Percutor Profesional 600W") >= 0.9
     assert parecido("Bosch Taladro percutor", "Cafetera Oster") == 0.0
+
+
+@pytest.mark.parametrize("numero, va", [
+    ("21372", True),      # set de LEGO
+    ("10295", True),      # set de LEGO
+    ("123456", True),     # modelo de 6 dígitos, plausible
+    ("6474652", False),   # código interno de Amazon: no identifica nada
+    ("65899889", False),
+])
+def test_titulo_no_agrega_codigos_internos_de_amazon(numero, va):
+    """Amazon declara a veces un código propio de 7 dígitos. Pegado al título
+    solo ensucia: no le dice nada al comprador ni sirve para buscar."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO", "LEGO Ideas La Catrina set de construcción", numero)
+    assert t.endswith(numero) is va

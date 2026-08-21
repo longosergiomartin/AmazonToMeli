@@ -295,5 +295,19 @@ class MeliClient:
         return self._req("POST", f"/items/{item_id}/description",
                          json={"plain_text": texto})
 
+    def mis_items(self, limit: int = 200) -> list[str]:
+        """IDs de las publicaciones que existen de verdad en la cuenta.
+
+        Es la fuente de verdad: lo que no está acá, no está publicado, por más
+        que la creación haya respondido 200.
+        """
+        yo = self._req("GET", "/users/me")
+        uid = yo.get("id")
+        if not uid:
+            return []
+        data = self._req("GET", f"/users/{uid}/items/search",
+                         params={"limit": min(limit, 200)})
+        return list(data.get("results") or [])
+
     def obtener(self, item_id: str) -> dict:
         return self._req("GET", f"/items/{item_id}")

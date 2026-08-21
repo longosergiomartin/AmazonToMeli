@@ -202,6 +202,30 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
+    def limpiar_titulos(self) -> int:
+        """Saca de los títulos el código interno de Amazon que se coló al final.
+
+        Los productos cargados antes del arreglo quedaron con un número de 7
+        dígitos pegado ("...La Catrina 21372 6589589"): Amazon lo declara como
+        número de modelo, pero no identifica nada y ensucia tanto el título como
+        la búsqueda en el catálogo de MercadoLibre.
+        """
+        import re
+        from titulos import titulo_para_ml
+        arreglados = 0
+        for p in self.todos():
+            if not re.search(r"\b\d{7,}\b", p.titulo_ml or ""):
+                continue
+            set_id = p.modelo_fabricante if re.fullmatch(
+                r"\d{4,6}", p.modelo_fabricante or "") else ""
+            nuevo = titulo_para_ml(p.marca, p.modelo or p.titulo_ml, set_id)
+            if nuevo and nuevo != p.titulo_ml:
+                anterior, p.titulo_ml = p.titulo_ml, nuevo
+                self._guardar(p)
+                self._log(p.id, "titulo", "titulo_ml", anterior, nuevo)
+                arreglados += 1
+        return arreglados
+
     def vaciar(self, incluir_publicados: bool = False) -> dict:
         """Borra el catálogo para empezar de cero.
 
@@ -489,11 +513,32 @@ class Catalogo:
         return p
 
     def registrar_publicacion(self, pid: int, ml_item_id: str,
-                              permalink: str = "") -> ProductoCatalogo:
-        """Marca el producto como publicado con el id de MercadoLibre."""
+                              permalink: str = "", estado_ml: str = "") -> ProductoCatalogo:
+        """Marca el producto como publicado con el id de MercadoLibre.
+
+        Exige el id: sin él no hay publicación que valga: marcarlo igual es
+        decirle al usuario que vendió algo que no existe.
+
+        `estado_ml` es el estado que devolvió MercadoLibre. Solo `active`
+        significa que la publicación está a la venta; los demás (`under_review`,
+        `payment_required`, `inactive`) crean el ítem pero **no lo muestran**,
+        así que el producto no se da por publicado.
+        """
         p = self.obtener(pid)
         if not p:
             raise KeyError(pid)
+        if not (ml_item_id or "").strip():
+            raise ValueError("MercadoLibre no devolvió el id de la publicación: "
+                             "no se puede dar por publicada.")
+        if estado_ml and estado_ml != "active":
+            p.ml_item_id = ml_item_id
+            p.ml_permalink = permalink
+            self._guardar(p)
+            self._log(pid, "publicado", "ml_item_id", None, ml_item_id,
+                      f"MercadoLibre creó el ítem pero quedó en «{estado_ml}», "
+                      "no a la venta")
+            raise ValueError(f"MercadoLibre creó el ítem {ml_item_id} pero quedó "
+                             f"en estado «{estado_ml}», no publicado.")
         p.ml_item_id = ml_item_id
         p.ml_permalink = permalink
         p.estado = "publicado"

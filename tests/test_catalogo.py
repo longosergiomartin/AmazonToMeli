@@ -321,3 +321,48 @@ def test_con_gtin_no_hace_falta_el_motivo(cat):
     p = cat.agregar(_prod(titulo_ml="LEGO", ml_category_id="MLA1157",
                           ml_attributes={"GTIN": "5702016914498"}))
     assert faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"]) == []
+
+
+def test_limpiar_titulos_saca_el_codigo_interno(cat):
+    """Los productos cargados antes del arreglo quedaron con el código de 7
+    dígitos pegado al final del título."""
+    p = cat.agregar(_prod(marca="LEGO",
+                          modelo="LEGO Ideas La Catrina 21372 set de construcción",
+                          modelo_fabricante="6589589",
+                          titulo_ml="LEGO Ideas La Catrina 21372 6589589"))
+    assert cat.limpiar_titulos() == 1
+    nuevo = cat.obtener(p.id).titulo_ml
+    assert "6589589" not in nuevo and "21372" in nuevo
+    assert cat.limpiar_titulos() == 0            # idempotente
+
+
+def test_limpiar_titulos_no_toca_los_que_estan_bien(cat):
+    cat.agregar(_prod(marca="LEGO", modelo="LEGO Star Wars 75339",
+                      titulo_ml="LEGO Star Wars 75339"))
+    assert cat.limpiar_titulos() == 0
+
+
+def test_no_se_da_por_publicado_sin_id_de_mercadolibre(cat):
+    """Marcarlo igual sería decirle al usuario que publicó algo que no existe."""
+    p = cat.agregar(_prod())
+    with pytest.raises(ValueError, match="no devolvió el id"):
+        cat.registrar_publicacion(p.id, "")
+    assert cat.obtener(p.id).estado == "borrador"
+
+
+def test_no_se_da_por_publicado_si_ml_lo_dejo_en_revision(cat):
+    """MercadoLibre responde 200 creando el ítem, pero si queda en revisión o
+    esperando pago, la publicación no está a la venta."""
+    p = cat.agregar(_prod())
+    with pytest.raises(ValueError, match="under_review"):
+        cat.registrar_publicacion(p.id, "MLA123", "http://ml/x", "under_review")
+    guardado = cat.obtener(p.id)
+    assert guardado.estado == "borrador"       # no se da por publicado
+    assert guardado.ml_item_id == "MLA123"     # pero el id no se pierde
+    assert any("under_review" in (h["nota"] or "") for h in cat.historial(p.id))
+
+
+def test_activo_si_se_publica(cat):
+    p = cat.agregar(_prod())
+    p2 = cat.registrar_publicacion(p.id, "MLA123", "http://ml/x", "active")
+    assert p2.estado == "publicado"
