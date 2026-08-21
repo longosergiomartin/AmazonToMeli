@@ -900,6 +900,12 @@ def registrar_catalogo(app: FastAPI, conn,
                     item = cli.obtener(p.ml_item_id)
                     fila["estado_ml"] = item.get("status", "?")
                     fila["permalink"] = item.get("permalink", "")
+                    # Si el permalink no se había guardado al publicar, se
+                    # guarda ahora: es el link para abrir la publicación.
+                    if fila["permalink"] and fila["permalink"] != p.ml_permalink:
+                        cat.actualizar_publicacion(p.id)
+                        p.ml_permalink = fila["permalink"]
+                        cat._guardar(p)
                 except MeliAPIError as e:
                     fila["estado_ml"] = "no existe" if "404" in str(e) else f"error: {e}"
             fila["en_mis_publicaciones"] = p.ml_item_id in en_la_cuenta
