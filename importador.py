@@ -25,7 +25,7 @@ from typing import Callable, Optional
 from amazon_import import extraer_asin, importar_desde_url
 from titulos import numero_de_set, titulo_para_ml
 from catalogo import Catalogo, ProductoCatalogo
-from filtros import PRECIO_MIN_USD, es_set_lego
+from filtros import PRECIO_MIN_USD, acepta
 
 # Estados de cada ítem de la cola.
 PENDIENTE = "pendiente"
@@ -40,12 +40,9 @@ def _ahora() -> str:
 
 
 class ColaImportacion:
-    def __init__(self, conn, cat: Catalogo, solo_lego: bool = True,
-                 precio_min_usd: float = PRECIO_MIN_USD):
+    def __init__(self, conn, cat: Catalogo, precio_min_usd: float = PRECIO_MIN_USD):
         self.conn = conn
         self.cat = cat
-        # Filtro: quedarse solo con sets LEGO (no accesorios ni otras marcas).
-        self.solo_lego = solo_lego
         self.precio_min_usd = precio_min_usd
         self.conn.preparar("""
             CREATE TABLE IF NOT EXISTS cola_importacion (
@@ -110,9 +107,11 @@ class ColaImportacion:
         """Arma el borrador con todo lo que se pudo leer de la ficha."""
         titulo = datos.get("modelo", "") or datos.get("asin", "")
         marca = datos.get("marca", "")
-        # El número de set: primero el que declara el fabricante en la ficha de
-        # Amazon, y si no está, el que aparezca en el título.
-        set_id = datos.get("modelo_fabricante", "") or numero_de_set(titulo)
+        # El número de modelo: el del título gana cuando existe, porque el que
+        # declara Amazon a veces es un código interno del fabricante (LEGO pone
+        # 6530082 en vez del set 10302) y con eso no se encuentra nada en el
+        # catálogo de MercadoLibre.
+        set_id = numero_de_set(titulo) or datos.get("modelo_fabricante", "")
         p = ProductoCatalogo(
             amazon_link=datos.get("amazon_link", ""),
             asin=datos.get("asin", ""),
@@ -156,14 +155,17 @@ class ColaImportacion:
                     "asin": asin, "mensaje": datos.get("mensaje", ""), **self.estado()}
 
         # Filtro con los datos reales de la ficha: acá se decide de verdad.
-        if self.solo_lego:
-            ok, motivo = es_set_lego(datos.get("modelo", ""), datos.get("marca", ""),
-                                     datos.get("precio_usd"), self.precio_min_usd)
-            if not ok:
-                self._marcar(item_id, DESCARTADO, motivo)
-                return {"hecho": False, "detener": False, "motivo": "descartado",
-                        "asin": asin, "titulo": datos.get("modelo", "")[:60],
-                        "mensaje": motivo, **self.estado()}
+        f = self.cat.filtro
+        ok, motivo = acepta(datos.get("modelo", ""), datos.get("marca", ""),
+                            datos.get("precio_usd"),
+                            marca=f["marca"],
+                            descartar_accesorios=f["descartar_accesorios"],
+                            precio_min=f["precio_min_usd"])
+        if not ok:
+            self._marcar(item_id, DESCARTADO, motivo)
+            return {"hecho": False, "detener": False, "motivo": "descartado",
+                    "asin": asin, "titulo": datos.get("modelo", "")[:60],
+                    "mensaje": motivo, **self.estado()}
 
         p = self._crear_producto(datos)
         self._marcar(item_id, LISTO, f"Cargado como borrador #{p.id}")

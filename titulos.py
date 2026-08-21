@@ -64,9 +64,14 @@ def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
     # deja donde estaba, el recorte a 60 caracteres se lo come justo a él, que
     # es el dato con el que después se busca el producto en el catálogo.
     if numero_set:
-        base = re.sub(r"\b" + re.escape(numero_set) + r"\b", "", base)
+        base = re.sub(r"[#nN]?[°º]?\s*" + re.escape(numero_set) + r"\b", "", base)
+    # La cantidad de piezas va como atributo aparte; en el título solo gasta
+    # caracteres y, al quitar el número de set, deja restos ("Set # – 1 103").
+    base = re.sub(r"\(?\s*[\d.,]+\s*(piezas|pzas|pcs|pieces|bloques)\b\)?",
+                  "", base, flags=re.I)
     base = re.sub(r"\s*[,;·|]\s*", " ", base)
-    base = re.sub(r"\s+", " ", base).strip(" ,-–—")
+    base = re.sub(r"[#]+", " ", base)
+    base = re.sub(r"\s+", " ", base).strip(" ,-–—:")
 
     sufijo = f" {numero_set}" if numero_set else ""
     prefijo = f"{marca} " if marca else ""

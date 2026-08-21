@@ -834,3 +834,48 @@ def test_vaciar_incluyendo_publicados_borra_todo(tmp_path):
                json={"confirmar": True, "incluir_publicados": True}).json()
     assert r["conservados_publicados"] == 0
     assert c.get("/api/catalogo").json() == []
+
+
+def test_filtro_por_defecto_no_esta_atado_a_una_marca(client):
+    """La herramienta sirve para cualquier rubro: sin marca configurada entra
+    todo lo que no sea accesorio."""
+    f = client.get("/api/filtro").json()
+    assert f["marca"] == ""
+    assert f["descartar_accesorios"] is True
+
+
+def test_configurar_el_filtro_persiste(client):
+    r = client.patch("/api/filtro", json={"marca": "Bosch", "precio_min_usd": 50,
+                                          "descartar_accesorios": False})
+    assert r.json() == {"marca": "Bosch", "precio_min_usd": 50.0,
+                        "descartar_accesorios": False}
+    assert client.get("/api/filtro").json()["marca"] == "Bosch"
+
+
+def test_filtro_con_precio_invalido_da_400(client):
+    assert client.patch("/api/filtro", json={"precio_min_usd": "mucho"}).status_code == 400
+
+
+def test_pagina_del_conversor_se_sirve(client):
+    r = client.get("/codigos")
+    assert r.status_code == 200 and "Conversor ASIN" in r.text
+
+
+def test_endpoint_de_codigos_convierte_desde_el_catalogo(client):
+    """Lo que ya está cargado se resuelve sin salir a la red."""
+    pid = _alta(client, asin="B0CONV0001", titulo_ml="LEGO X-Wing").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/publicacion",
+                 json={"ml_attributes": {"GTIN": "5702016914498"}})
+
+    r = client.post("/api/codigos", json={"entradas": "B0CONV0001"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["convertidos"] == 1
+    res = d["resultados"][0]
+    assert res["gtin"] == "5702016914498" and res["fuente"] == "tu catálogo"
+
+
+def test_endpoint_de_codigos_avisa_lo_que_no_reconoce(client):
+    d = client.post("/api/codigos", json={"entradas": "esto no es un codigo"}).json()
+    assert d["convertidos"] == 0
+    assert "no parece" in d["resultados"][0]["mensaje"].lower()

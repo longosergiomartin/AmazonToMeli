@@ -153,14 +153,14 @@ def _de_detalles(detalles: dict, etiquetas) -> str:
 def _numero_de_modelo(valor: str) -> str:
     """Limpia el número de modelo que declara el fabricante.
 
-    Viene con ruido según el vendedor: "75304", "LEGO 75304", "75304-1",
-    "6379837". Nos quedamos con el bloque de dígitos, que es lo que después se
-    busca en el catálogo de MercadoLibre.
+    Viene con ruido según el vendedor: "75304", "LEGO 75304", "75304-1".
+    Nos quedamos con el bloque de dígitos, que es lo que después se busca en el
+    catálogo de MercadoLibre.
     """
     valor = (valor or "").strip()
     if not valor:
         return ""
-    m = re.search(r"\b(\d{4,7})\b", valor)
+    m = re.search(r"\b(\d{4,10})\b", valor)
     return m.group(1) if m else valor[:30]
 
 

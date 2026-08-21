@@ -153,6 +153,30 @@ class Catalogo:
             raise ValueError(f"Dólar inválido: {valor!r} (usá tarjeta u oficial)")
         self._set_pref("dolar_costo", valor)
 
+    @property
+    def filtro(self) -> dict:
+        """Qué productos entran al catálogo. Configurable porque la herramienta
+        sirve para cualquier rubro, no solo para sets de construcción."""
+        return {
+            "marca": self._pref("filtro_marca", ""),
+            "descartar_accesorios": self._pref("filtro_accesorios", "1") == "1",
+            "precio_min_usd": float(self._pref("filtro_precio_min", "25") or 0),
+        }
+
+    @filtro.setter
+    def filtro(self, valores: dict) -> None:
+        if "marca" in valores:
+            self._set_pref("filtro_marca", (valores["marca"] or "").strip()[:40])
+        if "descartar_accesorios" in valores:
+            self._set_pref("filtro_accesorios",
+                           "1" if valores["descartar_accesorios"] else "0")
+        if "precio_min_usd" in valores:
+            try:
+                minimo = max(0.0, float(valores["precio_min_usd"]))
+            except (TypeError, ValueError):
+                raise ValueError("El precio mínimo tiene que ser un número.")
+            self._set_pref("filtro_precio_min", str(minimo))
+
     def recalcular_todos(self) -> None:
         """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras
         cambiar la condición fiscal)."""

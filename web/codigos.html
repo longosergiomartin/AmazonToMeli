@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversor ASIN ⇄ código de barras</title>
+<style>
+  :root{
+    --bg:#F5F4EF; --surface:#FFFFFF; --surface-2:#EFEEE7; --line:#E0DED4;
+    --ink:#1B1E24; --muted:#616675; --accent:#0E7C66;
+    --good:#12805C; --warn:#9A6410; --bad:#C0392B;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; --r:13px;
+  }
+  @media(prefers-color-scheme:dark){:root{
+    --bg:#13151B; --surface:#1C1F27; --surface-2:#23262F; --line:#2E323C;
+    --ink:#ECEDF2; --muted:#9AA0B0; --accent:#38C39B;
+    --good:#3FBE8E; --warn:#D6A24A; --bad:#E4695B;
+  }}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:900px;margin:0 auto;padding:26px 18px 64px}
+  h1{font-size:1.5rem;margin:0 0 2px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:.9rem;margin-bottom:20px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+    padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  label{font-size:.82rem;font-weight:500;display:block;margin-bottom:5px}
+  textarea{background:var(--surface-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:9px 11px;font-family:var(--mono);font-size:.85rem;
+    width:100%;resize:vertical}
+  textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+    background:var(--surface);color:var(--ink);padding:9px 14px;font-weight:600;font-size:.86rem}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent}
+  @media(prefers-color-scheme:dark){button.primary{color:#0d0f13}}
+  button:disabled{opacity:.5;cursor:default}
+  .hint{color:var(--muted);font-size:.78rem}
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);
+    background:var(--surface);margin-top:16px}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem;min-width:600px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  tr:last-child td{border-bottom:0}
+  td.cod{font-family:var(--mono);white-space:nowrap}
+  td.tit{color:var(--muted);font-size:.8rem;max-width:280px}
+  .ok{color:var(--good);font-weight:700}
+  .no{color:var(--bad);font-weight:700}
+  .msg{font-size:.85rem;margin-top:12px}
+  .aviso{background:var(--surface-2);border:1px solid var(--line);border-radius:9px;
+    padding:10px 13px;font-size:.83rem;margin-top:14px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Conversor ASIN ⇄ código de barras</h1>
+  <div class="sub">EAN · UPC · ISBN · GTIN — sin límite diario ·
+    <a href="/panel">← volver al panel</a></div>
+
+  <div class="card">
+    <label for="entradas">Pegá ASIN, códigos de barras o links de Amazon — uno por línea</label>
+    <textarea id="entradas" rows="7"
+      placeholder="B075SDMMMV&#10;5702016914498&#10;https://www.amazon.com/dp/B0BBHHT8LY"></textarea>
+    <div class="hint" style="margin-top:6px">Detecta solo de qué tipo es cada uno
+      y convierte en la dirección que corresponda.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button type="button" class="primary" id="convertir">Convertir</button>
+      <button type="button" id="copiar" style="display:none">Copiar resultados</button>
+      <button type="button" id="csv" style="display:none">Descargar CSV</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div id="salida"></div>
+
+  <div class="aviso">
+    <b>De dónde sale cada código.</b> Primero de tu propio catálogo (instantáneo,
+    no consulta nada). Después del catálogo de MercadoLibre, que es una fuente
+    oficial. Recién al final de Amazon y la web. Todos los códigos se verifican
+    con el dígito verificador antes de mostrarse, pero conviene confirmarlos
+    contra la caja del producto antes de publicar.
+  </div>
+</div>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var ultimos=[];
+
+  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+
+  function pintar(d){
+    ultimos=d.resultados||[];
+    if(!ultimos.length){ $("salida").innerHTML=""; return; }
+    var filas=ultimos.map(function(r){
+      return "<tr><td class='cod'>"+esc(r.entrada)+"</td>"
+        +"<td class='cod'>"+(r.asin?esc(r.asin):"—")+"</td>"
+        +"<td class='cod'>"+(r.gtin?esc(r.gtin):"—")+"</td>"
+        +"<td class='tit'>"+esc(r.titulo||"")+"</td>"
+        +"<td>"+(r.ok?"<span class='ok'>✓</span> "+esc(r.fuente||"")
+                     :"<span class='no'>✕</span> "+esc(r.mensaje||""))+"</td></tr>";
+    }).join("");
+    $("salida").innerHTML="<div class='tablewrap'><table><thead><tr>"
+      +"<th>Entrada</th><th>ASIN</th><th>Código de barras</th><th>Producto</th><th>Resultado</th>"
+      +"</tr></thead><tbody>"+filas+"</tbody></table></div>";
+    $("copiar").style.display=$("csv").style.display="";
+  }
+
+  function texto(){
+    return ultimos.map(function(r){
+      return [r.entrada, r.asin, r.gtin, (r.titulo||"").replace(/[;\n]/g," ")].join(";");
+    }).join("\n");
+  }
+
+  $("convertir").onclick=function(){
+    var v=($("entradas").value||"").trim();
+    if(!v){ $("msg").textContent="Pegá al menos un código."; return; }
+    $("convertir").disabled=true;
+    $("msg").textContent="Consultando… (se hace de a uno y con pausa, para no "
+      +"golpear a Amazon)";
+    fetch("/api/codigos",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({entradas:v})})
+      .then(function(res){ return res.json(); })
+      .then(function(d){
+        $("convertir").disabled=false;
+        pintar(d);
+        var m=d.convertidos+" de "+d.total+" convertido(s).";
+        if(d.detenido) m+=" Amazon nos limitó: frenamos acá. Probá de nuevo más tarde.";
+        if(d.pendientes) m+=" Quedaron "+d.pendientes+" sin procesar (probá en otra tanda).";
+        $("msg").textContent=m;
+      })
+      .catch(function(e){ $("convertir").disabled=false;
+        $("msg").textContent="Error: "+e; });
+  };
+
+  $("copiar").onclick=function(){
+    navigator.clipboard.writeText(texto()).then(function(){
+      $("msg").textContent="Copiado al portapapeles.";
+    });
+  };
+
+  $("csv").onclick=function(){
+    var csv="entrada;asin;gtin;producto\n"+texto();
+    var a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download="codigos.csv"; a.click();
+  };
+})();
+</script>
+</body>
+</html>

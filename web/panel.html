@@ -103,7 +103,8 @@
 <body>
 <div class="wrap">
   <div class="bar">
-    <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina</div></div>
+    <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina ·
+      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a></div></div>
     <div class="ml">
       <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
       <button class="sm" id="ml-btn" type="button">Conectar</button>
@@ -153,6 +154,25 @@
       <button type="button" class="sm" id="lote-limpiar">Limpiar terminados</button>
     </div>
     <div class="hist" id="lote-estado" style="margin-top:10px"></div>
+
+    <details style="margin-top:12px">
+      <summary>Qué productos entran</summary>
+      <div class="grid2" style="margin-top:10px">
+        <div class="f"><label>Marca</label>
+          <input id="f-marca" placeholder="(cualquiera)">
+          <span class="hint">Dejalo vacío para cargar cualquier rubro. Con una
+            marca escrita, se descarta todo lo que no sea de esa marca.</span></div>
+        <div class="f"><label>Precio mínimo (USD)</label>
+          <input id="f-precio" type="number" step="1" min="0">
+          <span class="hint">Corta llaveros, repuestos y chucherías. 0 = sin piso.</span></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:500">
+        <input type="checkbox" id="f-accesorios" style="width:auto">
+        Descartar accesorios y merchandising (luces, vitrinas, fundas, remeras…)
+      </label>
+      <button type="button" class="sm" id="f-guardar" style="margin-top:10px">Guardar filtro</button>
+      <span class="msg" id="f-msg"></span>
+    </details>
   </div>
 
   <div class="card">
@@ -320,6 +340,25 @@
       (e.descartados||0)+" descartados (no son sets LEGO) · "+
       e.errores+" con error · "+e.bloqueados+" frenados</div>"+(extra||"");
   }
+  // Configuración del filtro: qué productos entran al catálogo.
+  function cargarFiltro(){
+    api("GET","/api/filtro").then(function(f){
+      $("f-marca").value=f.marca||"";
+      $("f-precio").value=f.precio_min_usd;
+      $("f-accesorios").checked=!!f.descartar_accesorios;
+    }).catch(function(){});
+  }
+  $("f-guardar").onclick=function(){
+    api("PATCH","/api/filtro",{marca:($("f-marca").value||"").trim(),
+        precio_min_usd:parseFloat($("f-precio").value)||0,
+        descartar_accesorios:$("f-accesorios").checked}).then(function(f){
+      $("f-msg").textContent = f.marca
+        ? "Guardado: solo "+f.marca+"."
+        : "Guardado: entra cualquier marca.";
+      $("f-msg").textContent += " Volvé a arrastrar el botón \u00ABEncolar toda la p\u00E1gina\u00BB para que use este filtro.";
+    }).catch(err);
+  };
+
   function cargarCola(){ api("GET","/api/importar/estado").then(function(e){pintarCola(e);}).catch(function(){}); }
   function encolarLote(){
     var txt=$("lote-entradas").value||"";
@@ -749,7 +788,7 @@
   });
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargarCola(); cargar();
+  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargar();
 })();
 </script>
 </body>
