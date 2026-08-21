@@ -321,3 +321,22 @@ def test_con_gtin_no_hace_falta_el_motivo(cat):
     p = cat.agregar(_prod(titulo_ml="LEGO", ml_category_id="MLA1157",
                           ml_attributes={"GTIN": "5702016914498"}))
     assert faltantes_para_publicar(p, obligatorios, ["http://img/1.jpg"]) == []
+
+
+def test_limpiar_titulos_saca_el_codigo_interno(cat):
+    """Los productos cargados antes del arreglo quedaron con el código de 7
+    dígitos pegado al final del título."""
+    p = cat.agregar(_prod(marca="LEGO",
+                          modelo="LEGO Ideas La Catrina 21372 set de construcción",
+                          modelo_fabricante="6589589",
+                          titulo_ml="LEGO Ideas La Catrina 21372 6589589"))
+    assert cat.limpiar_titulos() == 1
+    nuevo = cat.obtener(p.id).titulo_ml
+    assert "6589589" not in nuevo and "21372" in nuevo
+    assert cat.limpiar_titulos() == 0            # idempotente
+
+
+def test_limpiar_titulos_no_toca_los_que_estan_bien(cat):
+    cat.agregar(_prod(marca="LEGO", modelo="LEGO Star Wars 75339",
+                      titulo_ml="LEGO Star Wars 75339"))
+    assert cat.limpiar_titulos() == 0

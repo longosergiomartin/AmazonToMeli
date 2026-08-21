@@ -202,6 +202,30 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
+    def limpiar_titulos(self) -> int:
+        """Saca de los títulos el código interno de Amazon que se coló al final.
+
+        Los productos cargados antes del arreglo quedaron con un número de 7
+        dígitos pegado ("...La Catrina 21372 6589589"): Amazon lo declara como
+        número de modelo, pero no identifica nada y ensucia tanto el título como
+        la búsqueda en el catálogo de MercadoLibre.
+        """
+        import re
+        from titulos import titulo_para_ml
+        arreglados = 0
+        for p in self.todos():
+            if not re.search(r"\b\d{7,}\b", p.titulo_ml or ""):
+                continue
+            set_id = p.modelo_fabricante if re.fullmatch(
+                r"\d{4,6}", p.modelo_fabricante or "") else ""
+            nuevo = titulo_para_ml(p.marca, p.modelo or p.titulo_ml, set_id)
+            if nuevo and nuevo != p.titulo_ml:
+                anterior, p.titulo_ml = p.titulo_ml, nuevo
+                self._guardar(p)
+                self._log(p.id, "titulo", "titulo_ml", anterior, nuevo)
+                arreglados += 1
+        return arreglados
+
     def vaciar(self, incluir_publicados: bool = False) -> dict:
         """Borra el catálogo para empezar de cero.
 

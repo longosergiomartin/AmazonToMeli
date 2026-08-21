@@ -74,7 +74,11 @@ def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
     base = re.sub(r"[#]+", " ", base)
     base = re.sub(r"\s+", " ", base).strip(" ,-–—:")
 
-    sufijo = f" {numero_set}" if numero_set else ""
+    # Solo se agrega si parece un número de set del fabricante (4 a 6 dígitos).
+    # Amazon a veces declara un código interno de 7 dígitos (6474652) que no
+    # identifica nada para el comprador ni sirve para buscar: en el título solo
+    # ensucia.
+    sufijo = f" {numero_set}" if re.fullmatch(r"\d{4,6}", numero_set or "") else ""
     prefijo = f"{marca} " if marca else ""
     espacio = limite - len(prefijo) - len(sufijo)
     if espacio < 1:

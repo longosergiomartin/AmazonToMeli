@@ -347,6 +347,7 @@ def registrar_catalogo(app: FastAPI, conn,
         if not reparado["marcas"]:
             reparado["marcas"] = True
             cat.limpiar_marcas()
+            cat.limpiar_titulos()
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -555,15 +556,23 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
-    def _limpiar_para_buscar(titulo: str) -> str:
-        """Título reducido a lo que sirve para buscar: sin marketing, sin
-        cantidades de piezas ni edades, que solo ensucian la consulta."""
+    def _limpiar_para_buscar(titulo: str, palabras: int = 6) -> str:
+        """Consulta corta para buscar el producto en el catálogo de ML.
+
+        Los títulos de Amazon tienen 100+ caracteres de marketing ("Kit de
+        diorama para fanáticos, regalo coleccionable para adultos..."). Mandados
+        enteros, la búsqueda no devuelve nada: hay que quedarse con las primeras
+        palabras, que son las que identifican el producto.
+        """
         import re
+        from titulos import _VACIAS, normalizar
         t = re.sub(r"\(?\s*[\d.,]+\s*(piezas|pzas|pcs|pieces|bloques)\b\)?", " ",
                    titulo or "", flags=re.I)
         t = re.sub(r"\b\d+\s*\+\s*", " ", t)              # "18+"
+        t = re.sub(r"\b\d{7,}\b", " ", t)                 # códigos internos
         t = re.sub(r"[^0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ ]+", " ", t)
-        return re.sub(r"\s+", " ", t).strip()
+        utiles = [w for w in t.split() if normalizar(w) not in _VACIAS]
+        return " ".join(utiles[:palabras])
 
     def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
                         set_declarado: str = "", marca: str = "") -> dict:
