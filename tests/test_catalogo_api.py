@@ -879,3 +879,77 @@ def test_endpoint_de_codigos_avisa_lo_que_no_reconoce(client):
     d = client.post("/api/codigos", json={"entradas": "esto no es un codigo"}).json()
     assert d["convertidos"] == 0
     assert "no parece" in d["resultados"][0]["mensaje"].lower()
+
+
+def test_lote_codigos_guarda_el_gtin_en_el_producto(tmp_path, monkeypatch):
+    """El circuito que faltaba: el conversor aplicado al catálogo, dejando el
+    código guardado y listo para publicar."""
+    _con_ml(monkeypatch, _cli_lote([], gtin_catalogo={
+        "gtin": "5702017155326", "product_id": "MLA1", "nombre": "LEGO 75339"}))
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "cod.db")))
+    titulo = "LEGO Star Wars Death Star Diorama 75339 Kit de construcción"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
+                asin="B0COD00001").json()["id"]
+
+    r = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["encontrados"] == 1
+    assert d["resultados"][0]["fuente"] == "catálogo de MercadoLibre"
+    # Y quedó guardado en el producto, no solo mostrado.
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702017155326"
+
+
+def test_lote_codigos_no_repite_los_que_ya_tienen(tmp_path, monkeypatch):
+    consultas = []
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: consultas.append(1) or {}
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "cod2.db")))
+    pid = _alta(c, asin="B0COD00002", titulo_ml="Ya tiene").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"ml_attributes": {"GTIN": "5702016914498"}})
+
+    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
+    assert d["resultados"][0]["fuente"] == "ya lo tenía"
+    assert not consultas          # no se consultó nada afuera
+
+
+def test_lote_codigos_frena_si_amazon_nos_limita(tmp_path, monkeypatch):
+    """Misma disciplina de siempre: ante un bloqueo se frena y se avisa."""
+    cli = _cli_lote([])
+    cli.ficha_de_catalogo = lambda *a, **k: {}
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "bloqueado": True,
+                                      "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "cod3.db")))
+    ids = [_alta(c, asin=f"B0COD0000{i}", titulo_ml=f"Producto {i}").json()["id"]
+           for i in (3, 4, 5)]
+
+    d = c.post("/api/catalogo/lote/codigos", json={"ids": ids}).json()
+    assert d["detenido"] is True
+    assert d["total"] == 1 and d["pendientes"] == 2
+
+
+def test_lote_codigos_saca_el_motivo_de_gtin_vacio(tmp_path, monkeypatch):
+    """Con GTIN de verdad, el motivo de GTIN vacío sobra: mandarlos juntos es
+    contradictorio y MercadoLibre lo rechaza."""
+    _con_ml(monkeypatch, _cli_lote([], gtin_catalogo={
+        "gtin": "5702017155326", "product_id": "MLA1", "nombre": "LEGO 75339"}))
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "cod4.db")))
+    titulo = "LEGO Star Wars Death Star Diorama 75339"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
+                asin="B0COD00006").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"ml_attributes": {"EMPTY_GTIN_REASON": "Otra razón"}})
+
+    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702017155326"
+    assert "EMPTY_GTIN_REASON" not in attrs

@@ -585,24 +585,41 @@ def registrar_catalogo(app: FastAPI, conn,
                 return ficha
         return {}
 
-    def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient],
-                     set_declarado: str = "", marca: str = "") -> str:
-        """Código de barras del producto, probando de la fuente más confiable a
-        la menos: el catálogo de MercadoLibre (que ya tiene los sets cargados
-        con su GTIN) y después la búsqueda web por ASIN."""
+    def _codigo_de(titulo: str, asin: str, cli: Optional[MeliClient],
+                   set_declarado: str = "", marca: str = "") -> dict:
+        """Código de barras del producto, de la fuente más confiable a la menos.
+
+        Devuelve {gtin, fuente, bloqueado}. `bloqueado` avisa que Amazon nos
+        está limitando, para poder frenar un lote en vez de seguir insistiendo.
+        """
         from gtin_lookup import buscar_gtin, validar_gtin
 
+        # 1) Lo que ya tenemos cargado de otro producto con el mismo ASIN.
+        if asin:
+            for p in cat.todos():
+                otro = (p.ml_attributes or {}).get("GTIN", "")
+                if p.asin.upper() == asin.upper() and otro and validar_gtin(otro):
+                    return {"gtin": otro, "fuente": "tu catálogo", "bloqueado": False}
+        # 2) El catálogo de MercadoLibre: oficial y sin riesgo de bloqueo.
         ficha = _ficha_catalogo(titulo, cli, set_declarado, marca)
         if ficha.get("gtin") and validar_gtin(ficha["gtin"]):
-            return ficha["gtin"]
+            return {"gtin": ficha["gtin"], "fuente": "catálogo de MercadoLibre",
+                    "bloqueado": False}
+        # 3) Amazon y la web.
         if asin:
             try:
                 r = buscar_gtin(asin)
-                if r.get("ok") and r.get("gtin"):
-                    return r["gtin"]
             except Exception:  # noqa: BLE001 - es best-effort
-                pass
-        return ""
+                return {"gtin": "", "fuente": "", "bloqueado": False}
+            if r.get("ok") and r.get("gtin"):
+                return {"gtin": r["gtin"], "fuente": r.get("fuente", "amazon"),
+                        "bloqueado": False}
+            return {"gtin": "", "fuente": "", "bloqueado": bool(r.get("bloqueado"))}
+        return {"gtin": "", "fuente": "", "bloqueado": False}
+
+    def _buscar_gtin(titulo: str, asin: str, cli: Optional[MeliClient],
+                     set_declarado: str = "", marca: str = "") -> str:
+        return _codigo_de(titulo, asin, cli, set_declarado, marca)["gtin"]
 
     def _preparar_uno(p: ProductoCatalogo, cli: Optional[MeliClient]) -> ProductoCatalogo:
         """Completa lo que se pueda deducir solo: marca, categoría, fotos, GTIN
@@ -700,6 +717,59 @@ def registrar_catalogo(app: FastAPI, conn,
         except HTTPException:
             cli = None  # sin sesión de ML se completa lo que no necesita red
         return _en_lote(ids, lambda p: _preparar_uno(p, cli))
+
+    @app.post("/api/catalogo/lote/codigos")
+    def lote_codigos(body: dict):
+        """Busca el código de barras de los productos ya cargados y lo guarda.
+
+        Es el conversor aplicado al catálogo: sin GTIN, MercadoLibre no deja
+        publicar en varias categorías. Va de a uno y con pausa, y frena apenas
+        Amazon nos limita: lo que quedó se retoma más tarde.
+        """
+        import time
+        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
+        pausa = float((body or {}).get("pausa_seg", 1.5))
+        solo_faltantes = (body or {}).get("solo_faltantes", True)
+        cli = None
+        if store.hay_sesion() and cred.configurado:
+            try:
+                cli = _client()
+            except HTTPException:
+                pass
+
+        resultados = []
+        detenido = False
+        for i, pid in enumerate(ids):
+            p = cat.obtener(pid)
+            if not p:
+                continue
+            attrs = dict(p.ml_attributes or {})
+            if solo_faltantes and (attrs.get("GTIN") or "").strip():
+                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
+                                   "gtin": attrs["GTIN"], "fuente": "ya lo tenía",
+                                   "ok": True})
+                continue
+            r = _codigo_de(p.modelo or p.titulo_ml or "", p.asin, cli,
+                           p.modelo_fabricante, p.marca)
+            if r["gtin"]:
+                attrs["GTIN"] = r["gtin"]
+                # Con GTIN de verdad el motivo de GTIN vacío sobra, y mandarlos
+                # juntos es contradictorio: MercadoLibre lo rechaza.
+                attrs.pop("EMPTY_GTIN_REASON", None)
+                cat.actualizar_publicacion(pid, ml_attributes=attrs)
+            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
+                               "gtin": r["gtin"], "fuente": r["fuente"],
+                               "ok": bool(r["gtin"])})
+            if r["bloqueado"]:
+                detenido = True
+                break
+            if i < len(ids) - 1 and r["fuente"] not in ("tu catálogo", "ya lo tenía"):
+                time.sleep(min(pausa, 5.0))
+
+        return {"resultados": resultados, "detenido": detenido,
+                "encontrados": sum(1 for r in resultados if r["ok"]),
+                "total": len(resultados),
+                "pendientes": max(0, len(ids) - len(resultados))}
 
     @app.post("/api/catalogo/lote/publicar")
     def lote_publicar(body: dict):

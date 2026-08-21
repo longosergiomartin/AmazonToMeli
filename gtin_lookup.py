@@ -49,16 +49,23 @@ def _candidatos(texto: str) -> list[str]:
     return [c for c in crudos if validar_gtin(c)]
 
 
-def _de_amazon(asin: str, timeout: int) -> list[str]:
-    """Busca EAN/UPC/GTIN mencionados en la página del producto."""
+def _de_amazon(asin: str, timeout: int) -> tuple[list[str], bool]:
+    """EAN/UPC/GTIN mencionados en la página del producto.
+
+    Devuelve (candidatos, bloqueado). Distinguir "no encontré" de "me
+    bloquearon" es lo que permite frenar un lote a tiempo en vez de seguir
+    golpeando a Amazon.
+    """
     url = f"https://www.amazon.com/dp/{asin}"
     resp = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout)
     if resp.status_code != 200:
-        return []
+        return [], resp.status_code in (403, 429, 503)
+    if "captcha" in resp.text[:4000].lower() and "productTitle" not in resp.text:
+        return [], True
     # Solo números que aparecen cerca de una etiqueta EAN/UPC/GTIN.
     cerca = re.findall(r"(?:EAN|UPC|GTIN|C[óo]digo de barras)[^0-9]{0,60}(\d{8,14})",
                        resp.text, re.I)
-    return [c for c in cerca if validar_gtin(c)]
+    return [c for c in cerca if validar_gtin(c)], False
 
 
 def _de_buscador(asin: str, timeout: int) -> list[str]:
@@ -128,30 +135,42 @@ def buscar_gtin(asin: str, timeout: int = 12) -> dict:
     asin = (asin or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9]{10}", asin):
         return {"ok": False, "gtin": "", "candidatos": [], "fuente": "",
+                "bloqueado": False,
                 "mensaje": "ASIN inválido (deben ser 10 caracteres, ej: B075SDMMMV)."}
 
     todos: list[str] = []
     fuente = ""
-    for nombre, fn in (("amazon", _de_amazon), ("busqueda web", _de_buscador)):
+    bloqueado = False
+    try:
+        encontrados, bloqueado = _de_amazon(asin, timeout)
+    except requests.RequestException:
+        encontrados = []
+    if encontrados:
+        todos.extend(encontrados)
+        fuente = "amazon"
+    if not bloqueado:
         try:
-            encontrados = fn(asin, timeout)
+            web = _de_buscador(asin, timeout)
         except requests.RequestException:
-            encontrados = []
-        if encontrados:
-            todos.extend(encontrados)
-            fuente = fuente or nombre
+            web = []
+        if web:
+            todos.extend(web)
+            fuente = fuente or "busqueda web"
 
     if not todos:
         return {"ok": False, "gtin": "", "candidatos": [], "fuente": "",
-                "mensaje": ("No pude encontrar el GTIN automáticamente (los "
-                            "sitios pueden bloquear servidores). Usá el link "
-                            "de búsqueda manual o mirá el código de barras "
+                "bloqueado": bloqueado,
+                "mensaje": ("Amazon nos está limitando: conviene frenar y seguir "
+                            "más tarde." if bloqueado else
+                            "No pude encontrar el GTIN automáticamente. Usá el "
+                            "link de búsqueda manual o mirá el código de barras "
                             "de la caja.")}
 
     conteo = Counter(todos)
     gtin, veces = conteo.most_common(1)[0]
     candidatos = [c for c, _ in conteo.most_common(5)]
     return {"ok": True, "gtin": gtin, "candidatos": candidatos, "fuente": fuente,
+            "bloqueado": False,
             "mensaje": (f"GTIN encontrado ({fuente}, visto {veces} vez/veces y "
                         "verificado matemáticamente). Confirmalo contra la caja "
                         "o la ficha del producto.")}
