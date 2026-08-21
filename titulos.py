@@ -9,6 +9,7 @@ de piezas. Sacarlos de acá evita tener que cargarlos a mano uno por uno.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 def numero_de_set(titulo: str) -> str:
@@ -81,6 +82,47 @@ def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
     if len(base) > espacio:
         base = base[:espacio].rsplit(" ", 1)[0].strip(" ,-–—")
     return (prefijo + base + sufijo).strip()
+
+
+# Palabras que aparecen en cualquier título y no distinguen un producto de otro.
+_VACIAS = {
+    "de", "del", "la", "el", "los", "las", "un", "una", "con", "para", "por",
+    "y", "a", "en", "the", "of", "for", "with", "and", "to",
+    "set", "sets", "kit", "kits", "juego", "juegos", "juguete", "juguetes",
+    "building", "toy", "toys", "block", "blocks", "bloques", "construccion",
+    "piezas", "pieces", "pzas", "pcs", "modelo", "model", "coleccionable",
+    "regalo", "gift", "nuevo", "new", "edicion", "edition", "adultos", "adults",
+}
+
+
+def _tokens(texto: str) -> set:
+    palabras = re.findall(r"[0-9a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+", texto or "")
+    return {p for p in (normalizar(w) for w in palabras)
+            if len(p) >= 3 and p not in _VACIAS}
+
+
+def normalizar(texto: str) -> str:
+    """Minúsculas y sin acentos."""
+    t = unicodedata.normalize("NFD", texto or "")
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").lower().strip()
+
+
+def parecido(referencia: str, candidato: str) -> float:
+    """Qué proporción de las palabras distintivas de `referencia` aparece en
+    `candidato`. Sirve para decidir si dos títulos son el mismo producto.
+
+    Si los dos traen número de modelo y **no coinciden**, devuelve 0: son
+    productos distintos por más que compartan todas las palabras (dos sets de
+    Star Wars comparten casi todo el título menos el número, que es justo lo
+    único que los distingue).
+    """
+    a, b = _tokens(referencia), _tokens(candidato)
+    if not a or not b:
+        return 0.0
+    na, nb = numero_de_set(referencia), numero_de_set(candidato)
+    if na and nb and na != nb:
+        return 0.0
+    return len(a & b) / len(a)
 
 
 def piezas_del_titulo(titulo: str) -> str:

@@ -166,6 +166,9 @@ def test_publicar_reintenta_con_title_si_ml_pide_family_name(tmp_path, monkeypat
     enviados = []
 
     class _CliFalso:
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
         def atributos_obligatorios(self, cat_id):
             return []
 
@@ -206,6 +209,9 @@ def test_publicar_manda_la_marca_limpia_con_value_id(tmp_path, monkeypatch):
     enviados = []
 
     class _CliFalso:
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
         def atributos_obligatorios(self, cat_id):
             return [{"id": "BRAND", "name": "Marca"}]
 
@@ -244,6 +250,9 @@ def test_publicar_usa_la_marca_del_titulo_si_amazon_no_la_trajo(tmp_path, monkey
     enviados = []
 
     class _CliFalso:
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
         def atributos_obligatorios(self, cat_id):
             return [{"id": "BRAND", "name": "Marca"}]
 
@@ -277,6 +286,9 @@ def test_publicar_sin_marca_resoluble_avisa_antes_de_llamar_a_ml(tmp_path, monke
     import api.catalogo_routes as rutas
 
     class _CliFalso:
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
         def atributos_obligatorios(self, cat_id):
             return []
 
@@ -473,7 +485,8 @@ def test_pictures_persisten_para_publicar(client):
 
 def _cli_lote(enviados, con_categoria=True, gtin_catalogo=None):
     class _Cli:
-        def ficha_de_catalogo(self, query, debe_contener="", limit=5):
+        def ficha_de_catalogo(self, query, debe_contener="", limit=5,
+                              parecido_a="", minimo_parecido=0.5):
             return dict(gtin_catalogo) if gtin_catalogo else {}
 
         def gtin_de_catalogo(self, query, debe_contener="", limit=5):
@@ -953,3 +966,39 @@ def test_lote_codigos_saca_el_motivo_de_gtin_vacio(tmp_path, monkeypatch):
     attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
     assert attrs["GTIN"] == "5702017155326"
     assert "EMPTY_GTIN_REASON" not in attrs
+
+
+def test_la_cascada_llega_a_la_busqueda_por_nombre(tmp_path, monkeypatch):
+    """El caso de la captura: el número de set existe pero MercadoLibre no lo
+    tiene cargado con ese número. Antes se caía a Amazon —que bloquea a los
+    servidores de la nube— y quedaba sin código. Ahora prueba por nombre."""
+    consultas = []
+    cli = _cli_lote([])
+
+    def _ficha(query, debe_contener="", limit=5, parecido_a="", minimo_parecido=0.5):
+        consultas.append((query, debe_contener, bool(parecido_a)))
+        if debe_contener:
+            return {}                      # por número no lo encuentra
+        return {"gtin": "5702017425627", "product_id": "MLA9",
+                "nombre": "Lego Ideas Magic Of Disney 21352"}
+
+    cli.ficha_de_catalogo = _ficha
+    _con_ml(monkeypatch, cli)
+    # Amazon bloqueado, como pasa desde Render.
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "bloqueado": True,
+                                      "candidatos": []})
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "casc.db")))
+    titulo = "LEGO Ideas Magic of Disney Set #21352 – 1,103 piezas, minifigura"
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
+                asin="B0CASC0001").json()["id"]
+
+    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
+
+    assert d["encontrados"] == 1
+    assert d["detenido"] is False          # no hizo falta llegar a Amazon
+    # Probó por número y después por nombre.
+    assert any(q[1] for q in consultas) and any(q[2] for q in consultas)
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "5702017425627"
