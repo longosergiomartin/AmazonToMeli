@@ -1290,3 +1290,34 @@ def test_verificar_corrige_lo_que_no_esta_publicado_de_verdad(tmp_path, monkeypa
     # El que no existe deja de figurar como publicado.
     assert c.get(f"/api/catalogo/{fantasma}").json()["estado"] == "borrador"
     assert c.get(f"/api/catalogo/{vivo}").json()["estado"] == "publicado"
+
+
+def test_verificar_guarda_el_link_de_la_publicacion(tmp_path, monkeypatch):
+    """El link es lo que permite abrir la publicación y comprobarla de un clic,
+    en vez de buscarla a mano en el panel de MercadoLibre."""
+    import api.catalogo_routes as rutas
+
+    class _Cli:
+        def mis_items(self, limit=200):
+            return ["MLA_VIVO"]
+
+        def obtener(self, item_id):
+            return {"status": "active",
+                    "permalink": "https://articulo.mercadolibre.com.ar/MLA-VIVO"}
+
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _Cli())
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "link.db")))
+    pid = _alta(c, asin="B0LINK0001", titulo_ml="Publicado").json()["id"]
+    from db import conectar
+    conn = conectar(str(tmp_path / "link.db"))
+    conn.execute("UPDATE catalogo SET ml_item_id='MLA_VIVO', estado='publicado', "
+                 "ml_permalink='' WHERE id = ?", (pid,))
+    conn.commit()
+
+    d = c.post("/api/catalogo/verificar", json={}).json()
+    assert d["corregidos"] == 0
+    assert d["revisados"][0]["permalink"].endswith("MLA-VIVO")
+    assert c.get(f"/api/catalogo/{pid}").json()["ml_permalink"].endswith("MLA-VIVO")

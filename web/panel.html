@@ -479,7 +479,11 @@
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
           '<td class="num">'+(p.margen_pct||0).toFixed(0)+'%'+flag+'</td>'+
-          '<td><span class="pill '+p.estado+'">'+p.estado+'</span></td>'+
+          '<td>'+(p.ml_permalink
+              ? '<a href="'+esc(p.ml_permalink)+'" target="_blank" rel="noopener" '
+                +'class="pill '+p.estado+'" title="Ver la publicación en MercadoLibre ('
+                +esc(p.ml_item_id||'')+')">'+p.estado+' ↗</a>'
+              : '<span class="pill '+p.estado+'">'+p.estado+'</span>')+'</td>'+
           '<td class="acc"><div class="actions" id="act-'+p.id+'"></div></td>';
         tb.appendChild(tr);
         acciones(p);
@@ -670,7 +674,8 @@
     api("POST","/api/catalogo/verificar",{}).then(function(d){
       b.disabled=false; b.textContent="🔍 Verificar en MercadoLibre";
       var lineas=(d.revisados||[]).map(function(r){
-        return (r.estado_ml==="active"?"✓":"✕")+" "+r.nombre+" — MercadoLibre dice: "+r.estado_ml;});
+        return (r.estado_ml==="active"?"✓":"✕")+" "+r.nombre+" — "+r.estado_ml
+               +(r.permalink?"\n   "+r.permalink:"");});
       alert("Publicaciones en tu cuenta de MercadoLibre: "+d.publicaciones_en_la_cuenta+"\n"
             +"Revisados: "+d.total+" · Corregidos: "+d.corregidos+"\n\n"
             +lineas.slice(0,25).join("\n"));
