@@ -590,6 +590,7 @@
     $("ag-toggle").className=e.encendido?"":"primary";
     var partes=["Por preparar: "+e.por_preparar, "Sin código: "+e.sin_codigo,
                 "Listos: "+e.listos_para_publicar, "Publicados: "+e.publicados];
+    if(e.sin_codigo_a_intentar) partes.push("Sin código (se intenta igual): "+e.sin_codigo_a_intentar);
     if(e.trabados) partes.push("Trabados: "+e.trabados);
     var html="<div>"+partes.join(" · ")+"</div>";
     (e.detalle_trabados||[]).forEach(function(t){

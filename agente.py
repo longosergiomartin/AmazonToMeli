@@ -51,6 +51,10 @@ class Agente:
         # Productos que fallaron en esta corrida, con su motivo. Se limpian al
         # apagar y encender el agente.
         self.trabados: dict[int, str] = {}
+        # Productos a los que ya se les buscó el código sin éxito: no se vuelve
+        # a buscar, pero se los deja intentar publicar por si están en el
+        # catálogo de MercadoLibre (esa vía no necesita código).
+        self.sin_codigo: set[int] = set()
 
     # ---- configuración (persistida en preferencias) ----------------------
 
@@ -69,6 +73,7 @@ class Agente:
             self.cat._set_pref("agente_encendido", "1" if valores["encendido"] else "0")
             if valores["encendido"]:
                 self.trabados.clear()   # arrancar de nuevo reintenta todo
+                self.sin_codigo.clear()
         if "publicar" in valores:
             self.cat._set_pref("agente_publicar", "1" if valores["publicar"] else "0")
         if "max_publicaciones" in valores:
@@ -86,7 +91,11 @@ class Agente:
             return NADA
         if not p.ml_category_id or not p.marca or not p.pictures:
             return PREPARAR
-        if not (p.ml_attributes or {}).get("GTIN"):
+        # El código se busca una sola vez. Si no aparece **igual se intenta
+        # publicar**: cuando el producto está en el catálogo de MercadoLibre, se
+        # publica contra su ficha y ML pone el código de la suya, así que exigirlo
+        # antes de intentar era bloquearse solo.
+        if not (p.ml_attributes or {}).get("GTIN") and p.id not in self.sin_codigo:
             return CODIGO
         if self._faltantes(p):
             return PREPARAR
@@ -98,12 +107,14 @@ class Agente:
         for p in self.cat.todos():
             conteo[self.paso_pendiente(p)] += 1
         publicados = sum(1 for p in self.cat.todos() if p.estado == "publicado")
+        sin_codigo_a_intentar = len(self.sin_codigo)
         return {**self.config,
                 "por_preparar": conteo[PREPARAR],
                 "sin_codigo": conteo[CODIGO],
                 "listos_para_publicar": conteo[PUBLICAR],
                 "publicados": publicados,
                 "trabados": len(self.trabados),
+                "sin_codigo_a_intentar": sin_codigo_a_intentar,
                 "detalle_trabados": [
                     {"id": pid, "motivo": m} for pid, m in list(self.trabados.items())[:10]],
                 "pendientes": conteo[PREPARAR] + conteo[CODIGO] + conteo[PUBLICAR]}
@@ -144,14 +155,13 @@ class Agente:
                     return {"accion": CODIGO, "id": p.id, "nombre": nombre,
                             "detalle": f"código {r['gtin']} ({r.get('fuente','')})",
                             **self.estado()}
-                motivo = ("sin código en ninguna fuente (Amazon además nos "
-                          "limitó: probá el botón que lee desde tu navegador)"
-                          if r.get("bloqueado")
-                          else "sin código en ninguna fuente: cargalo a mano")
-                self.trabados[p.id] = motivo
-                return {"accion": "trabado", "id": p.id, "nombre": nombre,
-                        "detalle": motivo, "bloqueado": bool(r.get("bloqueado")),
-                        **self.estado()}
+                # Sin código no se abandona: se intenta publicar igual, porque
+                # la vía del catálogo de MercadoLibre no lo necesita.
+                self.sin_codigo.add(p.id)
+                return {"accion": "sin_codigo", "id": p.id, "nombre": nombre,
+                        "detalle": "no encontré el código; pruebo publicar "
+                                   "contra el catálogo de MercadoLibre",
+                        "bloqueado": bool(r.get("bloqueado")), **self.estado()}
 
             # PUBLICAR
             if not cfg["publicar"]:
