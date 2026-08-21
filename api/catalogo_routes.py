@@ -1102,6 +1102,74 @@ def registrar_catalogo(app: FastAPI, conn,
                 raise _rechazo(e.cuerpo)
         return _publicado(pid, p, creado, cli)
 
+    # ---- agente: completa y publica solo ----------------------------------
+
+    def _agente() -> "Agente":
+        """El agente reusa exactamente los mismos pasos que hacés a mano: no
+        hay un segundo camino de publicación con reglas distintas."""
+        from agente import Agente
+
+        def _paso_preparar(p):
+            cli = None
+            if store.hay_sesion() and cred.configurado:
+                try:
+                    cli = _client()
+                except HTTPException:
+                    pass
+            p = _preparar_uno(p, cli)
+            # Las fotos vienen de Amazon; sin al menos una no se puede publicar.
+            if not p.pictures:
+                raise RuntimeError("sin fotos: cargalas desde el editor")
+            return p
+
+        def _paso_codigo(p):
+            cli = None
+            if store.hay_sesion() and cred.configurado:
+                try:
+                    cli = _client()
+                except HTTPException:
+                    pass
+            r = _codigo_de(p.modelo or p.titulo_ml or "", p.asin, cli,
+                           p.modelo_fabricante, p.marca)
+            if r["gtin"]:
+                attrs = dict(p.ml_attributes or {})
+                attrs["GTIN"] = r["gtin"]
+                attrs.pop("EMPTY_GTIN_REASON", None)
+                cat.actualizar_publicacion(p.id, ml_attributes=attrs)
+            return r
+
+        def _paso_publicar(p):
+            if p.estado != "aprobado":
+                cat.cambiar_estado(p.id, "aprobado", "Aprobado por el agente")
+            return publicar(p.id, Borrador())
+
+        def _faltan(p):
+            return faltantes_para_publicar(p, None, p.pictures)
+
+        if not hasattr(app.state, "agente"):
+            app.state.agente = Agente(cat, _paso_preparar, _paso_codigo,
+                                      _paso_publicar, _faltan)
+        return app.state.agente
+
+    @app.get("/api/agente")
+    def agente_estado():
+        return _agente().estado()
+
+    @app.patch("/api/agente")
+    def agente_config(body: dict):
+        ag = _agente()
+        try:
+            ag.config = body or {}
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, f"Configuración inválida: {e}")
+        return ag.estado()
+
+    @app.post("/api/agente/tick")
+    def agente_tick():
+        """Avanza un paso sobre un producto. El panel lo llama en bucle mientras
+        el agente está encendido; también sirve para un cron externo."""
+        return _agente().tick()
+
     @app.post("/api/catalogo/{pid}/pausar")
     def pausar(pid: int):
         p = _p(pid)
