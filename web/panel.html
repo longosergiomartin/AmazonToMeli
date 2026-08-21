@@ -253,15 +253,14 @@
       <a href="/codigos/asistido" target="_blank" rel="noopener"
          style="font-size:.82rem;color:var(--accent);font-weight:600">
          🔖 …o completalos leyendo Amazon desde tu navegador</a>
-      <a href="/codigos/diagnostico" target="_blank" rel="noopener"
-         style="font-size:.82rem;color:var(--accent);font-weight:600">
-         🩺 Ver por qué no se encuentran</a>
       <span class="hint" id="cod-fuentes"></span>
     </div>
     <div class="msg" id="cod-msg"></div>
   </details>
 
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
+    <button type="button" class="sm" id="diagnostico"
+            title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
     <button type="button" class="sm" id="verificar" title="Contrasta el estado local con lo que hay de verdad en tu cuenta">🔍 Verificar en MercadoLibre</button>
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
@@ -673,6 +672,10 @@
 
   // El estado local puede mentir: MercadoLibre responde 200 a un ítem que
   // después queda en revisión. Esto pregunta y corrige.
+  $("diagnostico").onclick=function(){
+    window.open("/codigos/diagnostico","_blank","noopener");
+  };
+
   $("verificar").onclick=function(){
     var b=$("verificar"); b.disabled=true; b.textContent="Verificando…";
     api("POST","/api/catalogo/verificar",{}).then(function(d){
