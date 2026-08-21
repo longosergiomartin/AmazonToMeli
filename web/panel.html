@@ -515,7 +515,9 @@
     api("POST","/api/catalogo/lote/codigos",{ids:ids}).then(function(d){
       b.disabled=false;
       var m=d.encontrados+" de "+d.total+" con código.";
-      if(d.detenido) m+=" Amazon nos limitó: frenamos acá, seguí más tarde.";
+      if(d.detenido) m+=" Amazon nos limitó (bloquea a los servidores de la nube, "
+        +"no es algo que se arregle esperando mucho). Los que dependen de Amazon "
+        +"salen mejor corriendo la herramienta desde tu PC.";
       if(d.pendientes) m+=" Quedaron "+d.pendientes+" sin procesar.";
       var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
       if(sin.length) m+="\nSin código: "+sin.map(function(r){

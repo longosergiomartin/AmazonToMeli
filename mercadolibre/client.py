@@ -193,21 +193,29 @@ class MeliClient:
         return self._req("GET", f"/products/{product_id}")
 
     def ficha_de_catalogo(self, query: str, debe_contener: str = "",
-                          limit: int = 5) -> dict:
+                          limit: int = 5, parecido_a: str = "",
+                          minimo_parecido: float = 0.5) -> dict:
         """Busca el producto en el catálogo de MercadoLibre y devuelve su ficha.
 
         Es la fuente más confiable que tenemos: los sets ya están cargados en el
         catálogo de ML, con su GTIN y sus atributos. Devuelve
         {product_id, nombre, gtin} o {} si no hay match seguro.
 
-        `debe_contener` (el número de set, por ejemplo "75339") es la guarda
-        contra quedarse con otro producto: si el nombre del candidato no lo
-        trae, se descarta.
+        Hay dos guardas contra quedarse con otro producto, y se usa una u otra:
+
+          - `debe_contener` (el número de set, "75339"): si el nombre del
+            candidato no lo trae, se descarta. Es la más precisa.
+          - `parecido_a` (el título del producto): cuando no hay número, se
+            compara el nombre y se exige un mínimo de coincidencia.
         """
+        from titulos import parecido
+
         clave = (debe_contener or "").strip().lower()
         for prod in self.buscar_productos_catalogo(query, limit=limit):
             nombre = prod.get("nombre") or ""
             if clave and clave not in nombre.lower():
+                continue
+            if parecido_a and parecido(parecido_a, nombre) < minimo_parecido:
                 continue
             gtin = ""
             try:

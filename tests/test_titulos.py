@@ -79,3 +79,31 @@ def test_titulo_para_ml_no_repite_la_marca():
     from titulos import titulo_para_ml
     t = titulo_para_ml("LEGO", "LEGO Star Wars X-Wing", "75355")
     assert t.count("LEGO") == 1
+
+
+def test_parecido_reconoce_el_mismo_producto():
+    from titulos import parecido
+    ref = "LEGO Ideas Magic of Disney Set #21352 personajes icónicos minifigura"
+    assert parecido(ref, "Lego Ideas Magic Of Disney 21352 - 1103 Piezas") >= 0.5
+    assert parecido(ref, "Lego Ideas Disney 21352") >= 0.4
+
+
+def test_parecido_descarta_otro_set_de_la_misma_linea():
+    """Dos sets de la misma línea comparten casi todo el título menos el
+    número, que es justo lo único que los distingue."""
+    from titulos import parecido
+    ref = "LEGO Ideas Magic of Disney 21352"
+    assert parecido(ref, "Lego Ideas Magic Of Disney 43222") == 0.0
+
+
+def test_parecido_descarta_un_producto_distinto():
+    from titulos import parecido
+    assert parecido("LEGO Ideas Magic of Disney 21352",
+                    "Lego Star Wars Halcón Milenario 75192") == 0.0
+
+
+def test_parecido_sin_numeros_compara_solo_palabras():
+    from titulos import parecido
+    assert parecido("Bosch Taladro percutor profesional",
+                    "Bosch Taladro Percutor Profesional 600W") >= 0.9
+    assert parecido("Bosch Taladro percutor", "Cafetera Oster") == 0.0

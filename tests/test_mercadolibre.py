@@ -183,3 +183,34 @@ def test_gtin_del_catalogo_producto_sin_ese_atributo():
         [{"id": "MLA1", "name": "LEGO 75339 set"}],
         {"/products/MLA1": {"attributes": [{"id": "BRAND", "value_name": "LEGO"}]}})
     assert cli.gtin_de_catalogo("LEGO 75339", debe_contener="75339") == {}
+
+
+def test_ficha_de_catalogo_por_nombre_cuando_no_hay_numero():
+    """La vía que faltaba: si el producto no tiene número de modelo, se busca
+    por nombre con un mínimo de parecido."""
+    cli = _cli_con(
+        [{"id": "MLA55", "name": "Bosch Taladro Percutor Profesional 600W"}],
+        {"/products/MLA55": {"attributes": [
+            {"id": "GTIN", "value_name": "3165140857710"}]}})
+    r = cli.ficha_de_catalogo("Bosch taladro percutor",
+                              parecido_a="Bosch Taladro percutor profesional")
+    assert r["gtin"] == "3165140857710"
+
+
+def test_ficha_de_catalogo_por_nombre_descarta_lo_distinto():
+    cli = _cli_con(
+        [{"id": "MLA66", "name": "Cafetera Oster express"}],
+        {"/products/MLA66": {"attributes": [
+            {"id": "GTIN", "value_name": "3165140857710"}]}})
+    assert cli.ficha_de_catalogo("Bosch taladro",
+                                 parecido_a="Bosch Taladro percutor") == {}
+
+
+def test_ficha_de_catalogo_por_nombre_no_agarra_otro_set():
+    cli = _cli_con(
+        [{"id": "MLA77", "name": "Lego Ideas Magic Of Disney 43222"}],
+        {"/products/MLA77": {"attributes": [
+            {"id": "GTIN", "value_name": "5702016914498"}]}})
+    r = cli.ficha_de_catalogo("LEGO Ideas Magic of Disney",
+                              parecido_a="LEGO Ideas Magic of Disney 21352")
+    assert r == {}

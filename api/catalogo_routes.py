@@ -555,6 +555,16 @@ def registrar_catalogo(app: FastAPI, conn,
             _cache_attrs[categoria] = {"obligatorios": obligatorios, "todos": todos}
         return _cache_attrs[categoria]
 
+    def _limpiar_para_buscar(titulo: str) -> str:
+        """Título reducido a lo que sirve para buscar: sin marketing, sin
+        cantidades de piezas ni edades, que solo ensucian la consulta."""
+        import re
+        t = re.sub(r"\(?\s*[\d.,]+\s*(piezas|pzas|pcs|pieces|bloques)\b\)?", " ",
+                   titulo or "", flags=re.I)
+        t = re.sub(r"\b\d+\s*\+\s*", " ", t)              # "18+"
+        t = re.sub(r"[^0-9A-Za-zÁÉÍÓÚÜÑáéíóúüñ ]+", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+
     def _ficha_catalogo(titulo_completo: str, cli: Optional[MeliClient],
                         set_declarado: str = "", marca: str = "") -> dict:
         """Producto del catálogo de MercadoLibre que corresponde a este título.
@@ -581,6 +591,18 @@ def registrar_catalogo(app: FastAPI, conn,
                 ficha = cli.ficha_de_catalogo(consulta, debe_contener=numero)
             except MeliAPIError:
                 continue
+            if ficha.get("product_id"):
+                return ficha
+        # Por nombre: el número puede no estar, o MercadoLibre puede tener el
+        # producto cargado sin él en el nombre. Acá la guarda es el parecido
+        # entre los títulos, que además descarta otro set de la misma línea.
+        consulta = f"{prefijo} {_limpiar_para_buscar(titulo_completo)}".strip()
+        if len(consulta) > 3:
+            try:
+                ficha = cli.ficha_de_catalogo(consulta[:120],
+                                              parecido_a=titulo_completo)
+            except MeliAPIError:
+                return {}
             if ficha.get("product_id"):
                 return ficha
         return {}
