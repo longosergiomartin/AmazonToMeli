@@ -486,7 +486,7 @@ def test_pictures_persisten_para_publicar(client):
 def _cli_lote(enviados, con_categoria=True, gtin_catalogo=None):
     class _Cli:
         def ficha_de_catalogo(self, query, debe_contener="", limit=5,
-                              parecido_a="", minimo_parecido=0.5):
+                              parecido_a="", minimo_parecido=0.5, marca=""):
             return dict(gtin_catalogo) if gtin_catalogo else {}
 
         def gtin_de_catalogo(self, query, debe_contener="", limit=5):
@@ -701,9 +701,9 @@ def test_los_datos_se_leen_del_titulo_completo_no_del_recortado(tmp_path, monkey
                                        "product_id": "MLA77", "nombre": "LEGO 75256"})
     original = cli.ficha_de_catalogo
 
-    def _espiar(query, debe_contener="", limit=5):
+    def _espiar(query, debe_contener="", limit=5, **k):
         consultas.append((query, debe_contener))
-        return original(query, debe_contener, limit)
+        return original(query, debe_contener, limit, **k)
 
     cli.ficha_de_catalogo = _espiar
     _con_ml(monkeypatch, cli)
@@ -975,7 +975,8 @@ def test_la_cascada_llega_a_la_busqueda_por_nombre(tmp_path, monkeypatch):
     consultas = []
     cli = _cli_lote([])
 
-    def _ficha(query, debe_contener="", limit=5, parecido_a="", minimo_parecido=0.5):
+    def _ficha(query, debe_contener="", limit=5, parecido_a="",
+               minimo_parecido=0.5, marca=""):
         consultas.append((query, debe_contener, bool(parecido_a)))
         if debe_contener:
             return {}                      # por número no lo encuentra
@@ -1367,3 +1368,31 @@ def test_publicar_que_queda_pausado_se_activa_solo(tmp_path, monkeypatch):
     assert r.status_code == 200, r.text
     assert activados == ["MLA777"]
     assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_no_busca_por_el_codigo_interno_de_amazon(tmp_path, monkeypatch):
+    """Amazon declara 6332955 como "modelo" del set 10282. Buscar por ese
+    número no encuentra nada; el que sirve está en el título."""
+    consultas = []
+    cli = _cli_lote([])
+
+    def _ficha(query, debe_contener="", limit=5, parecido_a="",
+               minimo_parecido=0.5, marca=""):
+        consultas.append(debe_contener)
+        return {}
+
+    cli.ficha_de_catalogo = _ficha
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "bloqueado": True,
+                                      "candidatos": []})
+
+    titulo = "LEGO Adidas Originals Superstar 10282 Kit de construcción"
+    c = TestClient(crear_app(db_path=str(tmp_path / "interno.db")))
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
+                asin="B0INTERN01").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"modelo_fabricante": "6332955"})
+    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+
+    assert "10282" in consultas, consultas
+    assert "6332955" not in consultas, "buscó por el código interno de Amazon"
