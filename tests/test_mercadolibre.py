@@ -320,3 +320,23 @@ def test_obtener_varios_sin_ids_no_llama():
     cli = _cli_multi([])
     assert cli.obtener_varios(["", None]) == {}
     assert cli._req.llamadas == []
+
+
+def test_obtener_varios_aguanta_respuestas_con_otra_forma():
+    """La forma exacta del multiget no se puede probar sin la API de verdad.
+    Si viene distinta, tiene que devolver lo que entienda —o nada— pero nunca
+    reventar: una excepción acá es un 500 y el panel muestra un error vacío."""
+    from mercadolibre.client import MeliClient
+
+    for respuesta in ({"error": "algo"},           # dict en vez de lista
+                      [None, "basura", 42],        # elementos no-dict
+                      [{"code": 404, "body": {}}], # nada existe
+                      []):
+        cli = MeliClient(token_provider=lambda: "t", site="MLA")
+        cli._req = lambda m, p, **kw: respuesta
+        assert cli.obtener_varios(["MLA1"]) == {}
+
+    # El ítem pelado, sin el envoltorio {code, body}.
+    cli = MeliClient(token_provider=lambda: "t", site="MLA")
+    cli._req = lambda m, p, **kw: [{"id": "MLA1", "status": "active"}]
+    assert cli.obtener_varios(["MLA1"])["MLA1"]["status"] == "active"

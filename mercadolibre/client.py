@@ -354,8 +354,17 @@ class MeliClient:
         for i in range(0, len(ids), self.IDS_POR_LLAMADA):
             lote = ids[i:i + self.IDS_POR_LLAMADA]
             data = self._req("GET", "/items", params={"ids": ",".join(lote)})
-            for fila in (data or []):
-                cuerpo = fila.get("body") or {}
-                if fila.get("code") == 200 and cuerpo.get("id"):
+            if not isinstance(data, list):
+                continue
+            for fila in data:
+                if not isinstance(fila, dict):
+                    continue
+                # Formato del multiget: {code, body}. Se acepta también el ítem
+                # pelado: la forma exacta de la respuesta no se puede probar
+                # sin la API de verdad, y equivocarse acá era un 500.
+                cuerpo = fila.get("body") if isinstance(fila.get("body"), dict) \
+                    else fila
+                codigo = fila.get("code", 200)
+                if codigo == 200 and cuerpo.get("id"):
                     salida[cuerpo["id"]] = cuerpo
         return salida
