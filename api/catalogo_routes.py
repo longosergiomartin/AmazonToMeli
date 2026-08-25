@@ -609,8 +609,13 @@ def registrar_catalogo(app: FastAPI, conn,
         for numero in candidatos:
             consulta = f"{prefijo} {numero}".strip()
             try:
+                # 25 y no 5: buscando "LEGO 21042" los primeros lugares se los
+                # llevan repuestos de auto que comparten el número (IMC, Monroe,
+                # Cardone) y el set queda tapado. En el de Shrek el correcto ya
+                # venía tercero. Filtrar de más no cuesta nada —la marca y el
+                # número descartan lo ajeno— y es una sola llamada igual.
                 ficha = cli.ficha_de_catalogo(consulta, debe_contener=numero,
-                                              marca=marca)
+                                              marca=marca, limit=25)
             except MeliAPIError:
                 continue
             if ficha.get("product_id"):
@@ -960,10 +965,17 @@ def registrar_catalogo(app: FastAPI, conn,
             consulta = f"{p.marca} {numero}".strip() if numero else \
                 f"{p.marca} {_limpiar_para_buscar(completo)}".strip()
             fila = {"nombre": p.titulo_ml or p.modelo, "numero": numero or "—",
-                    "consulta": consulta, "resultados": [], "error": ""}
+                    "consulta": consulta, "resultados": [], "error": "",
+                    "elegido": ""}
             if cli is not None and consulta:
                 try:
-                    fila["resultados"] = cli.buscar_productos_catalogo(consulta, limit=5)
+                    fila["resultados"] = cli.buscar_productos_catalogo(consulta,
+                                                                       limit=25)
+                    # Cuál se queda: es la respuesta que importa. Ver la lista
+                    # cruda obliga a adivinar cuál pasaría el filtro.
+                    ficha = _ficha_catalogo(completo, cli, p.modelo_fabricante,
+                                            p.marca)
+                    fila["elegido"] = ficha.get("product_id", "")
                 except MeliAPIError as e:
                     fila["error"] = f"{e}"
                 except Exception as e:  # noqa: BLE001
@@ -982,9 +994,20 @@ def registrar_catalogo(app: FastAPI, conn,
             elif not res:
                 detalle = "<div style='color:#9a6410'>Sin resultados.</div>"
             else:
-                detalle = "<ul>" + "".join(
-                    f"<li><code>{_esc(r.get('id',''))}</code> — {_esc(r.get('nombre',''))}</li>"
-                    for r in res) + "</ul>"
+                filas_res = []
+                for r in res:
+                    rid = r.get("id", "")
+                    gana = bool(rid) and rid == f["elegido"]
+                    li = "<li style='background:#eafaef'>" if gana else "<li>"
+                    sello = "<b style='color:#1e7a34'> ← ELEGIDO</b>" if gana else ""
+                    filas_res.append(
+                        f"{li}<code>{_esc(rid)}</code> — "
+                        f"{_esc(r.get('nombre',''))}{sello}</li>")
+                detalle = "<ul>" + "".join(filas_res) + "</ul>"
+            if not f["error"] and res and not f["elegido"]:
+                detalle += ("<div style='color:#9a6410'>Ninguno pasa el filtro: "
+                            "ninguno es de la marca. MercadoLibre no tiene este "
+                            "producto cargado, o lo tiene con otro nombre.</div>")
             bloques.append(
                 f"<div style='border:1px solid #ddd;border-radius:9px;padding:12px;"
                 f"margin-bottom:12px'><b>{_esc(f['nombre'])}</b>"
