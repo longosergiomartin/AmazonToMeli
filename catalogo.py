@@ -524,10 +524,18 @@ class Catalogo:
         Exige el id: sin él no hay publicación que valga: marcarlo igual es
         decirle al usuario que vendió algo que no existe.
 
-        `estado_ml` es el estado que devolvió MercadoLibre. Solo `active`
-        significa que la publicación está a la venta; los demás (`under_review`,
-        `payment_required`, `inactive`) crean el ítem pero **no lo muestran**,
-        así que el producto no se da por publicado.
+        `estado_ml` es el estado que devolvió MercadoLibre:
+
+          - `active`: a la venta. Queda **publicado**.
+          - `paused`: la publicación **existe** y tiene su link; MercadoLibre la
+            deja así mientras revisa las fotos y los datos, y después la activa
+            sola. Queda **pausado**, que es un estado real del catálogo y trae su
+            botón de reactivar. Darla por fallada era peor que inútil: el ítem
+            seguía vivo en MercadoLibre y acá figuraba sin publicar, así que el
+            siguiente intento creaba un duplicado.
+          - el resto (`payment_required`, `inactive`): el ítem se creó pero no se
+            muestra y hace falta hacer algo a mano, así que se avisa con un error.
+            El id y el link se guardan igual, para poder encontrarlo.
         """
         p = self.obtener(pid)
         if not p:
@@ -535,7 +543,7 @@ class Catalogo:
         if not (ml_item_id or "").strip():
             raise ValueError("MercadoLibre no devolvió el id de la publicación: "
                              "no se puede dar por publicada.")
-        if estado_ml and estado_ml != "active":
+        if estado_ml and estado_ml not in ("active", "paused"):
             p.ml_item_id = ml_item_id
             p.ml_permalink = permalink
             self._guardar(p)
@@ -544,12 +552,15 @@ class Catalogo:
                       "no a la venta")
             raise ValueError(f"MercadoLibre creó el ítem {ml_item_id} pero quedó "
                              f"en estado «{estado_ml}», no publicado.")
+        pausado = estado_ml == "paused"
         p.ml_item_id = ml_item_id
         p.ml_permalink = permalink
-        p.estado = "publicado"
+        p.estado = "pausado" if pausado else "publicado"
         if p.precio_publicado_ars is None:
             p.precio_publicado_ars = p.precio_sugerido_ars
         self._guardar(p)
-        self._log(pid, "publicado", "ml_item_id", None, ml_item_id,
+        self._log(pid, p.estado, "ml_item_id", None, ml_item_id,
+                  (f"Creado en MercadoLibre, en pausa mientras lo revisan "
+                   f"({permalink})") if pausado else
                   f"Publicado en MercadoLibre ({permalink})")
         return p
