@@ -290,7 +290,15 @@
   var fmt=function(v){return v==null?"—":"$"+Math.round(v).toLocaleString("es-AR");};
   var api=function(m,u,b){return fetch(u,{method:m,headers:{"Content-Type":"application/json"},
     body:b?JSON.stringify(b):undefined}).then(function(r){
-      return r.json().catch(function(){return {};}).then(function(j){ if(!r.ok) throw (j.detail||j); return j; });});};
+      // Si el cuerpo no es JSON —500 con página HTML, corte del gateway— hay
+      // que decir el código igual: un "Error: {}" pelado no deja ni empezar a
+      // buscar el problema.
+      return r.json().catch(function(){
+        return {detail:"El servidor cortó la respuesta (HTTP "+r.status+"). "
+                +(r.status===502||r.status===504
+                  ? "Suele ser que la operación tardó demasiado."
+                  : "Reintentá en un momento.")};
+      }).then(function(j){ if(!r.ok) throw (j.detail||j); return j; });});};
 
   function mlStatus(){
     api("GET","/oauth/status").then(function(s){

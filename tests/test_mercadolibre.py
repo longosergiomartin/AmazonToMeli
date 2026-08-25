@@ -273,3 +273,50 @@ def test_marca_de_varias_palabras_no_matchea_con_media():
         [{"id": "MLA1", "name": "Fisher Juguete 12345"}], {})
     assert cli.ficha_de_catalogo("Fisher Price 12345", debe_contener="12345",
                                  marca="Fisher Price") == {}
+
+
+# ---- multiget: una llamada cada 20 ítems, no una por ítem ---------------
+
+class _MultiFalso:
+    """Responde el multiget de MercadoLibre y anota cuántas llamadas hubo."""
+
+    def __init__(self, existen):
+        self.existen, self.llamadas = set(existen), []
+
+    def __call__(self, metodo, path, **kw):
+        ids = (kw.get("params") or {}).get("ids", "").split(",")
+        self.llamadas.append(ids)
+        return [{"code": 200, "body": {"id": i, "status": "active"}}
+                if i in self.existen else {"code": 404, "body": {}}
+                for i in ids]
+
+
+def _cli_multi(existen):
+    cli = MeliClient(token_provider=lambda: "t", site="MLA")
+    cli._req = _MultiFalso(existen)
+    return cli
+
+
+def test_obtener_varios_agrupa_de_a_veinte():
+    """Una llamada HTTPS por producto hacía que la verificación se cortara
+    antes de terminar. El multiget acepta 20 ids por vez."""
+    ids = [f"MLA{n}" for n in range(45)]
+    cli = _cli_multi(ids)
+    r = cli.obtener_varios(ids)
+
+    assert len(r) == 45
+    assert len(cli._req.llamadas) == 3          # 20 + 20 + 5, no 45
+    assert [len(l) for l in cli._req.llamadas] == [20, 20, 5]
+
+
+def test_obtener_varios_deja_afuera_lo_que_no_existe():
+    """Así el que llama distingue el ítem que no está del que sí."""
+    cli = _cli_multi(["MLA1"])
+    r = cli.obtener_varios(["MLA1", "MLA_FANTASMA"])
+    assert "MLA1" in r and "MLA_FANTASMA" not in r
+
+
+def test_obtener_varios_sin_ids_no_llama():
+    cli = _cli_multi([])
+    assert cli.obtener_varios(["", None]) == {}
+    assert cli._req.llamadas == []
