@@ -1396,3 +1396,30 @@ def test_no_busca_por_el_codigo_interno_de_amazon(tmp_path, monkeypatch):
 
     assert "10282" in consultas, consultas
     assert "6332955" not in consultas, "buscó por el código interno de Amazon"
+
+
+def test_busca_mas_alla_de_los_primeros_resultados(tmp_path, monkeypatch):
+    """Buscando "LEGO 21042" los primeros lugares se los llevan repuestos de
+    auto que comparten el número. Con 5 resultados el set queda tapado."""
+    limites = []
+    cli = _cli_lote([])
+
+    def _ficha(query, debe_contener="", limit=5, parecido_a="",
+               minimo_parecido=0.5, marca=""):
+        if debe_contener:
+            limites.append(limit)
+        return {}
+
+    cli.ficha_de_catalogo = _ficha
+    _con_ml(monkeypatch, cli)
+    monkeypatch.setattr("gtin_lookup.buscar_gtin",
+                        lambda asin: {"ok": False, "gtin": "", "bloqueado": True,
+                                      "candidatos": []})
+
+    titulo = "LEGO Architecture Set de Construcción de la Estatua 21042"
+    c = TestClient(crear_app(db_path=str(tmp_path / "tapado.db")))
+    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
+                asin="B0TAPADO01").json()["id"]
+    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+
+    assert limites and min(limites) >= 20, limites
