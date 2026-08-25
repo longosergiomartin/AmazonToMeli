@@ -1423,3 +1423,105 @@ def test_busca_mas_alla_de_los_primeros_resultados(tmp_path, monkeypatch):
     c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
 
     assert limites and min(limites) >= 20, limites
+
+
+def _cli_publica(status, activa_a=None):
+    """Cliente falso que publica devolviendo `status`; `activa_a` es el estado
+    que informa después de reactivar (None = MercadoLibre lo deja en pausa)."""
+    class _Cli:
+        def __init__(self):
+            self.publicados, self.reactivados = [], []
+
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
+        def atributos_obligatorios(self, cat_id):
+            return []
+
+        def valores_permitidos(self, cat_id):
+            return {}
+
+        def publicar(self, item):
+            self.publicados.append(item)
+            return {"id": "MLA3861899038", "permalink": "http://ml/z",
+                    "status": status}
+
+        def reactivar(self, item_id):
+            self.reactivados.append(item_id)
+            return {}
+
+        def obtener(self, item_id):
+            return {"status": activa_a or status, "permalink": "http://ml/z"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+    return _Cli()
+
+
+def test_pausado_por_ml_queda_registrado_no_perdido(tmp_path, monkeypatch):
+    """MercadoLibre deja la publicación en pausa mientras revisa las fotos. El
+    ítem existe: darlo por fallado lo dejaba vivo en ML y sin registrar acá."""
+    import api.catalogo_routes as rutas
+    cli = _cli_publica("paused")            # sigue pausado tras reactivar
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "pau.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO Zelda Ocarina 77092",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    p = c.get(f"/api/catalogo/{pid}").json()
+    assert p["estado"] == "pausado"
+    assert p["ml_item_id"] == "MLA3861899038"
+    assert p["ml_permalink"] == "http://ml/z"
+
+
+def test_no_republica_un_producto_que_ya_tiene_item(tmp_path, monkeypatch):
+    """El duplicado que causaba el bug anterior: el ítem quedaba en ML, acá
+    figuraba sin publicar, y el siguiente intento creaba una segunda
+    publicación de lo mismo."""
+    import api.catalogo_routes as rutas
+    cli = _cli_publica("paused")
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "dup.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO Batman Forever 76273",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    assert c.post(f"/api/catalogo/{pid}/publicar", json={}).status_code == 200
+
+    c.post(f"/api/catalogo/{pid}/aprobar")          # forzar el reintento
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+    assert r.status_code == 409
+    assert "duplicado" in str(r.json())
+    assert len(cli.publicados) == 1, "creó una segunda publicación"
+
+
+def test_verificar_pasa_a_publicado_cuando_ml_lo_activa(tmp_path, monkeypatch):
+    """Cuando ML termina de revisar y lo activa, el catálogo tiene que
+    enterarse: si no, queda pausado para siempre."""
+    import api.catalogo_routes as rutas
+    cli = _cli_publica("paused")
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "act.db")))
+    pid = _alta(c, marca="LEGO", titulo_ml="LEGO Ninjago 71721",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    c.post(f"/api/catalogo/{pid}/publicar", json={})
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+    cli.obtener = lambda item_id: {"status": "active", "permalink": "http://ml/z"}
+    cli.mis_items = lambda: ["MLA3861899038"]
+    d = c.post("/api/catalogo/verificar", json={}).json()
+
+    assert d["corregidos"] == 1
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"

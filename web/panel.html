@@ -80,7 +80,9 @@
   .pill.borrador{background:var(--info-bg);color:var(--accent)}
   .pill.aprobado{background:var(--warn-bg);color:var(--warn)}
   .pill.publicado{background:var(--good-bg);color:var(--good)}
-  .pill.pausado{background:var(--bad-bg);color:var(--bad)}
+  /* Pausado no es un error: MercadoLibre deja así las publicaciones nuevas
+     mientras las revisa. La publicación existe y tiene su link. */
+  .pill.pausado{background:var(--warn-bg);color:var(--warn)}
   .warnflag{color:var(--bad);font-weight:700;font-size:.75rem}
   /* Va en un div adentro de la celda: una celda de tabla en display:flex se
      encoge y los botones se salen de ella. */

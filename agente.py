@@ -106,7 +106,11 @@ class Agente:
         conteo = {PREPARAR: 0, CODIGO: 0, PUBLICAR: 0, NADA: 0}
         for p in self.cat.todos():
             conteo[self.paso_pendiente(p)] += 1
-        publicados = sum(1 for p in self.cat.todos() if p.estado == "publicado")
+        # Los pausados también están en MercadoLibre: la publicación existe y
+        # ML la activa cuando termina de revisarla. No contarlos dejaba el
+        # contador quieto después de publicar de verdad.
+        publicados = sum(1 for p in self.cat.todos()
+                         if p.estado in ("publicado", "pausado"))
         sin_codigo_a_intentar = len(self.sin_codigo)
         return {**self.config,
                 "por_preparar": conteo[PREPARAR],

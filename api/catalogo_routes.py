@@ -928,11 +928,27 @@ def registrar_catalogo(app: FastAPI, conn,
                 except MeliAPIError as e:
                     fila["estado_ml"] = "no existe" if "404" in str(e) else f"error: {e}"
             fila["en_mis_publicaciones"] = p.ml_item_id in en_la_cuenta
-            # Solo `active` es una publicación a la venta.
-            if p.estado == "publicado" and fila["estado_ml"] != "active":
-                cat.cambiar_estado(p.id, "borrador",
-                                   f"No está publicado en MercadoLibre "
-                                   f"({fila['estado_ml']})")
+            # El estado local sigue al de MercadoLibre: `active` es publicado y
+            # `paused` es pausado —la publicación existe, ML la tiene en pausa
+            # mientras revisa—. Es también la vía por la que un pausado vuelve a
+            # publicado solo, cuando ML termina de revisarlo.
+            esperado = {"active": "publicado",
+                        "paused": "pausado"}.get(fila["estado_ml"], "")
+            if esperado:
+                # Sigue al estado de MercadoLibre. Además de mantenerlo al día,
+                # rescata los que quedaron mal de antes: con ítem creado en ML
+                # pero figurando acá como no publicados.
+                nuevo = esperado
+            elif p.estado in ("publicado", "pausado"):
+                # No está ni a la venta ni en pausa: acá no puede figurar como
+                # publicado. Es el caso del ítem que no existe en la cuenta.
+                nuevo = "borrador"
+            else:
+                nuevo = p.estado
+            if nuevo != p.estado:
+                cat.cambiar_estado(p.id, nuevo,
+                                   f"MercadoLibre lo tiene en "
+                                   f"«{fila['estado_ml']}»")
                 corregidos += 1
                 fila["corregido"] = True
             revisados.append(fila)
@@ -1184,15 +1200,17 @@ def registrar_catalogo(app: FastAPI, conn,
         if not item_id:
             raise HTTPException(502, "MercadoLibre respondió sin id de "
                                 f"publicación: {str(creado)[:200]}")
-        # `paused` no es un fallo: el ítem existe y solo hay que activarlo.
-        # MercadoLibre crea así algunas publicaciones de catálogo.
+        # `paused` no es un fallo: el ítem existe y tiene su link. Se intenta
+        # activarlo, pero si MercadoLibre lo mantiene en pausa —lo hace mientras
+        # revisa las fotos y los datos— **no se toca**: queda registrado como
+        # pausado, con su id. Tratarlo como error dejaba el ítem vivo en ML y
+        # sin publicar acá, y el siguiente intento creaba un duplicado.
         if estado_ml == "paused":
             try:
                 cli.reactivar(item_id)
                 estado_ml = (cli.obtener(item_id).get("status") or "").strip()
-            except MeliAPIError as e:
-                raise HTTPException(502, f"MercadoLibre creó el ítem {item_id} "
-                                    f"pausado y no se pudo activar: {e}")
+            except MeliAPIError:
+                pass
         try:
             return _registrar(pid, p, creado, cli, item_id, estado_ml)
         except ValueError as e:
@@ -1215,6 +1233,14 @@ def registrar_catalogo(app: FastAPI, conn,
         if p.estado != "aprobado":
             raise HTTPException(409, "El producto debe estar APROBADO antes de "
                                 "publicar. Revisá la vista previa y aprobalo.")
+        # Ya tiene ítem en MercadoLibre: volver a publicar crearía un duplicado.
+        # Pasaba cuando ML devolvía un estado distinto de `active` y el producto
+        # quedaba figurando como no publicado.
+        if (p.ml_item_id or "").strip():
+            raise HTTPException(409, f"Este producto ya tiene la publicación "
+                                f"{p.ml_item_id} en MercadoLibre. Publicarlo de "
+                                f"nuevo crearía un duplicado; si quedó pausada, "
+                                f"reactivala desde el listado.")
         pics = body.pictures or p.pictures
         # 1) Datos básicos (título/categoría/precio/foto): no requieren ML.
         faltan = faltantes_para_publicar(p, None, pics)
