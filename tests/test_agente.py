@@ -224,3 +224,17 @@ def test_estado_cuenta_lo_que_falta(cat):
     e = ag.estado()
     assert e["por_preparar"] == 1 and e["sin_codigo"] == 1
     assert e["pendientes"] == 2
+
+
+def test_cuenta_los_pausados_como_publicados(cat):
+    """Un pausado está en MercadoLibre: la publicación existe y ML la activa
+    cuando termina de revisarla."""
+    ag = _agente(cat)
+    p = _prod(cat, asin="B0AGPAUS01", ml_category_id="MLA1157",
+              pictures=["http://i/1.jpg"])
+    cat.cambiar_estado(p.id, "aprobado")
+    cat.registrar_publicacion(p.id, "MLA5", "http://ml/p", "paused")
+
+    assert cat.obtener(p.id).estado == "pausado"
+    assert ag.estado()["publicados"] == 1
+    assert ag.paso_pendiente(cat.obtener(p.id)) == NADA
