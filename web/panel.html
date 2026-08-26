@@ -693,6 +693,9 @@
       partes.push("MercadoLibre "+(f.mercadolibre?"✓":"✕"));
       partes.push("UPCitemdb ✓");
       partes.push("tu navegador ✓");
+      // Con proxy la lectura de Amazon funciona desde el servidor; sin él, solo
+      // corriendo la herramienta desde tu PC.
+      if(f.proxy_amazon) partes.push("Amazon por proxy ✓");
       if(f.brickset) partes.push("Brickset ✓");
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
       // El botón de videos no sirve sin la clave: mejor decirlo antes de que

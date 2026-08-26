@@ -298,6 +298,9 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
      (**opcional pero muy recomendada si vendés LEGO**, ver abajo).
    - `YOUTUBE_API_KEY` = clave de YouTube Data API v3 (*opcional*, para buscar
      el video del producto, ver abajo).
+   - `SCRAPER_API_KEY` = clave de [scraperapi.com](https://www.scraperapi.com/)
+     (*opcional*, para que la carga en lote funcione desde el servidor, ver
+     abajo).
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
@@ -339,6 +342,30 @@ botones de la herramienta: leer lo que vos ya podés ver.
 - **`BRICKSET_API_KEY`** *(opcional, solo LEGO)*: si tenés una API key de
   [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
   hace falta configurarla.
+
+### Cargar en lote sin que Amazon frene (`SCRAPER_API_KEY`)
+
+**La API oficial de Amazon no es una opción.** PA-API 5.0 dejó de aceptar
+clientes nuevos y se discontinúa en mayo de 2026; además exigía ser Amazon
+Associate **con ventas de afiliado hechas**. Comprar en Amazon para revender no
+califica. La SP-API es para vendedores *de* Amazon, tampoco aplica.
+
+Lo que sí funciona es leer la página a través de un proxy que ponga IP
+residencial. Con `SCRAPER_API_KEY` configurada, la importación va por
+[ScraperAPI](https://www.scraperapi.com/) en vez de ir directo, y **la cola deja
+de frenarse desde el servidor**. Sin la clave, todo sigue igual que antes: se
+lee directo, que es lo que sirve corriendo la herramienta en tu PC.
+
+El plan gratuito da **1.000 créditos por mes sin tarjeta**, y cada producto de
+Amazon gasta 5: **unos 200 productos mensuales gratis**.
+
+Yendo por proxy, la pausa entre productos baja a 0,2 s: existía para no golpear
+a Amazon, y con proxy eso es trabajo del proxy. El lote termina mucho más
+rápido.
+
+Los errores se explican distinto según de dónde vengan: `401` es la clave mal
+puesta, `403` es haberse quedado sin créditos del mes. No es lo mismo que
+Amazon nos bloquee.
 
 ### El video de la publicación
 

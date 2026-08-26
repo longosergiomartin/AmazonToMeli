@@ -255,3 +255,31 @@ def test_los_accesorios_se_descartan_aunque_no_haya_marca(cola):
     ficha = {**_ficha("B0ACCES001", 40.0),
              "modelo": "Vitrina acrílica para exhibir tu colección", "marca": "Genérica"}
     assert cola.procesar_uno(importador=lambda url: ficha)["hecho"] is False
+
+
+def test_por_proxy_no_pausa_entre_productos(cola, monkeypatch):
+    """La pausa existe para no golpear a Amazon. Con proxy es su trabajo, y
+    esperar de más hace que el lote tarde el triple sin ganar nada."""
+    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
+    cola.encolar(["https://www.amazon.com/dp/B0PAUSA0001",
+                  "https://www.amazon.com/dp/B0PAUSA0002"])
+    esperas = []
+    cola.procesar_lote(maximo=2, pausa_seg=2.0,
+                       importador=lambda u: {"ok": True, "asin": "B0PAUSA0001",
+                                             "modelo": "Cosa", "precio_usd": 10.0,
+                                             "imagenes": [], "marca": "X"},
+                       dormir=esperas.append)
+    assert all(e <= 0.2 for e in esperas), esperas
+
+
+def test_sin_proxy_mantiene_la_pausa(cola, monkeypatch):
+    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
+    cola.encolar(["https://www.amazon.com/dp/B0PAUSA0003",
+                  "https://www.amazon.com/dp/B0PAUSA0004"])
+    esperas = []
+    cola.procesar_lote(maximo=2, pausa_seg=2.0,
+                       importador=lambda u: {"ok": True, "asin": "B0PAUSA0003",
+                                             "modelo": "Cosa", "precio_usd": 10.0,
+                                             "imagenes": [], "marca": "X"},
+                       dormir=esperas.append)
+    assert esperas == [2.0]

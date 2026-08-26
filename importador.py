@@ -177,7 +177,16 @@ class ColaImportacion:
                       importador: Callable[[str], dict] = importar_desde_url,
                       dormir: Callable[[float], None] = time.sleep) -> dict:
         """Procesa hasta `maximo` productos, con una pausa entre cada uno para
-        no golpear el sitio. Corta apenas Amazon nos limita."""
+        no golpear el sitio. Corta apenas Amazon nos limita.
+
+        Yendo por proxy la pausa sobra: el proxy rota IPs y es su trabajo no
+        golpear a nadie. Esperar de más ahí solo hace que el lote tarde el
+        triple sin ganar nada.
+        """
+        from amazon_import import scraperapi_configurada
+
+        if scraperapi_configurada():
+            pausa_seg = min(pausa_seg, 0.2)
         resultados = []
         detener = False
         motivo = "ok"
