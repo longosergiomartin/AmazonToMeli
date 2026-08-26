@@ -35,6 +35,29 @@ ESTADOS = ("borrador", "aprobado", "publicado", "pausado")
 DOLARES_COSTO = ("tarjeta", "oficial")
 
 
+def id_de_youtube(valor: str) -> str:
+    """El id del video a partir de lo que haya pegado el usuario.
+
+    MercadoLibre quiere el id pelado (`dQw4w9WgXcQ`), pero lo que se copia del
+    navegador es la URL entera. Se aceptan las dos cosas, y las formas de link
+    que usa YouTube: watch, youtu.be, embed y shorts. Lo que no se entiende
+    devuelve vacío, así no se manda basura a la publicación.
+    """
+    import re
+
+    v = (valor or "").strip()
+    if not v:
+        return ""
+    patrones = (r"[?&]v=([A-Za-z0-9_-]{11})",
+                r"youtu\.be/([A-Za-z0-9_-]{11})",
+                r"/(?:embed|shorts|v)/([A-Za-z0-9_-]{11})")
+    for patron in patrones:
+        m = re.search(patron, v)
+        if m:
+            return m.group(1)
+    return v if re.fullmatch(r"[A-Za-z0-9_-]{11}", v) else ""
+
+
 @dataclass
 class ProductoCatalogo:
     # --- datos de Amazon (carga manual) ---
@@ -65,6 +88,12 @@ class ProductoCatalogo:
     ml_category_id: str = ""
     ml_attributes: dict = field(default_factory=dict)
     pictures: list = field(default_factory=list)
+    # Videos del producto en Amazon. Son de su CDN (.mp4/.m3u8) y **no se
+    # pueden publicar en MercadoLibre**, que solo acepta YouTube: se guardan
+    # para poder verlos sin volver a Amazon.
+    videos: list = field(default_factory=list)
+    # El que sí va a la publicación: id de un video de YouTube.
+    video_youtube: str = ""
     # --- calculados / estado (los llena el servicio) ---
     id: Optional[int] = None
     costo_total_ars: float = 0.0
@@ -262,7 +291,9 @@ class Catalogo:
         for columna, tipo in (("modelo_fabricante", "TEXT"),
                               ("pictures", "TEXT"),
                               ("dias_preparacion", "INTEGER DEFAULT 25"),
-                              ("descripcion", "TEXT")):
+                              ("descripcion", "TEXT"),
+                              ("videos", "TEXT"),
+                              ("video_youtube", "TEXT")):
             if columna not in cols:
                 conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
 
@@ -279,7 +310,7 @@ class Catalogo:
                 dias_preparacion INTEGER,
                 titulo_ml TEXT, descripcion TEXT,
                 ml_category_id TEXT, ml_attributes TEXT,
-                pictures TEXT,
+                pictures TEXT, videos TEXT, video_youtube TEXT,
                 costo_total_ars REAL, precio_sugerido_ars REAL,
                 precio_publicado_ars REAL, margen_pct REAL,
                 estado TEXT, ml_item_id TEXT, ml_permalink TEXT
@@ -361,24 +392,29 @@ class Catalogo:
                "titulo_ml", "descripcion",
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
-               "ml_permalink"]
+               "ml_permalink", "video_youtube"]
 
     def _fila_a_producto(self, row) -> ProductoCatalogo:
         d = dict(row)
         attrs = json.loads(d.pop("ml_attributes") or "{}")
         pics = json.loads(d.pop("pictures") or "[]")
+        vids = json.loads(d.pop("videos", None) or "[]")
+        # Las filas anteriores a la migración traen NULL en las columnas nuevas,
+        # y el campo está declarado como texto: sin esto entra un None donde el
+        # resto del código espera un str.
+        d["video_youtube"] = d.get("video_youtube") or ""
         d.pop("creado", None); d.pop("actualizado", None)
-        return ProductoCatalogo(ml_attributes=attrs, pictures=pics,
+        return ProductoCatalogo(ml_attributes=attrs, pictures=pics, videos=vids,
                                 **{k: d[k] for k in d})
 
     def agregar(self, p: ProductoCatalogo) -> ProductoCatalogo:
         self._calcular(p)
         vals = [getattr(p, c) for c in self._CAMPOS]
         p.id = self.conn.insertar(
-            f"""INSERT INTO catalogo (creado, actualizado, ml_attributes, pictures, {','.join(self._CAMPOS)})
-                VALUES (?, ?, ?, ?, {','.join('?' * len(self._CAMPOS))})""",
+            f"""INSERT INTO catalogo (creado, actualizado, ml_attributes, pictures, videos, {','.join(self._CAMPOS)})
+                VALUES (?, ?, ?, ?, ?, {','.join('?' * len(self._CAMPOS))})""",
             [_ahora(), _ahora(), json.dumps(p.ml_attributes),
-             json.dumps(p.pictures)] + vals,
+             json.dumps(p.pictures), json.dumps(p.videos)] + vals,
         )
         self.conn.commit()
         self._log(p.id, "alta", nota=f"Producto {p.modelo or p.asin} registrado")
@@ -396,8 +432,10 @@ class Catalogo:
         sets = ", ".join(f"{c} = ?" for c in self._CAMPOS)
         vals = [getattr(p, c) for c in self._CAMPOS]
         self.conn.execute(
-            f"UPDATE catalogo SET actualizado = ?, ml_attributes = ?, pictures = ?, {sets} WHERE id = ?",
-            [_ahora(), json.dumps(p.ml_attributes), json.dumps(p.pictures)] + vals + [p.id],
+            f"UPDATE catalogo SET actualizado = ?, ml_attributes = ?, pictures = ?, "
+            f"videos = ?, {sets} WHERE id = ?",
+            [_ahora(), json.dumps(p.ml_attributes), json.dumps(p.pictures),
+             json.dumps(p.videos)] + vals + [p.id],
         )
         self.conn.commit()
 
@@ -428,7 +466,8 @@ class Catalogo:
                                ml_attributes=None, pictures=None,
                                dias_preparacion=None, descripcion=None,
                                marca=None, modelo=None,
-                               modelo_fabricante=None) -> ProductoCatalogo:
+                               modelo_fabricante=None, videos=None,
+                               video_youtube=None) -> ProductoCatalogo:
         """Completa/edita los datos necesarios para publicar: título, categoría
         de MercadoLibre, marca, modelo, atributos obligatorios, fotos y días de
         preparación."""
@@ -453,6 +492,10 @@ class Catalogo:
             p.dias_preparacion = int(dias_preparacion)
         if descripcion is not None:
             p.descripcion = descripcion
+        if videos is not None:
+            p.videos = videos
+        if video_youtube is not None:
+            p.video_youtube = id_de_youtube(video_youtube)
         self._guardar(p)
         self._log(pid, "publicacion", nota="Datos de publicación actualizados "
                   f"(cat {p.ml_category_id or '—'}, {len(p.pictures)} foto/s)")

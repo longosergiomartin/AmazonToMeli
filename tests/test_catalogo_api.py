@@ -1528,3 +1528,94 @@ def test_verificar_pasa_a_publicado_cuando_ml_lo_activa(tmp_path, monkeypatch):
 
     assert d["corregidos"] == 1
     assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+# ---- videos de YouTube --------------------------------------------------
+
+def test_lote_videos_avisa_si_falta_la_clave(client, monkeypatch):
+    """Sin YOUTUBE_API_KEY no se puede buscar; hay que decirlo, no fallar
+    silenciosamente."""
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: False)
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO 10282").json()["id"]
+    r = client.post("/api/catalogo/lote/videos", json={"ids": [pid]})
+    assert r.status_code == 422
+    assert "YOUTUBE_API_KEY" in str(r.json())
+
+
+def test_lote_videos_guarda_el_que_encuentra(client, monkeypatch):
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
+        "video_id": "dQw4w9WgXcQ", "titulo": "LEGO 10282 adidas", "canal": "LEGO"})
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO adidas 10282").json()["id"]
+    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
+
+    assert d["encontrados"] == 1
+    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == "dQw4w9WgXcQ"
+
+
+def test_lote_videos_sin_resultado_no_es_un_error(client, monkeypatch):
+    """Que no haya video oficial es lo normal, no una falla."""
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {})
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO raro 99999").json()["id"]
+    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
+
+    assert d["encontrados"] == 0 and d["total"] == 1
+    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == ""
+
+
+def test_lote_videos_no_repisa_el_que_ya_esta(client, monkeypatch):
+    """El video cargado a mano gana: no se lo pisa con uno automático."""
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
+        "video_id": "OTROOTRO123", "titulo": "otro", "canal": "LEGO"})
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO 10282").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/publicacion",
+                 json={"video_youtube": "dQw4w9WgXcQ"})
+    client.post("/api/catalogo/lote/videos", json={"ids": [pid]})
+
+    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == "dQw4w9WgXcQ"
+
+
+def test_buscar_video_de_un_producto(client, monkeypatch):
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
+        "video_id": "dQw4w9WgXcQ", "titulo": "LEGO 10282", "canal": "LEGO"})
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO adidas 10282").json()["id"]
+    r = client.post(f"/api/catalogo/{pid}/video").json()
+
+    assert r["encontrado"] is True and r["canal"] == "LEGO"
+    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == "dQw4w9WgXcQ"
+
+
+def test_preparar_no_busca_video_sin_clave(client, monkeypatch):
+    """Sin clave, preparar tiene que seguir andando igual que siempre."""
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: False)
+    monkeypatch.setattr(rutas, "buscar_video",
+                        lambda *a, **k: pytest.fail("no debería buscar"))
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO 10282",
+                ml_category_id="MLA1157").json()["id"]
+    assert client.post("/api/catalogo/lote/preparar",
+                       json={"ids": [pid]}).status_code == 200
+
+
+def test_las_fuentes_informan_si_hay_clave_de_youtube(client, monkeypatch):
+    """El panel usa esto para no ofrecer un botón que no puede funcionar."""
+    import api.catalogo_routes as rutas
+
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: False)
+    assert client.get("/api/codigos/fuentes").json()["youtube"] is False
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    assert client.get("/api/codigos/fuentes").json()["youtube"] is True

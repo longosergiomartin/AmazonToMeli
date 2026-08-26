@@ -237,6 +237,7 @@
   <div class="lote off" id="lote">
     <b id="lote-n">0 seleccionados</b>
     <button type="button" class="sm" id="lote-codigos" title="Busca el código de barras de cada uno y lo guarda">🔎 Buscar códigos</button>
+    <button type="button" class="sm" id="lote-videos" title="Busca en YouTube el video oficial de cada producto">🎬 Buscar videos</button>
     <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
     <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
@@ -582,6 +583,23 @@
     }).catch(function(e){ b.disabled=false; err(e); });
   };
 
+  $("lote-videos").onclick=function(){
+    var ids=seleccionados();
+    if(!ids.length) return;
+    var b=$("lote-videos"); b.disabled=true;
+    $("lote-msg").textContent="Buscando videos en YouTube…";
+    api("POST","/api/catalogo/lote/videos",{ids:ids}).then(function(d){
+      b.disabled=false;
+      var m=d.encontrados+" de "+d.total+" con video.";
+      var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
+      // Encontrar pocos es lo esperado: solo se acepta el canal de la marca.
+      if(sin.length) m+="\nSin video oficial: "+sin.map(function(r){
+        return r.nombre;}).join(" · ");
+      $("lote-msg").textContent=m;
+      cargar();
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
   $("lote-borrar").onclick=function(){
     var ids=seleccionados();
     if(ids.length && confirm("¿Borrar "+ids.length+" producto(s) del catálogo?"))
@@ -677,6 +695,15 @@
       partes.push("tu navegador ✓");
       if(f.brickset) partes.push("Brickset ✓");
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
+      // El botón de videos no sirve sin la clave: mejor decirlo antes de que
+      // lo aprieten, no después.
+      var bv=$("lote-videos");
+      if(bv && !f.youtube){
+        bv.disabled=true;
+        bv.title="Falta configurar YOUTUBE_API_KEY (se crea gratis en la "
+          +"consola de Google Cloud, YouTube Data API v3).";
+        bv.textContent="🎬 Buscar videos (falta la clave)";
+      }
     }).catch(function(){});
   }
 
@@ -784,6 +811,7 @@
         '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
         '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist>'+hint+'</div>';}).join("");
     var fotos=(v.fotos||[]).join("\n");
+    var vids=v.videos||[];
     $("dlg-b").innerHTML=
       '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
       // La marca es obligatoria en casi todas las categorías y MercadoLibre la
@@ -804,6 +832,15 @@
         '<textarea id="ed-desc" rows="4" placeholder="Descripción de la publicación">'+esc(v.descripcion||"")+'</textarea></div>'+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="f"><label>Video de YouTube (opcional)</label>'+
+        '<input id="ed-video" placeholder="https://www.youtube.com/watch?v=… o el id" value="'+esc(v.video_youtube||"")+'">'+
+        '<button type="button" class="sm" id="btn-video-auto" style="margin-top:6px">🎬 Buscar en YouTube</button>'+
+        '<span class="hint">MercadoLibre solo acepta YouTube. '
+        +(vids.length
+          ? 'Este producto trae '+vids.length+' video/s en Amazon, pero son de su servidor y ML no los toma: '
+            +vids.map(function(u,i){return '<a href="'+esc(u)+'" target="_blank" rel="noopener">ver #'+(i+1)+'</a>';}).join(" · ")
+          : 'No se encontraron videos en la página de Amazon.')
+        +'</span></div>'+
       '<div class="f"><label>Días de preparación (entrega)</label>'+
         '<input id="ed-dias" type="number" step="1" value="'+(v.dias_preparacion||25)+'">'+
         '<span class="hint">Se muestra como "el vendedor necesita N días para tener listo el producto".</span></div>'+
@@ -832,6 +869,23 @@
           $("gtin-msg").textContent=r.mensaje||"No encontrado; cargalo a mano.";
         }
       }).catch(function(){ bg.disabled=false; $("gtin-msg").textContent="Error de búsqueda; probá el link manual."; });
+    };
+    // Video oficial en YouTube. Guarda el producto primero: la búsqueda usa la
+    // marca y el número de set, que pueden estar recién editados en pantalla.
+    var bv=$("btn-video-auto");
+    if(bv) bv.onclick=function(){
+      bv.disabled=true; var antes=bv.textContent; bv.textContent="Buscando…";
+      guardarPub(id,attrIds)
+        .then(function(){ return api("POST","/api/catalogo/"+id+"/video",{}); })
+        .then(function(r){
+          bv.disabled=false; bv.textContent=antes;
+          if(r.encontrado){ $("ed-video").value=r.video_id;
+            alert("✓ "+r.titulo+"\nCanal: "+r.canal); }
+          else alert("No encontré video oficial de este producto.\n"
+            +"Solo se aceptan videos del canal de la marca: es preferible "
+            +"quedarse sin video antes que poner el de otro producto.");
+        })
+        .catch(function(e){ bv.disabled=false; bv.textContent=antes; err(e); });
     };
     // Precio editable con margen en vivo (para publicar a precio competitivo).
     function pintarMargen(pct,costo){ var m=$("ed-margen"); var ars=costo*pct/100;
@@ -908,7 +962,8 @@
     return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs,
             marca:($("ed-marca").value||"").trim(), modelo:($("ed-modelo").value||"").trim(),
             modelo_fabricante:($("ed-set").value||"").trim(),
-            pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
+            pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||"",
+            video_youtube:($("ed-video").value||"").trim()};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 
