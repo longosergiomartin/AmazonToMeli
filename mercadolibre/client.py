@@ -336,3 +336,35 @@ class MeliClient:
 
     def obtener(self, item_id: str) -> dict:
         return self._req("GET", f"/items/{item_id}")
+
+    # MercadoLibre acepta hasta 20 ids por llamada en el multiget.
+    IDS_POR_LLAMADA = 20
+
+    def obtener_varios(self, item_ids) -> dict[str, dict]:
+        """Varios ítems de una, `{item_id: ítem}`.
+
+        De a uno era una llamada HTTPS por producto: con medio centenar de
+        publicaciones, la petición tarda tanto que el servidor la corta antes
+        de terminar. Los que fallan quedan afuera del resultado, así que el
+        que llama distingue "no está" de "no lo pude leer" mirando si la clave
+        aparece.
+        """
+        ids = [i for i in (item_ids or []) if (i or "").strip()]
+        salida: dict[str, dict] = {}
+        for i in range(0, len(ids), self.IDS_POR_LLAMADA):
+            lote = ids[i:i + self.IDS_POR_LLAMADA]
+            data = self._req("GET", "/items", params={"ids": ",".join(lote)})
+            if not isinstance(data, list):
+                continue
+            for fila in data:
+                if not isinstance(fila, dict):
+                    continue
+                # Formato del multiget: {code, body}. Se acepta también el ítem
+                # pelado: la forma exacta de la respuesta no se puede probar
+                # sin la API de verdad, y equivocarse acá era un 500.
+                cuerpo = fila.get("body") if isinstance(fila.get("body"), dict) \
+                    else fila
+                codigo = fila.get("code", 200)
+                if codigo == 200 and cuerpo.get("id"):
+                    salida[cuerpo["id"]] = cuerpo
+        return salida

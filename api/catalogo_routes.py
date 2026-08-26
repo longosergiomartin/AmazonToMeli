@@ -906,17 +906,28 @@ def registrar_catalogo(app: FastAPI, conn,
         except MeliAPIError:
             en_la_cuenta = set()
 
+        a_revisar = [p for p in cat.todos()
+                     if p.estado == "publicado" or p.ml_item_id]
+        # De a uno era una llamada HTTPS por producto: con medio centenar de
+        # publicaciones la petición se cortaba antes de terminar y el panel
+        # mostraba un error vacío. El multiget los trae de a 20.
+        try:
+            items = cli.obtener_varios([p.ml_item_id for p in a_revisar])
+        except MeliAPIError as e:
+            raise HTTPException(502, f"No se pudo consultar MercadoLibre: {e}")
+
         revisados, corregidos = [], 0
-        for p in cat.todos():
-            if p.estado != "publicado" and not p.ml_item_id:
-                continue
+        for p in a_revisar:
             fila = {"id": p.id, "nombre": p.titulo_ml or p.modelo,
                     "ml_item_id": p.ml_item_id, "estado_local": p.estado}
             if not p.ml_item_id:
                 fila["estado_ml"] = "sin id"
             else:
-                try:
-                    item = cli.obtener(p.ml_item_id)
+                item = items.get(p.ml_item_id)
+                if item is None:
+                    # El multiget no lo trajo: no existe en MercadoLibre.
+                    fila["estado_ml"] = "no existe"
+                else:
                     fila["estado_ml"] = item.get("status", "?")
                     fila["permalink"] = item.get("permalink", "")
                     # Si el permalink no se había guardado al publicar, se
@@ -925,8 +936,6 @@ def registrar_catalogo(app: FastAPI, conn,
                         cat.actualizar_publicacion(p.id)
                         p.ml_permalink = fila["permalink"]
                         cat._guardar(p)
-                except MeliAPIError as e:
-                    fila["estado_ml"] = "no existe" if "404" in str(e) else f"error: {e}"
             fila["en_mis_publicaciones"] = p.ml_item_id in en_la_cuenta
             # El estado local sigue al de MercadoLibre: `active` es publicado y
             # `paused` es pausado —la publicación existe, ML la tiene en pausa

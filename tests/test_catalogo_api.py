@@ -1265,10 +1265,11 @@ def test_verificar_corrige_lo_que_no_esta_publicado_de_verdad(tmp_path, monkeypa
         def mis_items(self, limit=200):
             return ["MLA_VIVO"]
 
-        def obtener(self, item_id):
-            if item_id == "MLA_VIVO":
-                return {"status": "active", "permalink": "http://ml/vivo"}
-            raise MeliAPIError("MercadoLibre GET /items → 404")
+        def obtener_varios(self, ids):
+            # El multiget deja afuera lo que no existe: así se entera el que
+            # llama de que el ítem fantasma no está.
+            return {"MLA_VIVO": {"id": "MLA_VIVO", "status": "active",
+                                 "permalink": "http://ml/vivo"}}
 
     monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _Cli())
     monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
@@ -1302,9 +1303,10 @@ def test_verificar_guarda_el_link_de_la_publicacion(tmp_path, monkeypatch):
         def mis_items(self, limit=200):
             return ["MLA_VIVO"]
 
-        def obtener(self, item_id):
-            return {"status": "active",
-                    "permalink": "https://articulo.mercadolibre.com.ar/MLA-VIVO"}
+        def obtener_varios(self, ids):
+            return {i: {"id": i, "status": "active",
+                        "permalink": "https://articulo.mercadolibre.com.ar/MLA-VIVO"}
+                    for i in ids}
 
     monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: _Cli())
     monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
@@ -1519,7 +1521,8 @@ def test_verificar_pasa_a_publicado_cuando_ml_lo_activa(tmp_path, monkeypatch):
     c.post(f"/api/catalogo/{pid}/publicar", json={})
     assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
 
-    cli.obtener = lambda item_id: {"status": "active", "permalink": "http://ml/z"}
+    cli.obtener_varios = lambda ids: {
+        i: {"id": i, "status": "active", "permalink": "http://ml/z"} for i in ids}
     cli.mis_items = lambda: ["MLA3861899038"]
     d = c.post("/api/catalogo/verificar", json={}).json()
 
