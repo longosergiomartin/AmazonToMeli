@@ -594,9 +594,15 @@
     api("POST","/api/catalogo/lote/videos",{ids:ids}).then(function(d){
       b.disabled=false;
       var m=d.encontrados+" de "+d.total+" con video.";
+      // Los que salieron de un canal de confianza y no del oficial conviene
+      // mirarlos antes de publicar.
+      var terceros=(d.resultados||[]).filter(function(r){
+        return r.ok && r.oficial===false;});
+      if(terceros.length) m+="\nDe canal de confianza (no oficial, revisalos): "
+        +terceros.map(function(r){return r.nombre+" → "+r.canal;}).join(" · ");
       var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
       // Encontrar pocos es lo esperado: solo se acepta el canal de la marca.
-      if(sin.length) m+="\nSin video oficial: "+sin.map(function(r){
+      if(sin.length) m+="\nSin video: "+sin.map(function(r){
         return r.nombre;}).join(" · ");
       $("lote-msg").textContent=m;
       cargar();
@@ -900,7 +906,10 @@
         .then(function(r){
           bv.disabled=false; bv.textContent=antes;
           if(r.encontrado){ $("ed-video").value=r.video_id;
-            alert("✓ "+r.titulo+"\nCanal: "+r.canal); }
+            // Si no es del canal oficial conviene decirlo: sale de un canal
+            // elegido a mano y vale la pena mirarlo antes de publicar.
+            alert("✓ "+r.titulo+"\nCanal: "+r.canal
+              +(r.oficial?" (oficial de la marca)":" (canal de confianza, no oficial — miralo antes de publicar)")); }
           else alert("No encontré video oficial de este producto.\n"
             +"Solo se aceptan videos del canal de la marca: es preferible "
             +"quedarse sin video antes que poner el de otro producto.");

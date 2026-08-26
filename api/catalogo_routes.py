@@ -910,6 +910,9 @@ def registrar_catalogo(app: FastAPI, conn,
                                "video_id": r.get("video_id", ""),
                                "titulo_video": r.get("titulo", ""),
                                "canal": r.get("canal", ""),
+                               # Los de canal de confianza conviene mirarlos
+                               # antes de publicar: no son del fabricante.
+                               "oficial": r.get("oficial"),
                                "ok": bool(r.get("video_id"))})
         return {"resultados": resultados,
                 "encontrados": sum(1 for r in resultados if r["ok"]),

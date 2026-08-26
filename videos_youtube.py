@@ -33,9 +33,38 @@ YOUTUBE_API = "https://www.googleapis.com/youtube/v3/search"
 # hay número de modelo para desempatar.
 MINIMO_PARECIDO = 0.55
 
+# Canales de terceros que hacen buen material de una marca. Se usan **solo como
+# segunda opción**, cuando el canal oficial no tiene video del producto.
+#
+# Van por marca a propósito: un video de AustrianBrickFan que mencione "12345"
+# no dice nada sobre un Fisher-Price con ese número de modelo. Sin esa atadura,
+# confiar en un canal lo volvería una puerta abierta para las demás marcas.
+CANALES_CONFIABLES: dict[str, tuple[str, ...]] = {
+    "lego": ("AustrianBrickFan", "Brick Studio Architect"),
+}
+
 
 def configurado() -> bool:
     return bool(os.getenv("YOUTUBE_API_KEY", "").strip())
+
+
+def canales_confiables(marca: str) -> tuple[str, ...]:
+    """Canales de terceros aceptados para esta marca.
+
+    Se pueden agregar sin tocar el código con `CANALES_VIDEO_CONFIABLES`, en
+    formato `marca=canal|otro canal;otra marca=canal`.
+    """
+    extra: dict[str, tuple[str, ...]] = {}
+    for bloque in os.getenv("CANALES_VIDEO_CONFIABLES", "").split(";"):
+        if "=" not in bloque:
+            continue
+        m, canales = bloque.split("=", 1)
+        nombres = tuple(c.strip() for c in canales.split("|") if c.strip())
+        if nombres:
+            extra.setdefault(normalizar(m).strip(), ())
+            extra[normalizar(m).strip()] += nombres
+    clave = normalizar(marca).strip()
+    return CANALES_CONFIABLES.get(clave, ()) + extra.get(clave, ())
 
 
 def _marca_en(marca: str, texto: str) -> bool:
@@ -47,9 +76,13 @@ def _marca_en(marca: str, texto: str) -> bool:
     return all(re.search(rf"(?<!\w){re.escape(p)}(?!\w)", t) for p in palabras)
 
 
+def _tiene_numero(numero: str, titulo_video: str) -> bool:
+    return bool(re.search(rf"(?<!\d){re.escape(numero)}(?!\d)", titulo_video))
+
+
 def _aceptable(titulo_producto: str, marca: str, numero: str,
                titulo_video: str, canal: str) -> bool:
-    """¿Este video es de este producto?
+    """¿Este video es del canal oficial de la marca y de este producto?
 
     Dos filtros:
 
@@ -60,16 +93,31 @@ def _aceptable(titulo_producto: str, marca: str, numero: str,
       2. Que el video sea de *este* producto y no de otro del mismo fabricante:
          si hay número de modelo, tiene que estar en el título; si no lo hay, se
          exige parecido de títulos, que es más flojo pero es lo único que queda.
-
-    Es deliberadamente estricto. Se pierden videos oficiales subidos por
-    distribuidores, y está bien: quedarse sin video es gratis, publicar el
-    video de otro producto en la ficha no.
     """
     if not _marca_en(marca, canal):
         return False
     if numero:
-        return bool(re.search(rf"(?<!\d){re.escape(numero)}(?!\d)", titulo_video))
+        return _tiene_numero(numero, titulo_video)
     return parecido(titulo_producto, titulo_video) >= MINIMO_PARECIDO
+
+
+def _aceptable_de_confianza(marca: str, numero: str, titulo_video: str,
+                            canal: str) -> bool:
+    """Segunda opción: un canal de terceros que se eligió confiar para la marca.
+
+    Acá se exige **siempre el número de modelo**, aunque el producto no lo
+    tenga en la ficha. En el canal oficial el parecido de títulos alcanza
+    porque todo lo que sube es de sus productos; en un canal de terceros no:
+    sube de todas las marcas, y sin número no hay forma de saber de cuál es
+    ese video.
+    """
+    canales = canales_confiables(marca)
+    if not canales or not numero:
+        return False
+    objetivo = normalizar(canal).strip()
+    if not any(normalizar(c).strip() == objetivo for c in canales):
+        return False
+    return _tiene_numero(numero, titulo_video)
 
 
 def buscar_video(titulo: str, marca: str = "", numero_set: str = "",
@@ -77,9 +125,14 @@ def buscar_video(titulo: str, marca: str = "", numero_set: str = "",
                  limite: int = 10) -> dict:
     """El video de este producto en YouTube.
 
-    Devuelve {video_id, titulo, canal} o {} si no hay ninguno que pase los
-    filtros. Que devuelva {} es un resultado correcto y frecuente: muchos
-    productos no tienen video oficial.
+    Devuelve {video_id, titulo, canal, oficial} o {} si no hay ninguno que pase
+    los filtros. Que devuelva {} es un resultado correcto y frecuente: muchos
+    productos no tienen video.
+
+    Se busca en dos pasadas sobre los mismos resultados: primero el canal
+    oficial de la marca, y solo si no aparece ninguno, los canales de terceros
+    elegidos para esa marca. El orden importa: el oficial siempre gana, aunque
+    venga más abajo en los resultados.
     """
     clave = (api_key if api_key is not None
              else os.getenv("YOUTUBE_API_KEY", "")).strip()
@@ -100,13 +153,20 @@ def buscar_video(titulo: str, marca: str = "", numero_set: str = "",
     except (requests.RequestException, ValueError):
         return {}
 
+    candidatos = []
     for item in (datos.get("items") or []):
         vid = ((item.get("id") or {}).get("videoId") or "").strip()
         snip = item.get("snippet") or {}
-        titulo_video = snip.get("title") or ""
-        canal = snip.get("channelTitle") or ""
-        if not vid:
-            continue
+        if vid:
+            candidatos.append((vid, snip.get("title") or "",
+                               snip.get("channelTitle") or ""))
+
+    for vid, titulo_video, canal in candidatos:
         if _aceptable(titulo, marca, numero, titulo_video, canal):
-            return {"video_id": vid, "titulo": titulo_video, "canal": canal}
+            return {"video_id": vid, "titulo": titulo_video, "canal": canal,
+                    "oficial": True}
+    for vid, titulo_video, canal in candidatos:
+        if _aceptable_de_confianza(marca, numero, titulo_video, canal):
+            return {"video_id": vid, "titulo": titulo_video, "canal": canal,
+                    "oficial": False}
     return {}

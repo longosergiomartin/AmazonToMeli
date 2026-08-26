@@ -160,3 +160,81 @@ def test_el_numero_va_en_la_consulta(monkeypatch):
     buscar_video("Estatua de la Libertad", marca="LEGO", numero_set="21042",
                  api_key="X")
     assert "21042" in pedidos[0]["q"] and "LEGO" in pedidos[0]["q"]
+
+
+# ---- canales de terceros elegidos para una marca ------------------------
+
+def test_usa_un_canal_de_confianza_si_no_hay_oficial(monkeypatch):
+    _con(monkeypatch, [
+        _video("lllllllllll", "LEGO Architecture 21042 Statue of Liberty Speed Build",
+               canal="AustrianBrickFan")])
+    r = buscar_video("Architecture Estatua de la Libertad", marca="LEGO",
+                     numero_set="21042", api_key="X")
+    assert r["video_id"] == "lllllllllll"
+    assert r["canal"] == "AustrianBrickFan"
+    assert r["oficial"] is False
+
+
+def test_el_canal_oficial_gana_aunque_venga_despues(monkeypatch):
+    """El de confianza es segunda opción, no un empate: si LEGO tiene el video,
+    va el de LEGO aunque YouTube lo devuelva más abajo."""
+    _con(monkeypatch, [
+        _video("mmmmmmmmmmm", "LEGO 21042 Statue of Liberty", canal="AustrianBrickFan"),
+        _video("nnnnnnnnnnn", "21042 Statue of Liberty Designer Video", canal="LEGO"),
+    ])
+    r = buscar_video("Estatua de la Libertad", marca="LEGO", numero_set="21042",
+                     api_key="X")
+    assert r["video_id"] == "nnnnnnnnnnn" and r["oficial"] is True
+
+
+def test_el_canal_de_confianza_no_vale_para_otra_marca(monkeypatch):
+    """Un video de AustrianBrickFan que diga 12345 no dice nada sobre un
+    Fisher-Price con ese número de modelo."""
+    _con(monkeypatch, [
+        _video("ooooooooooo", "Algo con 12345", canal="AustrianBrickFan")])
+    assert buscar_video("Juguete", marca="Fisher Price", numero_set="12345",
+                        api_key="X") == {}
+
+
+def test_el_canal_de_confianza_exige_el_numero(monkeypatch):
+    """En un canal de terceros, sin número no hay forma de saber de qué
+    producto es: suben de todas las marcas."""
+    _con(monkeypatch, [
+        _video("ppppppppppp", "Los mejores sets del año", canal="AustrianBrickFan")])
+    assert buscar_video("Estatua de la Libertad", marca="LEGO",
+                        api_key="X") == {}
+
+
+def test_el_segundo_canal_de_confianza_tambien_vale(monkeypatch):
+    _con(monkeypatch, [
+        _video("qqqqqqqqqqq", "LEGO 21029 Buckingham Palace",
+               canal="Brick Studio Architect")])
+    r = buscar_video("Architecture Palacio de Buckingham", marca="LEGO",
+                     numero_set="21029", api_key="X")
+    assert r["canal"] == "Brick Studio Architect" and r["oficial"] is False
+
+
+def test_un_canal_cualquiera_sigue_sin_valer(monkeypatch):
+    """La lista es corta y elegida a mano: no se abre a cualquiera."""
+    _con(monkeypatch, [
+        _video("rrrrrrrrrrr", "LEGO 21042 reseña", canal="Ladrillos y Café")])
+    assert buscar_video("Estatua de la Libertad", marca="LEGO",
+                        numero_set="21042", api_key="X") == {}
+
+
+def test_se_pueden_agregar_canales_sin_tocar_el_codigo(monkeypatch):
+    from videos_youtube import canales_confiables
+
+    monkeypatch.setenv("CANALES_VIDEO_CONFIABLES",
+                       "LEGO=Otro Canal;Fisher Price=Canal Bebé")
+    assert "Otro Canal" in canales_confiables("LEGO")
+    assert "AustrianBrickFan" in canales_confiables("LEGO")   # no pisa los fijos
+    assert canales_confiables("Fisher Price") == ("Canal Bebé",)
+    assert canales_confiables("Bosch") == ()
+
+
+def test_el_video_oficial_dice_que_es_oficial(monkeypatch):
+    _con(monkeypatch, [_video("sssssssssss", "LEGO 10282 adidas", canal="LEGO")])
+    r = buscar_video("adidas Superstar", marca="LEGO", numero_set="10282",
+                     api_key="X")
+    assert r["oficial"] is True
