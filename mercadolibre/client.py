@@ -179,9 +179,18 @@ class MeliClient:
         except (TypeError, ValueError):
             igual = False
         if not igual:
+            # MercadoLibre explica el motivo en `warnings` de la misma
+            # respuesta: es la diferencia entre "no se aplicó" y saber por qué.
+            avisos = resp.get("warnings") or []
+            if isinstance(avisos, dict):
+                avisos = [avisos]
+            motivos = " · ".join(
+                str(a.get("message") or a.get("code") or a) if isinstance(a, dict)
+                else str(a) for a in avisos)
             raise MeliAPIError(
                 f"MercadoLibre aceptó el pedido pero el precio quedó en "
-                f"{quedo} en vez de {precio}",
+                f"{quedo} en vez de {precio}"
+                + (f". Dice: {motivos}" if motivos else ""),
                 status=200, cuerpo=resp)
         return resp
 

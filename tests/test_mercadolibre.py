@@ -358,3 +358,21 @@ def test_obtener_varios_aguanta_respuestas_con_otra_forma():
     cli = MeliClient(token_provider=lambda: "t", site="MLA")
     cli._req = lambda m, p, **kw: [{"id": "MLA1", "status": "active"}]
     assert cli.obtener_varios(["MLA1"])["MLA1"]["status"] == "active"
+
+
+def test_el_aviso_de_mercadolibre_llega_al_mensaje():
+    """MercadoLibre explica en `warnings` por qué no aplicó el precio. Es la
+    diferencia entre saber que no se aplicó y saber por qué."""
+    c, ses = _client([(200, {"id": "MLA1", "price": 9999, "warnings": [
+        {"code": "price_not_updated",
+         "message": "El precio no se actualizó: usá la API de precios."}]})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_precio("MLA1", 5000)
+    assert "API de precios" in str(e.value)
+
+
+def test_sin_aviso_el_mensaje_sigue_siendo_claro():
+    c, ses = _client([(200, {"id": "MLA1", "price": 9999})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_precio("MLA1", 5000)
+    assert "9999" in str(e.value)
