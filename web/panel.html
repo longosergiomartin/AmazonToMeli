@@ -106,7 +106,10 @@
 <div class="wrap">
   <div class="bar">
     <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina ·
-      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a></div></div>
+      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a>
+      <!-- "¿me quedó andando la clave?" es de las primeras preguntas que uno se
+           hace; estaba adentro de un desplegable cerrado, donde no se encontraba. -->
+      <span id="extras" style="display:block;margin-top:4px"></span></div></div>
     <div class="ml">
       <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
       <button class="sm" id="ml-btn" type="button">Conectar</button>
@@ -698,6 +701,20 @@
       if(f.proxy_amazon) partes.push("Amazon por proxy ✓");
       if(f.brickset) partes.push("Brickset ✓");
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
+
+      // Arriba, a la vista, solo lo que depende de una clave: es lo único que
+      // el usuario acaba de configurar y quiere confirmar.
+      var claves=[
+        {on:f.proxy_amazon, si:"🟢 Amazon por proxy",
+         no:"⚪ Amazon directo (sin SCRAPER_API_KEY: la carga en lote se frena "
+            +"desde el servidor)"},
+        {on:f.youtube, si:"🟢 Videos de YouTube",
+         no:"⚪ Videos de YouTube apagados (falta YOUTUBE_API_KEY)"}];
+      $("extras").innerHTML=claves.map(function(c){
+        return '<span style="margin-right:12px;color:'
+          +(c.on?"var(--good)":"var(--muted)")+'">'+esc(c.on?c.si:c.no)+'</span>';
+      }).join("");
+
       // El botón de videos no sirve sin la clave: mejor decirlo antes de que
       // lo aprieten, no después.
       var bv=$("lote-videos");
