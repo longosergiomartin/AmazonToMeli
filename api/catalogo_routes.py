@@ -985,9 +985,14 @@ def registrar_catalogo(app: FastAPI, conn,
             if not p or not (p.ml_item_id or "").strip():
                 continue
             precio = cat.simular(p, **par)["precio_ars"]
+            anterior = round(p.precio_publicado_ars or 0.0, 2)
             fila = {"id": pid, "nombre": p.titulo_ml or p.modelo,
-                    "precio_anterior": round(p.precio_publicado_ars or 0.0, 2),
-                    "precio_nuevo": precio, "ok": False, "error": ""}
+                    "precio_anterior": anterior,
+                    "precio_nuevo": precio, "ok": False, "error": "",
+                    # Mandar el precio que la publicación ya tenía y contarlo
+                    # como actualizado es indistinguible de que funcione: así
+                    # se informaron "114 actualizadas" sin haber cambiado nada.
+                    "sin_cambios": abs(precio - anterior) < 0.01}
             if precio <= 0:
                 fila["error"] = "el precio calculado dio cero: revisá el costo"
                 resultados.append(fila)
@@ -1016,7 +1021,11 @@ def registrar_catalogo(app: FastAPI, conn,
             resultados.append(fila)
 
         return {"resultados": resultados,
-                "actualizados": sum(1 for r in resultados if r["ok"]),
+                # Se cuentan aparte los que cambiaron de precio de verdad.
+                "actualizados": sum(1 for r in resultados
+                                    if r["ok"] and not r["sin_cambios"]),
+                "sin_cambios": sum(1 for r in resultados
+                                   if r["ok"] and r["sin_cambios"]),
                 "total": len(resultados)}
 
     def _buscar_video(p) -> dict:

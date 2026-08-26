@@ -41,3 +41,18 @@ def test_los_botones_del_panel_tienen_su_handler():
     # `$("x").addEventListener("click", …)`. Basta con que el id se use.
     sin_handler = [i for i in ids if f'"{i}"' not in js]
     assert not sin_handler, f"botones sin acción: {sorted(sin_handler)}"
+
+
+def test_aplicar_precios_manda_los_mismos_parametros_que_simular():
+    """Armar el cuerpo a mano ya se comió las dos cotizaciones una vez: se
+    simulaba con dólar 1600/3200 y se aplicaba sin ellas, así que a
+    MercadoLibre le llegaba el precio que la publicación ya tenía."""
+    js = _js()
+    aplicar = js[js.index("precios/aplicar"):]
+    antes = js[:js.index("precios/aplicar")]
+    # El cuerpo del aplicar tiene que salir de la misma función que el del
+    # simular, no de un objeto escrito a mano al lado de la llamada.
+    assert "cuerpo = prCuerpo()" in antes or "cuerpo=prCuerpo()" in antes, \
+        "el aplicar no reutiliza prCuerpo(): puede volver a perder campos"
+    assert "margen_pct:" not in aplicar[:200], \
+        "el aplicar arma el cuerpo a mano otra vez"

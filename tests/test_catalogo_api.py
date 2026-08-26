@@ -1900,3 +1900,28 @@ def test_si_el_precio_no_queda_en_ml_no_se_informa_como_actualizado(tmp_path, mo
     # Y el mensaje dice qué pasó, no un diccionario crudo.
     assert "quedó en 999" in d["resultados"][0]["error"]
     assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == antes
+
+
+def test_mandar_el_precio_que_ya_estaba_no_es_una_actualizacion(tmp_path, monkeypatch):
+    """El caso real: se aplicó sin las cotizaciones, se recalculó con el margen
+    viejo, y a MercadoLibre le llegó el precio que la publicación ya tenía. Se
+    informaron «114 actualizadas» sin haber cambiado nada."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "igual.db")
+    actual = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
+
+    # Sin cotizaciones ni margen: da el mismo precio que ya tiene.
+    d = c.post("/api/catalogo/precios/aplicar", json={"ids": [pid]}).json()
+
+    assert d["resultados"][0]["precio_nuevo"] == actual
+    assert d["resultados"][0]["sin_cambios"] is True
+    assert d["actualizados"] == 0 and d["sin_cambios"] == 1
+
+
+def test_con_las_cotizaciones_si_cuenta_como_actualizada(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "distinto.db")
+
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200}).json()
+
+    assert d["resultados"][0]["sin_cambios"] is False
+    assert d["actualizados"] == 1 and d["sin_cambios"] == 0
