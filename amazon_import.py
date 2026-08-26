@@ -16,12 +16,13 @@ en el checkout, no en la página del producto.
 from __future__ import annotations
 
 import html as _html
-import os
 import re
 from typing import Optional
 
 import requests
 
+import descarga
+from descarga import configurada as scraperapi_configurada  # noqa: F401
 from marcas import limpiar_marca
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -205,34 +206,11 @@ def _parse_peso_kg(texto: str) -> Optional[float]:
     return round(val, 2)
 
 
-SCRAPERAPI = "https://api.scraperapi.com/"
-
-
-def scraperapi_configurada() -> bool:
-    return bool(os.getenv("SCRAPER_API_KEY", "").strip())
-
-
 def _bajar(url: str, timeout: int):
-    """Baja la página de Amazon, por proxy si hay clave configurada.
-
-    Amazon rechaza las IP de datacenter, así que desde Render la lectura
-    directa casi siempre falla. Con `SCRAPER_API_KEY`, la petición va por
-    ScraperAPI, que pone IP residencial y resuelve el captcha; sin clave se
-    lee directo, que es lo que sirve corriendo la herramienta en tu PC.
-
-    Devuelve (respuesta, por_proxy) para poder explicar después de dónde vino
-    el error: no es lo mismo que nos frene Amazon que quedarnos sin créditos.
-    """
-    clave = os.getenv("SCRAPER_API_KEY", "").strip()
-    if clave:
-        # `country_code=us` porque los precios y la disponibilidad cambian por
-        # país, y lo que se compra es en amazon.com.
-        return requests.get(SCRAPERAPI, timeout=max(timeout, 70),
-                            params={"api_key": clave, "url": url,
-                                    "country_code": "us"}), True
-    return requests.get(url, timeout=timeout,
-                        headers={"User-Agent": _UA,
-                                 "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"}), False
+    """La página de Amazon, por proxy si hay clave. Ver `descarga.bajar`."""
+    return descarga.bajar(url, timeout,
+                          headers={"User-Agent": _UA,
+                                   "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"})
 
 
 def importar_desde_url(url: str, timeout: int = 12) -> dict:

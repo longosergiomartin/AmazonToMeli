@@ -18,6 +18,7 @@ límite es lo correcto y además protege la cuenta de comprador.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -111,7 +112,13 @@ class ColaImportacion:
         # declara Amazon a veces es un código interno del fabricante (LEGO pone
         # 6530082 en vez del set 10302) y con eso no se encuentra nada en el
         # catálogo de MercadoLibre.
-        set_id = numero_de_set(titulo) or datos.get("modelo_fabricante", "")
+        # Lo que Amazon declara como "modelo" a veces es un código interno de 7
+        # dígitos (6474652 para el set 21350): no identifica nada, no encuentra
+        # el producto en el catálogo de MercadoLibre y confunde al mirarlo.
+        declarado = (datos.get("modelo_fabricante") or "").strip()
+        if not re.fullmatch(r"\d{4,6}", declarado):
+            declarado = ""
+        set_id = numero_de_set(titulo) or declarado
         p = ProductoCatalogo(
             amazon_link=datos.get("amazon_link", ""),
             asin=datos.get("asin", ""),

@@ -26,6 +26,7 @@ from typing import Optional
 
 import requests
 
+import descarga
 from titulos import numero_de_set  # noqa: F401 - se reexporta por comodidad
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -57,7 +58,7 @@ def _de_amazon(asin: str, timeout: int) -> tuple[list[str], bool]:
     golpeando a Amazon.
     """
     url = f"https://www.amazon.com/dp/{asin}"
-    resp = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout)
+    resp, _ = descarga.bajar(url, timeout, headers={"User-Agent": _UA})
     if resp.status_code != 200:
         return [], resp.status_code in (403, 429, 503)
     if "captcha" in resp.text[:4000].lower() and "productTitle" not in resp.text:
@@ -71,8 +72,8 @@ def _de_amazon(asin: str, timeout: int) -> tuple[list[str], bool]:
 def _de_buscador(asin: str, timeout: int) -> list[str]:
     """Busca '<ASIN> EAN UPC' en la web y junta candidatos validados."""
     url = "https://html.duckduckgo.com/html/"
-    resp = requests.get(url, params={"q": f"{asin} EAN UPC barcode"},
-                        headers={"User-Agent": _UA}, timeout=timeout)
+    resp, _ = descarga.bajar(url, timeout, params={"q": f"{asin} EAN UPC barcode"},
+                             headers={"User-Agent": _UA})
     if resp.status_code != 200:
         return []
     return _candidatos(resp.text)
@@ -91,10 +92,10 @@ def buscar_asin(gtin: str, timeout: int = 12) -> dict:
                 "mensaje": "Código inválido: no pasa el dígito verificador "
                            "(EAN/UPC de 8, 12, 13 o 14 números)."}
     try:
-        resp = requests.get("https://www.amazon.com/s", params={"k": gtin},
-                            headers={"User-Agent": _UA,
-                                     "Accept-Language": "en-US,en;q=0.9"},
-                            timeout=timeout)
+        resp, _ = descarga.bajar("https://www.amazon.com/s", timeout,
+                                 params={"k": gtin},
+                                 headers={"User-Agent": _UA,
+                                          "Accept-Language": "en-US,en;q=0.9"})
     except requests.RequestException as e:
         return {"ok": False, "asin": "", "titulo": "", "bloqueado": False,
                 "mensaje": f"No se pudo consultar Amazon ({e})."}

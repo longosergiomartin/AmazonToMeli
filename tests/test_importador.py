@@ -283,3 +283,37 @@ def test_sin_proxy_mantiene_la_pausa(cola, monkeypatch):
                                              "imagenes": [], "marca": "X"},
                        dormir=esperas.append)
     assert esperas == [2.0]
+
+
+def test_no_guarda_el_codigo_interno_de_amazon_como_numero_de_set(cola):
+    """Amazon declara 6474652 como "modelo" del set 21350. Ese número no
+    identifica nada ni encuentra el producto en el catálogo de MercadoLibre."""
+    cola.encolar(["https://www.amazon.com/dp/B0JAWS00001"])
+    cola.procesar_uno(importador=lambda u: {
+        "ok": True, "asin": "B0JAWS00001", "marca": "LEGO",
+        "modelo": "LEGO Ideas Jaws Set 21350 – Kit de diorama",
+        "modelo_fabricante": "6474652", "precio_usd": 150.0, "imagenes": []})
+
+    p = cola.cat.todos()[0]
+    assert p.modelo_fabricante == "21350"
+
+
+def test_sin_numero_en_el_titulo_tampoco_guarda_el_codigo_interno(cola):
+    """Vacío es mejor que un número que no sirve: se ve que falta y se corrige."""
+    cola.encolar(["https://www.amazon.com/dp/B0JAWS00002"])
+    cola.procesar_uno(importador=lambda u: {
+        "ok": True, "asin": "B0JAWS00002", "marca": "LEGO",
+        "modelo": "LEGO Ideas Jaws Kit de diorama",
+        "modelo_fabricante": "6474652", "precio_usd": 150.0, "imagenes": []})
+
+    assert cola.cat.todos()[0].modelo_fabricante == ""
+
+
+def test_un_numero_de_set_declarado_por_amazon_si_se_guarda(cola):
+    cola.encolar(["https://www.amazon.com/dp/B0JAWS00003"])
+    cola.procesar_uno(importador=lambda u: {
+        "ok": True, "asin": "B0JAWS00003", "marca": "LEGO",
+        "modelo": "LEGO Ideas Kit de diorama",
+        "modelo_fabricante": "21350", "precio_usd": 150.0, "imagenes": []})
+
+    assert cola.cat.todos()[0].modelo_fabricante == "21350"
