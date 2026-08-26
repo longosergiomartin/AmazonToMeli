@@ -2,7 +2,7 @@
 
 import pytest
 
-from agente import CODIGO, NADA, PREPARAR, PUBLICAR, Agente
+from agente import CODIGO, NADA, PREPARAR, PUBLICAR, VIDEO, Agente
 from arbitraje.config import Config
 from catalogo import Catalogo, ProductoCatalogo
 from db import conectar
@@ -238,3 +238,78 @@ def test_cuenta_los_pausados_como_publicados(cat):
     assert cat.obtener(p.id).estado == "pausado"
     assert ag.estado()["publicados"] == 1
     assert ag.paso_pendiente(cat.obtener(p.id)) == NADA
+
+
+# ---- el video, antes de publicar ---------------------------------------
+
+def _listo(cat, **kw):
+    """Producto completo: el caso que nunca vuelve a pasar por preparar."""
+    base = dict(ml_category_id="MLA1157", pictures=["http://i/1.jpg"],
+                ml_attributes={"GTIN": "5702017155326"})
+    base.update(kw)
+    return _prod(cat, **base)
+
+
+def test_busca_el_video_antes_de_publicar(cat):
+    """Un producto ya completo iba derecho a publicar y salía sin video: el
+    paso vivía en preparar, donde ese producto no vuelve a entrar."""
+    orden = []
+    ag = _agente(cat, publicar=lambda p: orden.append("publicar") or {"ml_item_id": "MLA1"})
+    ag._buscar_video = lambda p: orden.append("video") or cat.actualizar_publicacion(
+        p.id, video_youtube="dQw4w9WgXcQ") and {"video_id": "dQw4w9WgXcQ",
+                                                "canal": "LEGO", "oficial": True}
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    p = _listo(cat, asin="B0AGVID001")
+
+    assert ag.tick()["accion"] == VIDEO
+    assert ag.tick()["accion"] == PUBLICAR
+    assert orden == ["video", "publicar"]
+    assert cat.obtener(p.id).video_youtube == "dQw4w9WgXcQ"
+
+
+def test_sin_video_se_publica_igual(cat):
+    """El video es opcional: no encontrarlo no puede trabar la publicación."""
+    publicados = []
+    ag = _agente(cat, publicar=lambda p: publicados.append(p.id) or {"ml_item_id": "MLA2"})
+    ag._buscar_video = lambda p: {}
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    p = _listo(cat, asin="B0AGVID002")
+
+    assert ag.tick()["accion"] == "sin_video"
+    assert ag.tick()["accion"] == PUBLICAR
+    assert publicados == [p.id]
+
+
+def test_el_video_se_busca_una_sola_vez(cat):
+    """Sin esta guarda el producto volvería a pedir video para siempre."""
+    veces = []
+    ag = _agente(cat, publicar=lambda p: {"ml_item_id": "MLA3"})
+    ag._buscar_video = lambda p: veces.append(1) or {}
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    _listo(cat, asin="B0AGVID003")
+
+    for _ in range(5):
+        if ag.tick()["accion"] == "sin_trabajo":
+            break
+    assert len(veces) == 1
+
+
+def test_sin_clave_de_youtube_el_paso_no_existe(cat):
+    """Todo tiene que funcionar igual que antes de que existiera el video."""
+    publicados = []
+    ag = _agente(cat, publicar=lambda p: publicados.append(p.id) or {"ml_item_id": "MLA4"})
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    p = _listo(cat, asin="B0AGVID004")           # _agente() no pasa buscar_video
+
+    assert ag.paso_pendiente(cat.obtener(p.id)) == PUBLICAR
+    assert ag.tick()["accion"] == PUBLICAR
+
+
+def test_el_que_ya_tiene_video_no_lo_vuelve_a_buscar(cat):
+    """El cargado a mano no se pisa."""
+    ag = _agente(cat, publicar=lambda p: {"ml_item_id": "MLA5"})
+    ag._buscar_video = lambda p: pytest.fail("no debería buscar")
+    ag.config = {"encendido": True, "publicar": True, "margen_minimo": 0}
+    p = _listo(cat, asin="B0AGVID005", video_youtube="yaTengoUno")
+
+    assert ag.paso_pendiente(cat.obtener(p.id)) == PUBLICAR
