@@ -1808,3 +1808,95 @@ def test_un_dolar_invalido_se_rechaza(tmp_path, monkeypatch):
                    {"tc_venta": -3200}):
         r = c.post("/api/catalogo/precios/simular", json=cuerpo)
         assert r.status_code == 422, cuerpo
+
+
+def test_la_tabla_queda_con_los_mismos_numeros_que_se_simularon(tmp_path, monkeypatch):
+    """Lo que se ve al decidir tiene que ser lo que queda. Antes el costo se
+    recalculaba con la cotización del mercado y el margen de la tabla no
+    coincidía con el de la simulación."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "coherente.db")
+
+    sim = c.post("/api/catalogo/precios/simular",
+                 json={"tc_costo": 1600, "tc_venta": 3200}).json()["filas"][0]
+    c.post("/api/catalogo/precios/aplicar",
+           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+    guardado = c.get(f"/api/catalogo/{pid}").json()
+
+    assert guardado["costo_total_ars"] == sim["costo_nuevo"]
+    assert guardado["precio_publicado_ars"] == sim["precio_nuevo"]
+    assert round(guardado["margen_pct"], 1) == sim["margen_pct"]
+
+
+def test_el_dolar_elegido_queda_fijado_para_todo_el_catalogo(tmp_path, monkeypatch):
+    """Si unos productos quedaran al dólar nuevo y otros al viejo, la tabla
+    mezclaría dos monedas distintas."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "fijado.db")
+    otro = _alta(c, asin="B0OTRO00001", marca="LEGO", titulo_ml="Otro",
+                 precio_usd=100.0).json()["id"]
+    antes = c.get(f"/api/catalogo/{otro}").json()["costo_total_ars"]
+
+    c.post("/api/catalogo/precios/aplicar",
+           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+
+    assert c.get("/api/dolar-costo").json()["tc_manual"] == 1600
+    # El que no se tocó también quedó valuado al dólar nuevo.
+    assert c.get(f"/api/catalogo/{otro}").json()["costo_total_ars"] != antes
+
+
+def test_se_puede_volver_al_dolar_del_mercado(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "volver.db")
+    c.post("/api/catalogo/precios/aplicar",
+           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+    con_manual = c.get(f"/api/catalogo/{pid}").json()["costo_total_ars"]
+
+    r = c.patch("/api/dolar-costo", json={"tc_manual": None}).json()
+
+    assert r["tc_manual"] is None
+    assert c.get(f"/api/catalogo/{pid}").json()["costo_total_ars"] != con_manual
+
+
+def test_un_dolar_fijado_invalido_se_rechaza(client):
+    assert client.patch("/api/dolar-costo", json={"tc_manual": -5}).status_code == 400
+    assert client.patch("/api/dolar-costo", json={"tc_manual": "mil"}).status_code == 400
+
+
+def test_si_el_precio_no_queda_en_ml_no_se_informa_como_actualizado(tmp_path, monkeypatch):
+    """El caso real: el panel decía "114 publicaciones actualizadas" y en
+    MercadoLibre no había cambiado nada. Un 200 no alcanza."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    class _Cli:
+        def ficha_de_catalogo(self, *a, **k): return {}
+        def atributos_obligatorios(self, cat_id): return []
+        def valores_permitidos(self, cat_id): return {}
+        def publicar(self, item):
+            return {"id": "MLA100", "permalink": "http://ml/x", "status": "active"}
+        def poner_descripcion(self, item_id, texto): return {}
+
+        def actualizar_precio(self, item_id, precio):
+            # Como el cliente real cuando el precio no quedó.
+            raise MeliAPIError("MercadoLibre aceptó el pedido pero el precio "
+                               f"quedó en 999 en vez de {precio}",
+                               status=200, cuerpo={"id": item_id, "price": 999})
+
+    cli = _Cli()
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "nopego.db")))
+    pid = _alta(c, asin="B0NOPEGO01", marca="LEGO", titulo_ml="LEGO Set",
+                precio_usd=100.0, ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    c.post(f"/api/catalogo/{pid}/publicar", json={})
+    antes = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
+
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200}).json()
+
+    assert d["actualizados"] == 0
+    # Y el mensaje dice qué pasó, no un diccionario crudo.
+    assert "quedó en 999" in d["resultados"][0]["error"]
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == antes

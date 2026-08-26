@@ -133,6 +133,7 @@ class Catalogo:
         escribió y no una estimación.
         """
         cfg = self.cfg
+        tc = tc or self.tc_manual
         if tc:
             cfg = replace(cfg, tipo_cambio_oficial=float(tc),
                           recargo_tarjeta_pct=0.0)
@@ -193,6 +194,34 @@ class Catalogo:
         if valor not in DOLARES_COSTO:
             raise ValueError(f"Dólar inválido: {valor!r} (usá tarjeta u oficial)")
         self._set_pref("dolar_costo", valor)
+
+    @property
+    def tc_manual(self) -> Optional[float]:
+        """Tipo de cambio fijado a mano para valuar el costo.
+
+        Cuando se decide "compro a dólar 1600", ese pasa a ser **el** dólar del
+        catálogo hasta que se cambie: si no, la tabla mostraría el costo a la
+        cotización del mercado y el margen no coincidiría con el que se vio al
+        decidir el precio. Vacío = se usa la cotización en vivo.
+        """
+        crudo = self._pref("tc_manual", "")
+        try:
+            return float(crudo) or None
+        except (TypeError, ValueError):
+            return None
+
+    @tc_manual.setter
+    def tc_manual(self, valor) -> None:
+        if valor in (None, "", 0):
+            self._set_pref("tc_manual", "")
+            return
+        try:
+            v = float(valor)
+        except (TypeError, ValueError):
+            raise ValueError("El tipo de cambio tiene que ser un número.")
+        if v <= 0:
+            raise ValueError("El tipo de cambio tiene que ser mayor que cero.")
+        self._set_pref("tc_manual", str(v))
 
     @property
     def filtro(self) -> dict:

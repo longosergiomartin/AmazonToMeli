@@ -162,7 +162,37 @@ class MeliClient:
         return self._req("PUT", f"/items/{item_id}", json=cambios)
 
     def actualizar_precio(self, item_id: str, precio: float) -> dict:
-        return self.actualizar(item_id, {"price": precio})
+        """Cambia el precio y **verifica que haya quedado**.
+
+        MercadoLibre contesta 200 con el ítem actualizado, y ese cuerpo trae el
+        precio que realmente tiene. Dar por bueno el 200 sin mirarlo es cómo se
+        termina informando "114 publicaciones actualizadas" con todo igual del
+        otro lado: si no coincide, se levanta el precio real para poder decir
+        qué pasó.
+        """
+        resp = self.actualizar(item_id, {"price": precio}) or {}
+        quedo = resp.get("price")
+        if quedo is None:                       # respuesta sin precio: se relee
+            quedo = (self.obtener(item_id) or {}).get("price")
+        try:
+            igual = abs(float(quedo) - float(precio)) < 0.01
+        except (TypeError, ValueError):
+            igual = False
+        if not igual:
+            # MercadoLibre explica el motivo en `warnings` de la misma
+            # respuesta: es la diferencia entre "no se aplicó" y saber por qué.
+            avisos = resp.get("warnings") or []
+            if isinstance(avisos, dict):
+                avisos = [avisos]
+            motivos = " · ".join(
+                str(a.get("message") or a.get("code") or a) if isinstance(a, dict)
+                else str(a) for a in avisos)
+            raise MeliAPIError(
+                f"MercadoLibre aceptó el pedido pero el precio quedó en "
+                f"{quedo} en vez de {precio}"
+                + (f". Dice: {motivos}" if motivos else ""),
+                status=200, cuerpo=resp)
+        return resp
 
     def actualizar_stock(self, item_id: str, cantidad: int) -> dict:
         return self.actualizar(item_id, {"available_quantity": cantidad})
