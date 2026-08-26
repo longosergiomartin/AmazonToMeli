@@ -168,10 +168,22 @@ def buscar_gtin(asin: str, timeout: int = 12) -> dict:
                             "de la caja.")}
 
     conteo = Counter(todos)
-    gtin, veces = conteo.most_common(1)[0]
-    candidatos = [c for c, _ in conteo.most_common(5)]
+    # Se ordena por veces visto y, a igualdad, por largo: los códigos de retail
+    # son de 12 o 13 dígitos (UPC y EAN). Un número de 8 que pasa el dígito
+    # verificador de casualidad es lo más común que se cuela de una página, y
+    # ganaba por ser el único candidato.
+    ordenados = sorted(conteo.items(),
+                       key=lambda kv: (kv[1], len(kv[0]) >= 12, len(kv[0])),
+                       reverse=True)
+    gtin, veces = ordenados[0]
+    candidatos = [c for c, _ in ordenados[:5]]
+    dudoso = len(gtin) < 12
+    aviso = ("GTIN encontrado ({f}, visto {v} vez/veces y verificado "
+             "matemáticamente). Confirmalo contra la caja o la ficha del "
+             "producto.").format(f=fuente, v=veces)
+    if dudoso:
+        aviso = (f"Encontré {gtin}, pero tiene {len(gtin)} dígitos y los códigos "
+                 "de caja suelen tener 12 o 13: puede ser otro número de la "
+                 "página. Verificalo contra la caja antes de usarlo.")
     return {"ok": True, "gtin": gtin, "candidatos": candidatos, "fuente": fuente,
-            "bloqueado": False,
-            "mensaje": (f"GTIN encontrado ({fuente}, visto {veces} vez/veces y "
-                        "verificado matemáticamente). Confirmalo contra la caja "
-                        "o la ficha del producto.")}
+            "bloqueado": False, "dudoso": dudoso, "mensaje": aviso}

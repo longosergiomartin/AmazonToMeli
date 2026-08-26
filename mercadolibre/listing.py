@@ -182,12 +182,18 @@ def faltantes_para_publicar(producto, obligatorios: Optional[list[dict]] = None,
     if not pictures:
         faltan.append("al menos una foto")
     attrs = producto.ml_attributes or {}
-    # El código de barras no siempre se consigue. MercadoLibre contempla el
-    # caso: si se declara el motivo de GTIN vacío, deja de exigirlo.
+    # El código de barras y el motivo de GTIN vacío son **excluyentes**: uno
+    # tapa al otro, y mandarlos juntos lo rechaza MercadoLibre. Que alcance con
+    # cualquiera de los dos tiene que valer en las dos direcciones: al conseguir
+    # el código se borra el motivo, y sin esto la validación pasaba a reclamar
+    # el motivo justo cuando el producto ya estaba listo para publicarse.
     con_motivo = bool((attrs.get("EMPTY_GTIN_REASON") or "").strip())
+    con_gtin = bool((attrs.get("GTIN") or "").strip())
     for a in (obligatorios or []):
         aid = a.get("id")
         if aid == "GTIN" and con_motivo:
+            continue
+        if aid == "EMPTY_GTIN_REASON" and con_gtin:
             continue
         # Para la marca vale la limpia: "Visit the LEGO Store" sirve (da LEGO),
         # pero un byline sin nombre adentro no.

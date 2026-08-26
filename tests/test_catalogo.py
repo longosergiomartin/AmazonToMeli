@@ -466,3 +466,40 @@ def test_las_filas_viejas_no_traen_none_en_el_video(tmp_path):
                      cotizacion={"oficial": 1000.0, "tarjeta": 1300.0}).todos()[0]
     assert viejo.video_youtube == ""
     assert viejo.videos == []
+
+
+def test_con_gtin_no_se_pide_el_motivo_de_gtin_vacio():
+    """Son excluyentes: al conseguir el código se borra el motivo, y la
+    validación pasaba a reclamarlo justo cuando el producto quedaba listo."""
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"},
+                    {"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vacío"}]
+    p = ProductoCatalogo(asin="B0GTIN00001", marca="LEGO", modelo="Set 21042",
+                         titulo_ml="LEGO Architecture 21042", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1,
+                         precio_sugerido_ars=100000.0,
+                         ml_attributes={"GTIN": "673419283328"})
+    assert faltantes_para_publicar(p, obligatorios, ["http://i/1.jpg"]) == []
+
+
+def test_con_motivo_no_se_pide_el_gtin():
+    """La dirección que ya andaba: sin código, el motivo alcanza."""
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"},
+                    {"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vacío"}]
+    p = ProductoCatalogo(asin="B0GTIN00002", marca="LEGO", modelo="Set 21029",
+                         titulo_ml="LEGO Architecture 21029", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1,
+                         precio_sugerido_ars=100000.0,
+                         ml_attributes={"EMPTY_GTIN_REASON": "Otra razón"})
+    assert faltantes_para_publicar(p, obligatorios, ["http://i/1.jpg"]) == []
+
+
+def test_sin_ninguno_de_los_dos_si_falta_algo():
+    """Sin código ni motivo, MercadoLibre no publica: hay que avisar."""
+    obligatorios = [{"id": "GTIN", "name": "Código universal de producto"},
+                    {"id": "EMPTY_GTIN_REASON", "name": "Motivo de GTIN vacío"}]
+    p = ProductoCatalogo(asin="B0GTIN00003", marca="LEGO", modelo="Set",
+                         titulo_ml="LEGO Set", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1,
+                         precio_sugerido_ars=100000.0)
+    faltan = faltantes_para_publicar(p, obligatorios, ["http://i/1.jpg"])
+    assert len(faltan) == 2
