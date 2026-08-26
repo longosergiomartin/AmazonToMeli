@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
-from amazon_import import importar_desde_url
+from amazon_import import importar_desde_url, scraperapi_configurada
 from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
 from importador import ColaImportacion
 from mercadolibre.oauth import MeliOAuth, MeliCredenciales, TokenStore
@@ -1185,6 +1185,7 @@ def registrar_catalogo(app: FastAPI, conn,
             "upcitemdb": True,       # nivel de prueba, sin registro
             "amazon": True,          # disponible, pero bloquea servidores
             "youtube": youtube_configurado(),
+            "proxy_amazon": scraperapi_configurada(),
         }
 
     @app.post("/api/catalogo/lote/publicar")

@@ -16,6 +16,7 @@ en el checkout, no en la página del producto.
 from __future__ import annotations
 
 import html as _html
+import os
 import re
 from typing import Optional
 
@@ -204,6 +205,36 @@ def _parse_peso_kg(texto: str) -> Optional[float]:
     return round(val, 2)
 
 
+SCRAPERAPI = "https://api.scraperapi.com/"
+
+
+def scraperapi_configurada() -> bool:
+    return bool(os.getenv("SCRAPER_API_KEY", "").strip())
+
+
+def _bajar(url: str, timeout: int):
+    """Baja la página de Amazon, por proxy si hay clave configurada.
+
+    Amazon rechaza las IP de datacenter, así que desde Render la lectura
+    directa casi siempre falla. Con `SCRAPER_API_KEY`, la petición va por
+    ScraperAPI, que pone IP residencial y resuelve el captcha; sin clave se
+    lee directo, que es lo que sirve corriendo la herramienta en tu PC.
+
+    Devuelve (respuesta, por_proxy) para poder explicar después de dónde vino
+    el error: no es lo mismo que nos frene Amazon que quedarnos sin créditos.
+    """
+    clave = os.getenv("SCRAPER_API_KEY", "").strip()
+    if clave:
+        # `country_code=us` porque los precios y la disponibilidad cambian por
+        # país, y lo que se compra es en amazon.com.
+        return requests.get(SCRAPERAPI, timeout=max(timeout, 70),
+                            params={"api_key": clave, "url": url,
+                                    "country_code": "us"}), True
+    return requests.get(url, timeout=timeout,
+                        headers={"User-Agent": _UA,
+                                 "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"}), False
+
+
 def importar_desde_url(url: str, timeout: int = 12) -> dict:
     """Devuelve los datos que se pudieron obtener del producto de Amazon.
     Siempre incluye asin (si está en el link) y amazon_link; `ok` indica si se
@@ -221,20 +252,32 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
         datos["mensaje"] = "Pegá un link válido de Amazon."
         return datos
     try:
-        resp = requests.get(url, headers={"User-Agent": _UA,
-                            "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"},
-                            timeout=timeout)
+        resp, por_proxy = _bajar(url, timeout)
     except requests.RequestException as e:
         datos["mensaje"] = f"No se pudo leer la página ({e}). Completá a mano."
         return datos
 
     datos["status"] = resp.status_code
+    datos["via_proxy"] = por_proxy
     if resp.status_code != 200:
         # 429/503 = nos está limitando; 403 = nos bloqueó. En esos casos la
         # cola tiene que parar, no insistir.
         datos["bloqueado"] = resp.status_code in (403, 429, 503)
-        datos["mensaje"] = (f"Amazon respondió {resp.status_code} (suele pasar en "
-                            "servidores). El ASIN quedó cargado; completá el resto a mano.")
+        if por_proxy:
+            # Por proxy el error es del proxy, no de Amazon, y se arregla
+            # distinto: 401 es clave mal puesta y 403 suele ser sin créditos.
+            datos["mensaje"] = {
+                401: "ScraperAPI rechazó la clave: revisá SCRAPER_API_KEY en Render.",
+                403: "ScraperAPI sin créditos este mes (el plan gratis da 1.000, "
+                     "y cada producto gasta 5). Se retoma el mes que viene o "
+                     "usando el bookmarklet desde tu navegador.",
+            }.get(resp.status_code,
+                  f"ScraperAPI respondió {resp.status_code}. El ASIN quedó "
+                  "cargado; completá el resto a mano.")
+        else:
+            datos["mensaje"] = (
+                f"Amazon respondió {resp.status_code} (suele pasar en "
+                "servidores). El ASIN quedó cargado; completá el resto a mano.")
         return datos
 
     texto = resp.text
