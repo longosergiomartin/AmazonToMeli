@@ -343,6 +343,31 @@ botones de la herramienta: leer lo que vos ya podés ver.
   [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
   hace falta configurarla.
 
+### Actualizar los precios de lo ya publicado
+
+El dólar se mueve y los costos quedan viejos. **💲 Actualizar precios de lo
+publicado** recalcula el costo con la cotización de hoy y vuelve a fijar el
+precio en MercadoLibre, en lote.
+
+Va en dos pasos, y es a propósito:
+
+1. **Ver qué cambiaría** — muestra, publicación por publicación, el precio
+   actual, el nuevo, la variación y el margen que queda. **No toca nada**: ni
+   guarda ni llama a MercadoLibre.
+2. **Aplicar en MercadoLibre** — recién ahí cambia los precios, con una
+   confirmación de por medio.
+
+Cambiar el precio de una publicación viva no se deshace con un botón: los
+compradores ya la están viendo.
+
+El campo de margen es opcional. Vacío, cada producto conserva el suyo y solo se
+actualiza por el dólar. Con un número, ese margen pasa a ser el de todos los que
+se actualicen.
+
+Si MercadoLibre rechaza un precio, **no se guarda en el catálogo**: no puede
+figurar acá un precio que la publicación no tiene. El error se muestra con el
+nombre del producto.
+
 ### Cargar en lote sin que Amazon frene (`SCRAPER_API_KEY`)
 
 **La API oficial de Amazon no es una opción.** PA-API 5.0 dejó de aceptar

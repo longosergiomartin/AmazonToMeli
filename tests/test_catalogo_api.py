@@ -1656,3 +1656,127 @@ def test_el_lote_de_videos_marca_los_que_no_son_oficiales(client, monkeypatch):
 
     assert d["resultados"][0]["oficial"] is False
     assert d["resultados"][0]["canal"] == "AustrianBrickFan"
+
+
+# ---- actualización de precios en lote -----------------------------------
+
+def _app_con_publicado(tmp_path, monkeypatch, nombre, precios_falla=None):
+    """App con un producto ya publicado y un cliente que registra los precios
+    que se le mandan a MercadoLibre."""
+    import api.catalogo_routes as rutas
+    from mercadolibre.client import MeliAPIError
+
+    class _Cli:
+        def __init__(self):
+            self.puestos = []
+
+        def ficha_de_catalogo(self, *a, **k):
+            return {}
+
+        def atributos_obligatorios(self, cat_id):
+            return []
+
+        def valores_permitidos(self, cat_id):
+            return {}
+
+        def publicar(self, item):
+            return {"id": "MLA100", "permalink": "http://ml/x", "status": "active"}
+
+        def poner_descripcion(self, item_id, texto):
+            return {}
+
+        def actualizar_precio(self, item_id, precio):
+            if precios_falla:
+                raise MeliAPIError("MercadoLibre PUT /items → 400", status=400,
+                                   cuerpo={"message": precios_falla})
+            self.puestos.append((item_id, precio))
+            return {}
+
+    cli = _Cli()
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado", property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / nombre)))
+    pid = _alta(c, asin="B0PRECIO01", marca="LEGO", titulo_ml="LEGO Set 21042",
+                precio_usd=100.0, margen_deseado=0.35,
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    assert c.post(f"/api/catalogo/{pid}/publicar", json={}).status_code == 200
+    return c, cli, pid
+
+
+def test_simular_precios_no_toca_nada(tmp_path, monkeypatch):
+    """La mitad importante: cambiar el precio de una publicación viva no se
+    deshace con un botón, así que primero se mira qué cambiaría."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "sim.db")
+    antes = c.get(f"/api/catalogo/{pid}").json()
+
+    d = c.post("/api/catalogo/precios/simular", json={"margen_pct": 80}).json()
+    despues = c.get(f"/api/catalogo/{pid}").json()
+
+    assert d["total"] == 1
+    fila = d["filas"][0]
+    assert fila["precio_nuevo"] > fila["precio_actual"]   # 80% > 35%
+    # Y nada cambió de verdad.
+    assert despues["margen_deseado"] == antes["margen_deseado"]
+    assert despues["precio_publicado_ars"] == antes["precio_publicado_ars"]
+    assert cli.puestos == [], "no debería llamar a MercadoLibre"
+
+
+def test_aplicar_precios_manda_el_nuevo_a_mercadolibre(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "apl.db")
+    esperado = c.post("/api/catalogo/precios/simular",
+                      json={"margen_pct": 80}).json()["filas"][0]["precio_nuevo"]
+
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid], "margen_pct": 80}).json()
+
+    assert d["actualizados"] == 1
+    assert cli.puestos == [("MLA100", esperado)]
+    guardado = c.get(f"/api/catalogo/{pid}").json()
+    assert guardado["precio_publicado_ars"] == esperado
+    assert abs(guardado["margen_deseado"] - 0.8) < 1e-9
+
+
+def test_si_mercadolibre_rechaza_no_se_guarda_el_precio(tmp_path, monkeypatch):
+    """El catálogo no puede decir un precio que la publicación no tiene."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "rech.db",
+                                     precios_falla="Price is not valid")
+    antes = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
+
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid], "margen_pct": 80}).json()
+
+    assert d["actualizados"] == 0
+    assert "Price is not valid" in d["resultados"][0]["error"]
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == antes
+
+
+def test_sin_margen_se_usa_el_de_cada_producto(tmp_path, monkeypatch):
+    """Actualizar solo por el dólar, sin cambiar el margen de nadie."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "sinm.db")
+
+    c.post("/api/catalogo/precios/aplicar", json={"ids": [pid]})
+
+    assert abs(c.get(f"/api/catalogo/{pid}").json()["margen_deseado"] - 0.35) < 1e-9
+
+
+def test_un_margen_invalido_se_rechaza(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "mal.db")
+
+    assert c.post("/api/catalogo/precios/simular",
+                  json={"margen_pct": "muchísimo"}).status_code == 422
+    assert c.post("/api/catalogo/precios/simular",
+                  json={"margen_pct": -10}).status_code == 422
+
+
+def test_solo_entran_los_que_estan_publicados(tmp_path, monkeypatch):
+    """Un borrador no tiene publicación que actualizar."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "solo.db")
+    _alta(c, asin="B0BORRADOR", marca="LEGO", titulo_ml="Borrador",
+          precio_usd=50.0)
+
+    d = c.post("/api/catalogo/precios/simular", json={}).json()
+    assert [f["id"] for f in d["filas"]] == [pid]

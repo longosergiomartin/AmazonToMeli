@@ -264,6 +264,29 @@
     <div class="msg" id="cod-msg"></div>
   </details>
 
+  <!-- El dólar se mueve y los costos quedan viejos. Sin esto hay que reeditar
+       cada publicación a mano, una por una. -->
+  <div class="card" style="margin-top:14px">
+    <b>💲 Actualizar precios de lo publicado</b>
+    <p class="hint" style="margin:6px 0 10px">Recalcula el costo con la cotización
+      del dólar de hoy y vuelve a fijar el precio en MercadoLibre. Primero se ve
+      qué cambiaría; nada se toca hasta que confirmes.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
+        Margen <input type="number" id="pr-margen" min="0" step="1"
+                      placeholder="el de cada uno" style="width:130px"> %
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="pr-refrescar" checked> Traer el dólar de hoy
+      </label>
+      <button type="button" class="sm" id="pr-simular">Ver qué cambiaría</button>
+      <button type="button" class="sm primary" id="pr-aplicar"
+              style="display:none">Aplicar en MercadoLibre</button>
+    </div>
+    <div class="msg" id="pr-msg"></div>
+    <div id="pr-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
+  </div>
+
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
     <button type="button" class="sm" id="diagnostico"
             title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
@@ -607,6 +630,68 @@
       $("lote-msg").textContent=m;
       cargar();
     }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  // ---- actualización de precios ---------------------------------------
+  // Simular y aplicar están separados a propósito: cambiar el precio de una
+  // publicación viva no se deshace con un botón.
+  var prFilas=[];
+
+  function prCuerpo(){
+    var m=($("pr-margen").value||"").trim();
+    return {margen_pct:m===""?null:Number(m),
+            refrescar_cotizacion:$("pr-refrescar").checked};
+  }
+
+  $("pr-simular").onclick=function(){
+    var b=$("pr-simular"); b.disabled=true;
+    $("pr-msg").textContent="Calculando con la cotización de hoy…";
+    $("pr-aplicar").style.display="none";
+    api("POST","/api/catalogo/precios/simular",prCuerpo()).then(function(d){
+      b.disabled=false; prFilas=d.filas||[];
+      if(!prFilas.length){ $("pr-msg").textContent="No hay publicaciones para actualizar.";
+        $("pr-tabla").innerHTML=""; return; }
+      var c=d.cotizacion||{};
+      $("pr-msg").textContent="Dólar oficial "+fmt(c.oficial)+" · tarjeta "+fmt(c.tarjeta)
+        +" · costo al dólar "+(d.dolar_costo||"—")+". "+prFilas.length+" publicación/es.";
+      $("pr-tabla").innerHTML=prFilas.map(function(f){
+        var v=f.variacion_pct;
+        var color=v==null?"var(--muted)":(v>0?"var(--good)":"var(--bad)");
+        return '<div>'+esc(f.nombre)+' · '+fmt(f.precio_actual)+' → <b>'+fmt(f.precio_nuevo)
+          +'</b> <span style="color:'+color+'">'+(v==null?"":(v>0?"+":"")+v+"%")+'</span>'
+          +' <span class="hint">(margen '+f.margen_pct+'%)</span></div>';
+      }).join("");
+      $("pr-aplicar").style.display="";
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  $("pr-aplicar").onclick=function(){
+    if(!prFilas.length) return;
+    if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es EN TU CUENTA "
+      +"de MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
+    var b=$("pr-aplicar"); b.disabled=true;
+    // De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
+    // todas juntas serían una petición que el servidor corta por tiempo.
+    var pendientes=prFilas.map(function(f){return f.id;}), hechos=0, fallas=[];
+    function tanda(){
+      if(!pendientes.length){
+        b.disabled=false; $("pr-aplicar").style.display="none";
+        $("pr-msg").textContent=hechos+" publicación/es actualizada/s."
+          +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
+        cargar(); return;
+      }
+      var lote=pendientes.splice(0,10);
+      $("pr-msg").textContent="Actualizando… "+hechos+" listas, "
+        +(pendientes.length+lote.length)+" por hacer.";
+      api("POST","/api/catalogo/precios/aplicar",
+          {ids:lote, margen_pct:prCuerpo().margen_pct}).then(function(d){
+        hechos+=d.actualizados||0;
+        (d.resultados||[]).forEach(function(r){
+          if(!r.ok) fallas.push(r.nombre+" ("+r.error+")"); });
+        tanda();
+      }).catch(function(e){ b.disabled=false; err(e); });
+    }
+    tanda();
   };
 
   $("lote-borrar").onclick=function(){

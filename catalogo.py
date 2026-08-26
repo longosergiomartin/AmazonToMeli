@@ -527,6 +527,18 @@ class Catalogo:
                                           f"sugerido ${p.precio_sugerido_ars:,.0f}")
         return p
 
+    def actualizar_margen(self, pid: int, margen: float) -> ProductoCatalogo:
+        """Cambia el margen deseado y recalcula el precio sugerido."""
+        p = self.obtener(pid)
+        if not p:
+            raise KeyError(pid)
+        anterior = p.margen_deseado
+        p.margen_deseado = float(margen)
+        self._calcular(p)
+        self._guardar(p)
+        self._log(pid, "margen", "margen_deseado", anterior, p.margen_deseado)
+        return p
+
     def actualizar_precio(self, pid: int, nuevo_precio: float) -> ProductoCatalogo:
         p = self.obtener(pid)
         if not p:
