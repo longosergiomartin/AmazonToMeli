@@ -102,6 +102,26 @@ def _parse_imagenes(texto: str, limite: int = 8) -> list:
     return urls[:limite]
 
 
+def _parse_videos(texto: str, limite: int = 4) -> list:
+    """URLs de los videos del producto.
+
+    Amazon los sirve desde su propio CDN, como `.mp4` o como playlist `.m3u8`,
+    embebidos en el JSON de la página. **No se pueden mandar a MercadoLibre**:
+    ML solo acepta un video de YouTube. Se guardan igual porque son la única
+    forma de ver qué video tiene el producto sin volver a abrir Amazon.
+    """
+    urls: list = []
+    for patron in (r'"(?:url|videoUrl|hlsUrl)"\s*:\s*"(https:[^"]+?\.(?:mp4|m3u8)[^"]*)"',
+                   r'"(https://[^"]*media-amazon[^"]+?\.(?:mp4|m3u8))"'):
+        for u in re.findall(patron, texto):
+            u = u.replace("\\/", "/")
+            if "media-amazon" in u and u not in urls:
+                urls.append(u)
+        if urls:
+            break
+    return urls[:limite]
+
+
 def _parse_detalles(texto: str) -> dict:
     """Tabla de "Detalles del producto" / "Product information" de Amazon.
 
@@ -248,6 +268,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     datos["peso_kg"] = _parse_peso_kg(texto)
     datos["descripcion"] = _parse_descripcion(texto)
     datos["imagenes"] = _parse_imagenes(texto)
+    datos["videos"] = _parse_videos(texto)
     datos["ok"] = bool(titulo or datos["precio_usd"] or datos["imagenes"])
     if not datos["ok"]:
         datos["mensaje"] = ("Se cargó el ASIN pero no pude leer los detalles. "
@@ -255,6 +276,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     else:
         datos["mensaje"] = (
             f"Traído de Amazon: {len(datos['imagenes'])} foto/s"
+            + (f", {len(datos['videos'])} video/s" if datos["videos"] else "")
             + (", descripción" if datos["descripcion"] else "")
             + ". Revisá y agregá el envío+importación desde el checkout.")
     return datos

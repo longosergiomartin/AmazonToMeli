@@ -108,3 +108,33 @@ def test_landed_por_unidad_con_cantidad_calcula_el_lote():
     r = calcular_costo(p, cfg=cfg)
     assert r.total_usd == 48.0            # por unidad
     assert r.detalle_usd["landed_lote"] == 144.0  # 48 * 3
+
+
+# ---- videos -------------------------------------------------------------
+
+def test_saca_los_videos_del_producto():
+    """Amazon los deja en el JSON de la página, como .mp4 o como playlist."""
+    from amazon_import import _parse_videos
+
+    html = '''
+      <script>var obj = {"videoUrl":"https://m.media-amazon.com/vse/uno.mp4",
+      "hlsUrl":"https://m.media-amazon.com/vse/dos.m3u8"};</script>
+    '''
+    r = _parse_videos(html)
+    assert "https://m.media-amazon.com/vse/uno.mp4" in r
+    assert "https://m.media-amazon.com/vse/dos.m3u8" in r
+
+
+def test_los_videos_no_traen_cualquier_cosa():
+    """Sin videos no se inventa nada, y lo que no es de Amazon no entra."""
+    from amazon_import import _parse_videos
+
+    assert _parse_videos("<html>sin videos</html>") == []
+    assert _parse_videos('{"url":"https://otrositio.com/x.mp4"}') == []
+
+
+def test_las_barras_escapadas_del_json_se_deshacen():
+    from amazon_import import _parse_videos
+
+    html = r'{"videoUrl":"https:\/\/m.media-amazon.com\/vse\/tres.mp4"}'
+    assert _parse_videos(html) == ["https://m.media-amazon.com/vse/tres.mp4"]

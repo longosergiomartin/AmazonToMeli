@@ -126,6 +126,7 @@ class ColaImportacion:
             titulo_ml=titulo_para_ml(marca, titulo, set_id),
             descripcion=datos.get("descripcion", ""),
             pictures=list(datos.get("imagenes") or []),
+            videos=list(datos.get("videos") or []),
         )
         return self.cat.agregar(p)
 

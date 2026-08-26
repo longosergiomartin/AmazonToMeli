@@ -784,6 +784,7 @@
         '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
         '<datalist id="dl-'+esc(a.id)+'">'+opts+'</datalist>'+hint+'</div>';}).join("");
     var fotos=(v.fotos||[]).join("\n");
+    var vids=v.videos||[];
     $("dlg-b").innerHTML=
       '<div class="f"><label>Título</label><input id="ed-titulo" value="'+esc(v.titulo||"")+'"></div>'+
       // La marca es obligatoria en casi todas las categorías y MercadoLibre la
@@ -804,6 +805,14 @@
         '<textarea id="ed-desc" rows="4" placeholder="Descripción de la publicación">'+esc(v.descripcion||"")+'</textarea></div>'+
       '<div class="f"><label>Fotos — una URL por línea *</label>'+
         '<textarea id="ed-fotos" rows="3" placeholder="https://.../foto1.jpg">'+esc(fotos)+'</textarea></div>'+
+      '<div class="f"><label>Video de YouTube (opcional)</label>'+
+        '<input id="ed-video" placeholder="https://www.youtube.com/watch?v=… o el id" value="'+esc(v.video_youtube||"")+'">'+
+        '<span class="hint">MercadoLibre solo acepta YouTube. '
+        +(vids.length
+          ? 'Este producto trae '+vids.length+' video/s en Amazon, pero son de su servidor y ML no los toma: '
+            +vids.map(function(u,i){return '<a href="'+esc(u)+'" target="_blank" rel="noopener">ver #'+(i+1)+'</a>';}).join(" · ")
+          : 'No se encontraron videos en la página de Amazon.')
+        +'</span></div>'+
       '<div class="f"><label>Días de preparación (entrega)</label>'+
         '<input id="ed-dias" type="number" step="1" value="'+(v.dias_preparacion||25)+'">'+
         '<span class="hint">Se muestra como "el vendedor necesita N días para tener listo el producto".</span></div>'+
@@ -908,7 +917,8 @@
     return {titulo_ml:($("ed-titulo").value||"").trim(), ml_category_id:cat, ml_attributes:attrs,
             marca:($("ed-marca").value||"").trim(), modelo:($("ed-modelo").value||"").trim(),
             modelo_fabricante:($("ed-set").value||"").trim(),
-            pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||""};
+            pictures:fotos, dias_preparacion:dias, descripcion:$("ed-desc").value||"",
+            video_youtube:($("ed-video").value||"").trim()};
   }
   function guardarPub(id,attrIds){ return api("PATCH","/api/catalogo/"+id+"/publicacion",collectPub(attrIds)); }
 

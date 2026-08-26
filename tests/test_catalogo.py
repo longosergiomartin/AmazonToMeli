@@ -366,3 +366,103 @@ def test_activo_si_se_publica(cat):
     p = cat.agregar(_prod())
     p2 = cat.registrar_publicacion(p.id, "MLA123", "http://ml/x", "active")
     assert p2.estado == "publicado"
+
+
+# ---- videos -------------------------------------------------------------
+
+def test_id_de_youtube_acepta_link_o_id():
+    """Lo que se copia del navegador es la URL entera, no el id."""
+    from catalogo import id_de_youtube
+
+    assert id_de_youtube("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert id_de_youtube("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert id_de_youtube("https://www.youtube.com/embed/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert id_de_youtube("https://www.youtube.com/shorts/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+    assert id_de_youtube("https://youtube.com/watch?a=1&v=dQw4w9WgXcQ&t=3") == "dQw4w9WgXcQ"
+    assert id_de_youtube("dQw4w9WgXcQ") == "dQw4w9WgXcQ"
+
+
+def test_id_de_youtube_descarta_lo_que_no_entiende():
+    """Mandar basura en video_id hace que MercadoLibre rechace la publicación."""
+    from catalogo import id_de_youtube
+
+    assert id_de_youtube("") == ""
+    assert id_de_youtube("https://m.media-amazon.com/vse/video.mp4") == ""
+    assert id_de_youtube("no es un id") == ""
+
+
+def test_los_videos_se_guardan_y_se_releen(cat):
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0VIDEO001", marca="LEGO", modelo="Set", precio_usd=100.0,
+        videos=["https://m.media-amazon.com/vse/uno.mp4"]))
+    assert cat.obtener(p.id).videos == ["https://m.media-amazon.com/vse/uno.mp4"]
+
+    cat.actualizar_publicacion(p.id,
+                               video_youtube="https://youtu.be/dQw4w9WgXcQ")
+    # Se guarda el id, no la URL: es lo que espera MercadoLibre.
+    assert cat.obtener(p.id).video_youtube == "dQw4w9WgXcQ"
+
+
+def test_el_video_de_youtube_va_en_la_publicacion():
+    from mercadolibre.listing import construir_item_catalogo
+
+    p = ProductoCatalogo(asin="B0VIDEO002", marca="LEGO", modelo="Set 75339",
+                         titulo_ml="LEGO Star Wars 75339", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1,
+                         video_youtube="dQw4w9WgXcQ")
+    # Las dos vías de publicación tienen que mandarlo.
+    assert construir_item(p, pictures=["http://i/1.jpg"])["video_id"] == "dQw4w9WgXcQ"
+    assert construir_item_catalogo(p, "MLA123")["video_id"] == "dQw4w9WgXcQ"
+
+
+def test_sin_video_no_se_manda_el_campo():
+    """Un video_id vacío es un campo de más que MercadoLibre puede objetar."""
+    p = ProductoCatalogo(asin="B0VIDEO003", marca="LEGO", modelo="Set",
+                         titulo_ml="LEGO Set", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1)
+    assert "video_id" not in construir_item(p, pictures=["http://i/1.jpg"])
+
+
+def test_los_videos_de_amazon_no_se_mandan_a_mercadolibre():
+    """Son .mp4 de su CDN: ML solo acepta YouTube. Mandarlos sería un rechazo
+    seguro."""
+    p = ProductoCatalogo(asin="B0VIDEO004", marca="LEGO", modelo="Set",
+                         titulo_ml="LEGO Set", precio_usd=100.0,
+                         ml_category_id="MLA1157", stock=1,
+                         videos=["https://m.media-amazon.com/vse/uno.mp4"])
+    item = construir_item(p, pictures=["http://i/1.jpg"])
+    assert "video_id" not in item
+    assert "media-amazon.com/vse" not in str(item)
+
+
+def test_las_filas_viejas_no_traen_none_en_el_video(tmp_path):
+    """Las columnas nuevas llegan en NULL a las filas anteriores a la
+    migración, y el campo está declarado como texto."""
+    import sqlite3
+    from arbitraje.config import Config
+    from db import conectar
+
+    ruta = str(tmp_path / "vieja.db")
+    c = sqlite3.connect(ruta)
+    c.execute("CREATE TABLE catalogo (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+              "creado TEXT NOT NULL, actualizado TEXT NOT NULL, amazon_link TEXT, "
+              "asin TEXT, marca TEXT, modelo TEXT, modelo_fabricante TEXT, "
+              "precio_usd REAL, peso_kg REAL, costo_envio_usd REAL, "
+              "disponibilidad TEXT, regimen TEXT, arancel_pct REAL, categoria TEXT, "
+              "margen_deseado REAL, stock INTEGER, dias_preparacion INTEGER, "
+              "titulo_ml TEXT, descripcion TEXT, ml_category_id TEXT, "
+              "ml_attributes TEXT, pictures TEXT, costo_total_ars REAL, "
+              "precio_sugerido_ars REAL, precio_publicado_ars REAL, margen_pct REAL, "
+              "estado TEXT, ml_item_id TEXT, ml_permalink TEXT)")
+    c.execute("INSERT INTO catalogo (creado, actualizado, asin, marca, modelo, "
+              "precio_usd, stock, estado, ml_attributes, pictures, margen_deseado, "
+              "peso_kg, costo_envio_usd, dias_preparacion, arancel_pct, categoria, "
+              "regimen, disponibilidad) VALUES ('2026-01-01','2026-01-01',"
+              "'B0VIEJO001','LEGO','Set viejo',100.0,1,'borrador','{}','[]',0.35,"
+              "0.5,0.0,25,0.0,'default','courier','in_stock')")
+    c.commit(); c.close()
+
+    viejo = Catalogo(conectar(ruta), cfg=Config(),
+                     cotizacion={"oficial": 1000.0, "tarjeta": 1300.0}).todos()[0]
+    assert viejo.video_youtube == ""
+    assert viejo.videos == []

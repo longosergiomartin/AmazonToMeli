@@ -52,6 +52,18 @@ def _precio(producto) -> float:
     return float(producto.precio_publicado_ars or producto.precio_sugerido_ars or 0)
 
 
+def _con_video(item: dict, producto) -> None:
+    """Agrega el video a la publicación, si hay uno cargado.
+
+    MercadoLibre solo acepta **YouTube**, por id. Los videos que trae Amazon
+    están en su propio CDN (.mp4/.m3u8) y no sirven acá: por eso el campo es
+    aparte y se carga a mano, en vez de salir del producto importado.
+    """
+    vid = (getattr(producto, "video_youtube", "") or "").strip()
+    if vid:
+        item["video_id"] = vid
+
+
 def construir_item(producto, pictures: Optional[list[str]] = None,
                    listing_type_id: str = "gold_special",
                    condition: str = "new",
@@ -125,6 +137,7 @@ def construir_item(producto, pictures: Optional[list[str]] = None,
     dias = int(getattr(producto, "dias_preparacion", 0) or 0)
     if dias > 0:
         item["sale_terms"] = [{"id": "MANUFACTURING_TIME", "value_name": f"{dias} días"}]
+    _con_video(item, producto)
     return item
 
 
@@ -152,6 +165,7 @@ def construir_item_catalogo(producto, catalog_product_id: str,
     dias = int(getattr(producto, "dias_preparacion", 0) or 0)
     if dias > 0:
         item["sale_terms"] = [{"id": "MANUFACTURING_TIME", "value_name": f"{dias} días"}]
+    _con_video(item, producto)
     return item
 
 
@@ -205,6 +219,9 @@ def vista_previa(producto, pictures: Optional[list[str]] = None) -> dict:
         "descripcion": getattr(producto, "descripcion", "") or "",
         "atributos": producto.ml_attributes,
         "fotos": pictures or [],
+        # Los de Amazon, que no se pueden publicar, y el de YouTube, que sí.
+        "videos": list(getattr(producto, "videos", None) or []),
+        "video_youtube": getattr(producto, "video_youtube", "") or "",
         "costo_total_ars": producto.costo_total_ars,
         "precio_sugerido_ars": producto.precio_sugerido_ars,
         "margen_pct": producto.margen_pct,

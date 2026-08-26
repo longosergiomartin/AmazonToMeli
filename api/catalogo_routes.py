@@ -81,6 +81,9 @@ class Publicacion(BaseModel):
     pictures: Optional[list[str]] = None
     dias_preparacion: Optional[int] = None
     descripcion: Optional[str] = None
+    videos: Optional[list[str]] = None
+    # Se acepta el link de YouTube pegado tal cual, no solo el id.
+    video_youtube: Optional[str] = None
 
 
 def registrar_catalogo(app: FastAPI, conn,
