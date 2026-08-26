@@ -124,10 +124,22 @@ class Catalogo:
         self._proveedor_cotizacion = proveedor_cotizacion
         self._crear_tablas()
 
-    def _cfg_efectivo(self) -> Config:
+    def _cfg_efectivo(self, tc: Optional[float] = None) -> Config:
         """Config con el tipo de cambio en vivo, el dólar elegido para el costo
-        y la condición fiscal."""
+        y la condición fiscal.
+
+        `tc` fuerza un tipo de cambio puesto a mano: gana sobre la cotización en
+        vivo y sobre el dólar elegido, porque es el número que el usuario
+        escribió y no una estimación.
+        """
         cfg = self.cfg
+        if tc:
+            cfg = replace(cfg, tipo_cambio_oficial=float(tc),
+                          recargo_tarjeta_pct=0.0)
+            condicion = self.condicion_fiscal
+            if condicion and condicion != cfg.meli.condicion_fiscal:
+                cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
+            return cfg
         if self.cotizacion is None and self._proveedor_cotizacion is not None:
             try:
                 self.cotizacion = self._proveedor_cotizacion() or {}
@@ -358,6 +370,48 @@ class Catalogo:
         precio_ref = p.precio_publicado_ars or p.precio_sugerido_ars
         p.margen_pct = margen_real_al_precio(
             costo.total_ars, precio_ref, p.categoria, self._cfg_efectivo())["margen_pct"]
+
+    def _costo_ars(self, p: ProductoCatalogo, tc: Optional[float] = None) -> float:
+        """El costo puesto en Argentina, valuado al tipo de cambio que se pida."""
+        copia = replace(p)
+        if not copia.costo_envio_usd and copia.precio_usd:
+            copia.costo_envio_usd = round(copia.precio_usd * self.cfg.envio_import_pct, 2)
+        base_usd = copia.precio_usd + copia.costo_envio_usd
+        pa = ProductoArbitraje(
+            nombre=copia.modelo or copia.asin or "producto",
+            query_meli=copia.modelo or "", precio_amazon_usd=base_usd,
+            peso_kg=copia.peso_kg, arancel_pct=copia.arancel_pct)
+        cfg = self._cfg_efectivo(tc)
+        if copia.regimen == "landed":
+            pa.precio_landed_usd = base_usd
+        elif copia.regimen == "courier":
+            cfg = replace(cfg, courier=replace(cfg.courier, flete_usd_por_kg=0.0))
+        return calcular_costo(pa, regimen=copia.regimen, cfg=cfg).total_ars
+
+    def simular(self, p: ProductoCatalogo, tc_costo: Optional[float] = None,
+                tc_venta: Optional[float] = None,
+                margen: Optional[float] = None) -> dict:
+        """Costo y precio de venta bajo tipos de cambio puestos a mano.
+
+        Es la forma en que se piensa el negocio de verdad: *compro a dólar
+        1600 y vendo a dólar 3200*. El precio de venta sale de valuar el mismo
+        costo en dólares al tipo de cambio de venta, así que el "margen" queda
+        expresado como una cotización y no como un porcentaje.
+
+        Si no se da `tc_venta`, el precio sale del margen (el de `margen` o el
+        del producto), que es el modo de siempre.
+        """
+        costo = self._costo_ars(p, tc_costo)
+        if tc_venta:
+            precio = self._costo_ars(p, tc_venta)
+        else:
+            m = p.margen_deseado if margen is None else margen
+            precio = precio_sugerido(costo, m, p.categoria, self._cfg_efectivo(tc_costo))
+        real = margen_real_al_precio(costo, precio, p.categoria,
+                                     self._cfg_efectivo(tc_costo))
+        return {"costo_ars": round(costo, 2), "precio_ars": round(precio, 2),
+                "margen_pct": round(real["margen_pct"], 1),
+                "margen_ars": round(real["margen_ars"], 2)}
 
     def margen_insuficiente(self, p: ProductoCatalogo) -> bool:
         return p.margen_pct < self.cfg.umbral_margen_bueno_pct

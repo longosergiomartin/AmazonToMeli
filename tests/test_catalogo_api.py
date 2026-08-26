@@ -1780,3 +1780,31 @@ def test_solo_entran_los_que_estan_publicados(tmp_path, monkeypatch):
 
     d = c.post("/api/catalogo/precios/simular", json={}).json()
     assert [f["id"] for f in d["filas"]] == [pid]
+
+
+def test_compro_a_un_dolar_y_vendo_a_otro_desde_el_panel(tmp_path, monkeypatch):
+    """El caso completo: LEGO ya publicado, costo a dólar 1600 y venta a 3200,
+    con el precio nuevo llegando a MercadoLibre."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "dosdolares.db")
+
+    d = c.post("/api/catalogo/precios/simular",
+               json={"tc_costo": 1600, "tc_venta": 3200}).json()
+    fila = d["filas"][0]
+
+    assert d["tc_costo"] == 1600 and d["tc_venta"] == 3200
+    # El costo en USD valuado a cada cotización: la venta es exactamente el
+    # doble del costo, porque 3200 es el doble de 1600.
+    assert abs(fila["precio_nuevo"] - fila["costo_nuevo"] * 2) < 0.01
+
+    c.post("/api/catalogo/precios/aplicar",
+           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+    assert cli.puestos == [("MLA100", fila["precio_nuevo"])]
+
+
+def test_un_dolar_invalido_se_rechaza(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "dolarmal.db")
+
+    for cuerpo in ({"tc_costo": "mil quinientos"}, {"tc_costo": 0},
+                   {"tc_venta": -3200}):
+        r = c.post("/api/catalogo/precios/simular", json=cuerpo)
+        assert r.status_code == 422, cuerpo

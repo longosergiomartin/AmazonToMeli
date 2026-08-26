@@ -878,26 +878,40 @@ def registrar_catalogo(app: FastAPI, conn,
     # aplicar— porque toca el precio de publicaciones vivas: se ve qué cambia
     # antes de cambiarlo.
 
-    def _con_precios_nuevos(p, margen):
-        """Copia del producto recalculada, sin guardar nada."""
-        copia = replace(p)
-        if margen is not None:
-            copia.margen_deseado = margen
-        cat._calcular(copia)
-        return copia
-
-    def _margen_del_cuerpo(body) -> Optional[float]:
-        """El margen pedido, como fracción. Vacío = el de cada producto."""
-        crudo = (body or {}).get("margen_pct")
+    def _numero(body, clave, etiqueta) -> Optional[float]:
+        """Un número puesto a mano, o None si el campo vino vacío."""
+        crudo = (body or {}).get(clave)
         if crudo in (None, ""):
             return None
         try:
             valor = float(crudo)
         except (TypeError, ValueError):
-            raise HTTPException(422, "El margen tiene que ser un número.")
-        if valor < 0:
-            raise HTTPException(422, "El margen no puede ser negativo.")
-        return valor / 100.0
+            raise HTTPException(422, f"{etiqueta} tiene que ser un número.")
+        if valor <= 0:
+            raise HTTPException(422, f"{etiqueta} tiene que ser mayor que cero.")
+        return valor
+
+    def _parametros(body) -> dict:
+        """Cómo se pide recalcular: por cotizaciones a mano o por margen.
+
+        Son dos formas de decir lo mismo. La de las cotizaciones es como se
+        piensa el negocio —*compro a dólar 1600 y vendo a dólar 3200*— y el
+        margen queda expresado en el precio, no como un porcentaje aparte.
+        """
+        margen = (body or {}).get("margen_pct")
+        if margen in (None, ""):
+            margen = None
+        else:
+            try:
+                margen = float(margen)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "El margen tiene que ser un número.")
+            if margen < 0:
+                raise HTTPException(422, "El margen no puede ser negativo.")
+            margen = margen / 100.0
+        return {"tc_costo": _numero(body, "tc_costo", "El dólar de costo"),
+                "tc_venta": _numero(body, "tc_venta", "El dólar de venta"),
+                "margen": margen}
 
     def _publicados_con_item():
         return [p for p in cat.todos()
@@ -911,27 +925,27 @@ def registrar_catalogo(app: FastAPI, conn,
         antes qué cambia es como publicar a ciegas. Acá no se guarda nada ni se
         llama a MercadoLibre.
         """
-        margen = _margen_del_cuerpo(body)
-        if (body or {}).get("refrescar_cotizacion"):
+        par = _parametros(body)
+        if (body or {}).get("refrescar_cotizacion") and not par["tc_costo"]:
             _cotizacion(refrescar=True)
 
         filas = []
         for p in _publicados_con_item():
-            nuevo = _con_precios_nuevos(p, margen)
+            r = cat.simular(p, **par)
             actual = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
-            sugerido = nuevo.precio_sugerido_ars
             filas.append({
                 "id": p.id, "nombre": p.titulo_ml or p.modelo,
                 "ml_item_id": p.ml_item_id,
                 "precio_actual": round(actual, 2),
-                "precio_nuevo": round(sugerido, 2),
-                "costo_nuevo": round(nuevo.costo_total_ars, 2),
-                "margen_pct": round(nuevo.margen_pct, 1),
-                "variacion_pct": round((sugerido / actual - 1) * 100, 1) if actual else None,
+                "precio_nuevo": r["precio_ars"],
+                "costo_nuevo": r["costo_ars"],
+                "margen_pct": r["margen_pct"],
+                "variacion_pct": round((r["precio_ars"] / actual - 1) * 100, 1) if actual else None,
             })
         c = cat.cotizacion or {}
         return {"filas": filas, "total": len(filas),
                 "dolar_costo": cat.dolar_costo,
+                "tc_costo": par["tc_costo"], "tc_venta": par["tc_venta"],
                 "cotizacion": {"oficial": c.get("oficial"),
                                "tarjeta": c.get("tarjeta"),
                                "actualizado": c.get("actualizado")}}
@@ -943,7 +957,7 @@ def registrar_catalogo(app: FastAPI, conn,
         De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
         todas juntas serían una petición eterna que el servidor corta.
         """
-        margen = _margen_del_cuerpo(body)
+        par = _parametros(body)
         ids = [int(i) for i in (body or {}).get("ids", [])][:20]
         if not ids:
             raise HTTPException(422, "No hay publicaciones para actualizar.")
@@ -954,8 +968,7 @@ def registrar_catalogo(app: FastAPI, conn,
             p = cat.obtener(pid)
             if not p or not (p.ml_item_id or "").strip():
                 continue
-            nuevo = _con_precios_nuevos(p, margen)
-            precio = round(nuevo.precio_sugerido_ars, 2)
+            precio = cat.simular(p, **par)["precio_ars"]
             fila = {"id": pid, "nombre": p.titulo_ml or p.modelo,
                     "precio_anterior": round(p.precio_publicado_ars or 0.0, 2),
                     "precio_nuevo": precio, "ok": False, "error": ""}
@@ -971,8 +984,8 @@ def registrar_catalogo(app: FastAPI, conn,
                 fila["error"] = describir_error(getattr(e, "cuerpo", None)) or str(e)
                 resultados.append(fila)
                 continue
-            if margen is not None:
-                cat.actualizar_margen(pid, margen)
+            if par["margen"] is not None:
+                cat.actualizar_margen(pid, par["margen"])
             cat.actualizar_precio(pid, precio)
             fila["ok"] = True
             resultados.append(fila)

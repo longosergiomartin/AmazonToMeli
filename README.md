@@ -360,9 +360,33 @@ Va en dos pasos, y es a propósito:
 Cambiar el precio de una publicación viva no se deshace con un botón: los
 compradores ya la están viendo.
 
-El campo de margen es opcional. Vacío, cada producto conserva el suyo y solo se
-actualiza por el dólar. Con un número, ese margen pasa a ser el de todos los que
-se actualicen.
+#### Compro a un dólar, vendo a otro
+
+Es la forma en que se piensa el negocio de verdad: *compro a dólar 1600 y vendo
+a dólar 3200*. Los dos campos toman cotizaciones puestas a mano:
+
+- **Compro a dólar**: el costo en USD (lo pagado en Amazon + envío e impuestos)
+  se valúa a esa cotización.
+- **Vendo a dólar**: el precio sale de valuar **el mismo costo en USD** a esta
+  otra cotización.
+
+Ejemplo real: un set de US$ 100 en Amazon queda en US$ 126 puesto acá (con el
+26% de envío e impuestos). A dólar 1600 el costo es **$201.600**; vendido a
+dólar 3200 el precio es **$403.200**.
+
+> **Ojo con el margen**: vender al doble del dólar **no** es 100% de margen. La
+> comisión de MercadoLibre y los impuestos se llevan una parte, así que en ese
+> ejemplo el margen real queda en **62%**. La columna de margen muestra siempre
+> el número real, no la diferencia entre cotizaciones.
+
+El dólar puesto a mano gana sobre la cotización en vivo: es el número que
+escribiste, no una estimación.
+
+#### O por margen, como antes
+
+Si dejás vacío «vendo a dólar», el precio sale del margen sobre el costo. Ese
+campo también es opcional: vacío, cada producto conserva el suyo y solo se
+actualiza por el dólar.
 
 Si MercadoLibre rechaza un precio, **no se guarda en el catálogo**: no puede
 figurar acá un precio que la publicación no tiene. El error se muestra con el

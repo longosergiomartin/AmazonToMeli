@@ -503,3 +503,73 @@ def test_sin_ninguno_de_los_dos_si_falta_algo():
                          precio_sugerido_ars=100000.0)
     faltan = faltantes_para_publicar(p, obligatorios, ["http://i/1.jpg"])
     assert len(faltan) == 2
+
+
+# ---- comprar a un dólar y vender a otro ---------------------------------
+
+def test_compro_a_1600_y_vendo_a_3200(cat):
+    """La forma en que se piensa el negocio: dos cotizaciones puestas a mano,
+    no un porcentaje. El margen queda expresado en el precio."""
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0SW000001", marca="LEGO", modelo="LEGO Star Wars 75192",
+        titulo_ml="LEGO Star Wars 75192", precio_usd=100.0, regimen="landed",
+        margen_deseado=0.35, stock=1))
+    p = cat.obtener(p.id)
+
+    # 100 USD de Amazon + 26% de envío e impuestos = 126 USD puestos acá.
+    assert p.precio_usd + p.costo_envio_usd == 126.0
+
+    r = cat.simular(p, tc_costo=1600, tc_venta=3200)
+    assert r["costo_ars"] == 126.0 * 1600
+    assert r["precio_ars"] == 126.0 * 3200
+
+
+def test_vender_al_doble_del_dolar_no_es_100_por_ciento_de_margen(cat):
+    """La comisión de MercadoLibre y los impuestos se llevan una parte: el
+    margen real es menor que la diferencia entre las dos cotizaciones."""
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0SW000002", marca="LEGO", modelo="Set", titulo_ml="Set",
+        precio_usd=100.0, regimen="landed", stock=1))
+    r = cat.simular(cat.obtener(p.id), tc_costo=1600, tc_venta=3200)
+
+    assert 0 < r["margen_pct"] < 100
+
+
+def test_el_dolar_a_mano_gana_sobre_la_cotizacion_en_vivo(cat):
+    """Es el número que escribió el usuario, no una estimación."""
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0SW000003", marca="LEGO", modelo="Set", titulo_ml="Set",
+        precio_usd=100.0, regimen="landed", stock=1))
+    p = cat.obtener(p.id)
+
+    assert cat.simular(p, tc_costo=1600)["costo_ars"] == 126.0 * 1600
+    # Sin `tc` se usa el tipo de cambio de compra configurado, que es otro.
+    de_siempre = cat.simular(p)["costo_ars"]
+    assert de_siempre == round(126.0 * cat._cfg_efectivo().tc_compra(), 2)
+    assert de_siempre != 126.0 * 1600
+
+
+def test_sin_dolar_de_venta_se_usa_el_margen(cat):
+    """El modo de siempre sigue andando."""
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0SW000004", marca="LEGO", modelo="Set", titulo_ml="Set",
+        precio_usd=100.0, regimen="landed", margen_deseado=0.35, stock=1))
+    p = cat.obtener(p.id)
+
+    con_margen = cat.simular(p, tc_costo=1600, margen=0.80)
+    del_producto = cat.simular(p, tc_costo=1600)
+    assert con_margen["precio_ars"] > del_producto["precio_ars"]
+    # Mismo costo: cambia el precio, no el costo.
+    assert con_margen["costo_ars"] == del_producto["costo_ars"]
+
+
+def test_simular_no_modifica_el_producto(cat):
+    p = cat.agregar(ProductoCatalogo(
+        asin="B0SW000005", marca="LEGO", modelo="Set", titulo_ml="Set",
+        precio_usd=100.0, regimen="landed", margen_deseado=0.35, stock=1))
+    antes = cat.obtener(p.id)
+    cat.simular(antes, tc_costo=9999, tc_venta=99999, margen=5.0)
+    despues = cat.obtener(p.id)
+
+    assert despues.costo_total_ars == antes.costo_total_ars
+    assert despues.margen_deseado == antes.margen_deseado
