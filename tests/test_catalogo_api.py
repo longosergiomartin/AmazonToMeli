@@ -1619,3 +1619,24 @@ def test_las_fuentes_informan_si_hay_clave_de_youtube(client, monkeypatch):
     assert client.get("/api/codigos/fuentes").json()["youtube"] is False
     monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
     assert client.get("/api/codigos/fuentes").json()["youtube"] is True
+
+
+def test_por_proxy_se_procesan_menos_por_llamada(client, monkeypatch):
+    """El proxy tarda mucho más que leer directo: varios seguidos harían la
+    petición eterna que este endpoint existe para evitar, y el servidor la
+    corta a mitad de camino."""
+    import api.catalogo_routes as rutas
+
+    pedidos = []
+    monkeypatch.setattr(rutas.ColaImportacion, "procesar_lote",
+                        lambda self, maximo, pausa_seg, **k:
+                        pedidos.append(maximo) or {"procesados": [],
+                                                   "detener": False,
+                                                   "motivo": "ok"})
+
+    monkeypatch.setattr(rutas, "scraperapi_configurada", lambda: True)
+    client.post("/api/importar/procesar", json={"maximo": 10})
+    monkeypatch.setattr(rutas, "scraperapi_configurada", lambda: False)
+    client.post("/api/importar/procesar", json={"maximo": 10})
+
+    assert pedidos == [2, 10]

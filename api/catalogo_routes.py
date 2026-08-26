@@ -267,10 +267,17 @@ def registrar_catalogo(app: FastAPI, conn,
     @app.post("/api/importar/procesar")
     def importar_procesar(body: dict):
         """Procesa unos pocos por llamada: el navegador vuelve a llamar para
-        seguir. Así el avance se ve en vivo y no hay peticiones eternas."""
+        seguir. Así el avance se ve en vivo y no hay peticiones eternas.
+
+        Yendo por proxy se procesan menos por llamada: el proxy tarda bastante
+        más que leer directo —tiene que conseguir una IP que Amazon acepte— y
+        varios productos seguidos harían justo la petición eterna que este
+        endpoint evita, que el servidor corta a mitad de camino.
+        """
         maximo = int((body or {}).get("maximo", 3))
         pausa = float((body or {}).get("pausa_seg", 2.0))
-        return cola.procesar_lote(maximo=min(maximo, 10), pausa_seg=pausa)
+        tope = 2 if scraperapi_configurada() else 10
+        return cola.procesar_lote(maximo=min(maximo, tope), pausa_seg=pausa)
 
     @app.post("/api/importar/reactivar")
     def importar_reactivar():
