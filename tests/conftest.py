@@ -8,6 +8,10 @@ import time
 # test crea y borra datos, y no debe tocar datos de verdad.
 os.environ.pop("DATABASE_URL", None)
 
+# Con la clave puesta, preparar borradores sale a buscar el video a YouTube: en
+# los tests eso serían llamadas reales, con la cuota diaria de verdad.
+os.environ.pop("YOUTUBE_API_KEY", None)
+
 import arbitraje.cotizacion as cot
 
 # Semilla del caché para que crear_app / obtener_cotizaciones no salgan a la red

@@ -296,6 +296,8 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
    - `BRICKSET_API_KEY` = tu clave de [brickset.com/api](https://brickset.com/api/)
      (**opcional pero muy recomendada si vendés LEGO**, ver abajo).
+   - `YOUTUBE_API_KEY` = clave de YouTube Data API v3 (*opcional*, para buscar
+     el video del producto, ver abajo).
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
@@ -337,6 +339,29 @@ botones de la herramienta: leer lo que vos ya podés ver.
 - **`BRICKSET_API_KEY`** *(opcional, solo LEGO)*: si tenés una API key de
   [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
   hace falta configurarla.
+
+### El video de la publicación
+
+MercadoLibre acepta **un video de YouTube** por publicación (campo `video_id`).
+No acepta archivos: los videos que trae Amazon están en su propio CDN, así que
+**no se pueden publicar**. Se guardan igual y se ven como enlaces en el editor,
+pero el que va a la publicación es otro.
+
+Con `YOUTUBE_API_KEY` configurada, la herramienta busca sola el video oficial:
+**🎬 Buscar videos** en la barra de lote, o el botón dentro del editor. También
+lo completa el agente al preparar cada producto.
+
+El filtro es deliberadamente estricto: **solo acepta videos del canal de la
+marca**. Pedir la marca en el título no alcanzaría, porque una reseña de un
+tercero también dice "LEGO 21042" ahí, y ese es justo el video que no queremos
+en la ficha. Por eso encuentra pocos, y está bien: quedarse sin video es gratis,
+publicar el video de otro producto no.
+
+Para sacar la clave: [consola de Google Cloud](https://console.cloud.google.com/)
+→ crear un proyecto → habilitar **YouTube Data API v3** → Credenciales → Crear
+credenciales → Clave de API. Es autoservicio y gratis; no hay que pedir permiso
+ni explicar para qué. El nivel gratuito da 10.000 unidades por día y cada
+búsqueda cuesta 100, o sea ~100 búsquedas diarias.
 
 > Notas del plan gratis:
 > - El servicio **se duerme** tras un rato sin uso; la primera carga puede

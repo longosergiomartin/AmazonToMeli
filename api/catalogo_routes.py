@@ -29,6 +29,7 @@ from mercadolibre.listing import (construir_item, construir_item_catalogo,
                                   valor_por_defecto)
 from marcas import elegir_marca
 from titulos import numero_de_set, piezas_del_titulo
+from videos_youtube import buscar_video, configurado as youtube_configurado
 
 
 class AltaProducto(BaseModel):
@@ -758,6 +759,19 @@ def registrar_catalogo(app: FastAPI, conn,
         if attrs != (p.ml_attributes or {}):
             datos["ml_attributes"] = attrs
 
+        # Video: solo si hay clave de YouTube configurada y el producto todavía
+        # no tiene uno. Que no aparezca ninguno es lo normal —se exige que el
+        # canal sea el de la marca— y no traba nada: el video es opcional.
+        if youtube_configurado() and not (p.video_youtube or "").strip():
+            try:
+                v = buscar_video(titulo_completo, marca=marca or p.marca,
+                                 numero_set=_set_declarado(p.modelo_fabricante)
+                                 or numero_de_set(titulo_completo))
+            except Exception:  # noqa: BLE001 - el video nunca frena la preparación
+                v = {}
+            if v.get("video_id"):
+                datos["video_youtube"] = v["video_id"]
+
         # El estado no se toca: los productos ya nacen en "borrador" y los
         # publicados o pausados no deben volver atrás por completarles datos.
         if datos:
@@ -848,6 +862,64 @@ def registrar_catalogo(app: FastAPI, conn,
                 "encontrados": sum(1 for r in resultados if r["ok"]),
                 "total": len(resultados),
                 "pendientes": max(0, len(ids) - len(resultados))}
+
+    def _buscar_video(p) -> dict:
+        """El video de YouTube de este producto, si hay uno que pase el filtro."""
+        numero = _set_declarado(p.modelo_fabricante) or \
+            numero_de_set(p.modelo or p.titulo_ml or "")
+        return buscar_video(p.modelo or p.titulo_ml or "", marca=p.marca,
+                            numero_set=numero)
+
+    @app.post("/api/catalogo/lote/videos")
+    def lote_videos(body: dict):
+        """Busca en YouTube el video de cada producto y lo guarda.
+
+        MercadoLibre solo acepta videos de YouTube, así que el que trae Amazon
+        no sirve para publicar: el que sirve es el oficial del fabricante.
+        Encontrar pocos es lo esperable —se exige que el canal sea el de la
+        marca— y es preferible a poner el video de otro producto.
+        """
+        if not youtube_configurado():
+            raise HTTPException(422, "Falta configurar YOUTUBE_API_KEY para "
+                                "buscar videos. Se crea gratis en la consola de "
+                                "Google Cloud (YouTube Data API v3).")
+        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
+        solo_faltantes = (body or {}).get("solo_faltantes", True)
+
+        resultados = []
+        for pid in ids:
+            p = cat.obtener(pid)
+            if not p:
+                continue
+            if solo_faltantes and (p.video_youtube or "").strip():
+                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
+                                   "video_id": p.video_youtube,
+                                   "canal": "ya lo tenía", "ok": True})
+                continue
+            r = _buscar_video(p)
+            if r.get("video_id"):
+                cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
+            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
+                               "video_id": r.get("video_id", ""),
+                               "titulo_video": r.get("titulo", ""),
+                               "canal": r.get("canal", ""),
+                               "ok": bool(r.get("video_id"))})
+        return {"resultados": resultados,
+                "encontrados": sum(1 for r in resultados if r["ok"]),
+                "total": len(resultados)}
+
+    @app.post("/api/catalogo/{pid}/video")
+    def buscar_video_de(pid: int):
+        """Busca el video de un producto solo."""
+        p = _p(pid)
+        if not youtube_configurado():
+            raise HTTPException(422, "Falta configurar YOUTUBE_API_KEY para "
+                                "buscar videos. Se crea gratis en la consola de "
+                                "Google Cloud (YouTube Data API v3).")
+        r = _buscar_video(p)
+        if r.get("video_id"):
+            cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
+        return {"encontrado": bool(r.get("video_id")), **r}
 
     @app.post("/api/catalogo/codigos/cargar")
     def cargar_codigos(body: dict):
@@ -1112,6 +1184,7 @@ def registrar_catalogo(app: FastAPI, conn,
             "mercadolibre": store.hay_sesion() and cred.configurado,
             "upcitemdb": True,       # nivel de prueba, sin registro
             "amazon": True,          # disponible, pero bloquea servidores
+            "youtube": youtube_configurado(),
         }
 
     @app.post("/api/catalogo/lote/publicar")
