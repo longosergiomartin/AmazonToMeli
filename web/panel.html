@@ -377,7 +377,18 @@
   function cargarFiscal(){ api("GET","/api/fiscal").then(renderFiscal).catch(function(){}); }
   function renderDolarCosto(d){
     $("dolar-costo").value=d.dolar_costo;
-    $("dolar-costo-msg").textContent="TC $"+Math.round(d.tc_usado).toLocaleString("es-AR");
+    var el=$("dolar-costo-msg");
+    if(d.tc_manual){
+      // Fijado a mano: la tabla entera está valuada a este dólar, no al del
+      // mercado. Conviene que se vea y que se pueda volver atrás.
+      el.innerHTML="TC <b>$"+Math.round(d.tc_manual).toLocaleString("es-AR")
+        +"</b> (fijado por vos) <a href=\"#\" id=\"tc-volver\">volver al del mercado</a>";
+      $("tc-volver").onclick=function(e){ e.preventDefault();
+        api("PATCH","/api/dolar-costo",{tc_manual:null})
+          .then(function(r){ renderDolarCosto(r); cargar(); }).catch(err); };
+    } else {
+      el.textContent="TC $"+Math.round(d.tc_usado).toLocaleString("es-AR");
+    }
   }
   function cargarDolarCosto(){ api("GET","/api/dolar-costo").then(renderDolarCosto).catch(function(){}); }
   function cargarAlmacenamiento(){
@@ -699,7 +710,8 @@
         b.disabled=false; $("pr-aplicar").style.display="none";
         $("pr-msg").textContent=hechos+" publicación/es actualizada/s."
           +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
-        cargar(); return;
+        // El dólar de costo pudo cambiar: la tabla y el indicador se releen.
+        cargar(); cargarDolarCosto(); return;
       }
       var lote=pendientes.splice(0,10);
       $("pr-msg").textContent="Actualizando… "+hechos+" listas, "

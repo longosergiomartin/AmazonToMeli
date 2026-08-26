@@ -58,11 +58,29 @@ def test_pausar_usa_put_status():
 
 
 def test_actualizar_precio_y_stock():
-    c, ses = _client([(200, {}), (200, {})])
+    # MercadoLibre contesta con el ítem actualizado, y ahí viene el precio.
+    c, ses = _client([(200, {"id": "MLA1", "price": 5000}), (200, {})])
     c.actualizar_precio("MLA1", 5000)
     c.actualizar_stock("MLA1", 3)
     assert ses.llamadas[0][2]["json"] == {"price": 5000}
     assert ses.llamadas[1][2]["json"] == {"available_quantity": 3}
+
+
+def test_si_el_precio_no_queda_no_se_da_por_hecho():
+    """MercadoLibre puede contestar 200 y dejar el precio como estaba. Darlo
+    por bueno es cómo se informan "114 publicaciones actualizadas" con todo
+    igual del otro lado."""
+    c, ses = _client([(200, {"id": "MLA1", "price": 9999})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_precio("MLA1", 5000)
+    assert "9999" in str(e.value) and "5000" in str(e.value)
+
+
+def test_si_la_respuesta_no_trae_precio_se_relee_el_item():
+    c, ses = _client([(200, {"id": "MLA1"}),                    # PUT sin precio
+                      (200, {"id": "MLA1", "price": 5000})])    # GET del ítem
+    c.actualizar_precio("MLA1", 5000)
+    assert ses.llamadas[1][0] == "GET"
 
 
 def test_atributos_obligatorios_filtra_requeridos():

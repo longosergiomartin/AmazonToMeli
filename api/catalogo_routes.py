@@ -224,12 +224,19 @@ def registrar_catalogo(app: FastAPI, conn,
         cfg_ef = cat._cfg_efectivo()
         return {"dolar_costo": cat.dolar_costo,
                 "opciones": list(DOLARES_COSTO),
+                # Fijado a mano: manda sobre la cotización en vivo.
+                "tc_manual": cat.tc_manual,
                 "tc_usado": round(cfg_ef.tc_compra(), 2)}
 
     @app.patch("/api/dolar-costo")
     def dolar_costo_set(body: dict):
+        cuerpo = body or {}
         try:
-            cat.dolar_costo = (body or {}).get("dolar_costo", "")
+            if "dolar_costo" in cuerpo:
+                cat.dolar_costo = cuerpo.get("dolar_costo", "")
+            # Vacío o cero vuelve a la cotización en vivo.
+            if "tc_manual" in cuerpo:
+                cat.tc_manual = cuerpo.get("tc_manual")
         except ValueError as e:
             raise HTTPException(400, str(e))
         cat.recalcular_todos()  # el costo puesto cambia con el tipo de cambio
@@ -962,6 +969,15 @@ def registrar_catalogo(app: FastAPI, conn,
         if not ids:
             raise HTTPException(422, "No hay publicaciones para actualizar.")
         cli = _client()
+        # El dólar de costo elegido pasa a ser el del catálogo. Sin esto la
+        # tabla volvería a mostrar el costo a la cotización del mercado y el
+        # margen no coincidiría con el que se vio al decidir el precio.
+        if par["tc_costo"] and par["tc_costo"] != cat.tc_manual:
+            cat.tc_manual = par["tc_costo"]
+            # Y se recalcula todo el catálogo, no solo lo que se está
+            # actualizando: si no, unos productos quedarían valuados al dólar
+            # nuevo y otros al viejo, en la misma tabla.
+            cat.recalcular_todos()
 
         resultados = []
         for pid in ids:
@@ -979,9 +995,18 @@ def registrar_catalogo(app: FastAPI, conn,
             try:
                 cli.actualizar_precio(p.ml_item_id, precio)
             except MeliAPIError as e:
-                # Si MercadoLibre lo rechaza, no se guarda: el catálogo no puede
-                # decir un precio que la publicación no tiene.
-                fila["error"] = describir_error(getattr(e, "cuerpo", None)) or str(e)
+                # Si MercadoLibre lo rechaza —o acepta y deja el precio como
+                # estaba— no se guarda: el catálogo no puede decir un precio que
+                # la publicación no tiene.
+                cuerpo = getattr(e, "cuerpo", None)
+                # `describir_error` sirve para los cuerpos de error de ML; con
+                # cualquier otra cosa escupe el diccionario crudo y tapa el
+                # mensaje bueno de la excepción.
+                detalle = (describir_error(cuerpo)
+                           if isinstance(cuerpo, dict)
+                           and {"cause", "message", "error"} & set(cuerpo)
+                           else "")
+                fila["error"] = detalle or str(e)
                 resultados.append(fila)
                 continue
             if par["margen"] is not None:
