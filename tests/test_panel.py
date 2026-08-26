@@ -1,0 +1,43 @@
+"""El panel es JavaScript suelto dentro del HTML: nadie lo compila.
+
+Un error de sintaxis ahí no rompe ningún test de Python y sin embargo deja la
+interfaz entera sin funcionar —la tabla no carga, los botones no responden—,
+que es la falla más cara y la más fácil de no notar al editar el archivo.
+"""
+
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+PANEL = Path(__file__).resolve().parent.parent / "web" / "panel.html"
+
+
+def _js() -> str:
+    html = PANEL.read_text(encoding="utf-8")
+    bloques = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
+    assert bloques, "el panel no tiene ningún bloque <script>"
+    return "\n;\n".join(bloques)
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node no está instalado")
+def test_el_javascript_del_panel_compila(tmp_path):
+    ruta = tmp_path / "panel.js"
+    ruta.write_text(_js(), encoding="utf-8")
+    r = subprocess.run(["node", "--check", str(ruta)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, f"error de sintaxis en el JS del panel:\n{r.stderr}"
+
+
+def test_los_botones_del_panel_tienen_su_handler():
+    """Un id que quedó sin `onclick` es un botón muerto: se ve, se aprieta y no
+    pasa nada. Pasó con el diagnóstico de códigos."""
+    html = PANEL.read_text(encoding="utf-8")
+    js = _js()
+    ids = set(re.findall(r'<button[^>]*\bid="([^"]+)"', html))
+    # Se cablean de las dos formas: `$("x").onclick = …` y
+    # `$("x").addEventListener("click", …)`. Basta con que el id se use.
+    sin_handler = [i for i in ids if f'"{i}"' not in js]
+    assert not sin_handler, f"botones sin acción: {sorted(sin_handler)}"
