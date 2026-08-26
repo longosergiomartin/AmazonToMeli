@@ -1461,9 +1461,19 @@ def registrar_catalogo(app: FastAPI, conn,
         def _faltan(p):
             return faltantes_para_publicar(p, None, p.pictures)
 
+        def _paso_video(p):
+            r = _buscar_video(p)
+            if r.get("video_id"):
+                cat.actualizar_publicacion(p.id, video_youtube=r["video_id"])
+            return r
+
         if not hasattr(app.state, "agente"):
+            # Sin clave de YouTube el paso no se arma: el agente ni lo anuncia.
             app.state.agente = Agente(cat, _paso_preparar, _paso_codigo,
-                                      _paso_publicar, _faltan)
+                                      _paso_publicar, _faltan,
+                                      buscar_video=(_paso_video
+                                                    if youtube_configurado()
+                                                    else None))
         return app.state.agente
 
     @app.get("/api/agente")

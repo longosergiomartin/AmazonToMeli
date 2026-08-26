@@ -29,6 +29,7 @@ from typing import Callable, Optional
 # Qué le falta a un producto para poder publicarse.
 PREPARAR = "preparar"
 CODIGO = "codigo"
+VIDEO = "video"
 PUBLICAR = "publicar"
 NADA = "nada"
 
@@ -42,12 +43,15 @@ class Agente:
     servicio: acá solo se decide **qué producto toca y qué paso le falta**."""
 
     def __init__(self, cat, preparar: Callable, buscar_codigo: Callable,
-                 publicar: Callable, faltantes: Callable):
+                 publicar: Callable, faltantes: Callable,
+                 buscar_video: Optional[Callable] = None):
         self.cat = cat
         self._preparar = preparar
         self._buscar_codigo = buscar_codigo
         self._publicar = publicar
         self._faltantes = faltantes
+        # Opcional: sin clave de YouTube el paso no existe y no se anuncia.
+        self._buscar_video = buscar_video
         # Productos que fallaron en esta corrida, con su motivo. Se limpian al
         # apagar y encender el agente.
         self.trabados: dict[int, str] = {}
@@ -55,6 +59,10 @@ class Agente:
         # a buscar, pero se los deja intentar publicar por si están en el
         # catálogo de MercadoLibre (esa vía no necesita código).
         self.sin_codigo: set[int] = set()
+        # Lo mismo con el video: se busca una sola vez por corrida. No
+        # encontrarlo es lo normal —solo se acepta el canal de la marca— y el
+        # video es opcional, así que nunca frena la publicación.
+        self.sin_video: set[int] = set()
 
     # ---- configuración (persistida en preferencias) ----------------------
 
@@ -97,13 +105,21 @@ class Agente:
         # antes de intentar era bloquearse solo.
         if not (p.ml_attributes or {}).get("GTIN") and p.id not in self.sin_codigo:
             return CODIGO
+        # El video va **antes** de publicar: agregarlo después obligaría a
+        # editar la publicación ya hecha. Es un paso propio y no parte de
+        # preparar, porque un producto que ya tiene categoría, marca, fotos y
+        # código nunca vuelve a entrar a preparar y se publicaba sin video.
+        if (self._buscar_video is not None
+                and not (getattr(p, "video_youtube", "") or "").strip()
+                and p.id not in self.sin_video):
+            return VIDEO
         if self._faltantes(p):
             return PREPARAR
         return PUBLICAR
 
     def estado(self) -> dict:
         """Resumen para mostrar en el panel."""
-        conteo = {PREPARAR: 0, CODIGO: 0, PUBLICAR: 0, NADA: 0}
+        conteo = {PREPARAR: 0, CODIGO: 0, VIDEO: 0, PUBLICAR: 0, NADA: 0}
         for p in self.cat.todos():
             conteo[self.paso_pendiente(p)] += 1
         # Los pausados también están en MercadoLibre: la publicación existe y
@@ -115,13 +131,15 @@ class Agente:
         return {**self.config,
                 "por_preparar": conteo[PREPARAR],
                 "sin_codigo": conteo[CODIGO],
+                "sin_video": conteo[VIDEO],
                 "listos_para_publicar": conteo[PUBLICAR],
                 "publicados": publicados,
                 "trabados": len(self.trabados),
                 "sin_codigo_a_intentar": sin_codigo_a_intentar,
                 "detalle_trabados": [
                     {"id": pid, "motivo": m} for pid, m in list(self.trabados.items())[:10]],
-                "pendientes": conteo[PREPARAR] + conteo[CODIGO] + conteo[PUBLICAR]}
+                "pendientes": (conteo[PREPARAR] + conteo[CODIGO]
+                               + conteo[VIDEO] + conteo[PUBLICAR])}
 
     # ---- una unidad de trabajo -------------------------------------------
 
@@ -166,6 +184,20 @@ class Agente:
                         "detalle": "no encontré el código; pruebo publicar "
                                    "contra el catálogo de MercadoLibre",
                         "bloqueado": bool(r.get("bloqueado")), **self.estado()}
+
+            if paso == VIDEO:
+                # Nunca frena la publicación: no encontrar video es lo normal.
+                self.sin_video.add(p.id)
+                v = self._buscar_video(p) or {}
+                if v.get("video_id"):
+                    return {"accion": VIDEO, "id": p.id, "nombre": nombre,
+                            "detalle": f"video de {v.get('canal', '')}"
+                                       + ("" if v.get("oficial", True)
+                                          else " (canal de confianza, revisalo)"),
+                            **self.estado()}
+                return {"accion": "sin_video", "id": p.id, "nombre": nombre,
+                        "detalle": "sin video oficial; se publica igual",
+                        **self.estado()}
 
             # PUBLICAR
             if not cfg["publicar"]:
