@@ -181,3 +181,35 @@ def test_los_parametros_viajan_pegados_a_la_url_del_proxy(monkeypatch):
     descarga.bajar("https://www.amazon.com/s", params={"k": "673419281423"})
 
     assert "k=673419281423" in pedidos[0]["url"]
+
+
+def test_prefiere_el_codigo_de_largo_de_retail(monkeypatch):
+    """Los códigos de caja son de 12 o 13 dígitos. Un número de 8 que pasa el
+    dígito verificador de casualidad es lo que más se cuela de una página."""
+    import descarga
+    import gtin_lookup
+
+    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
+    # Los dos vistos una vez: antes ganaba el primero que apareciera.
+    monkeypatch.setattr(descarga.requests, "get",
+                        lambda url, **kw: _RespGtin(
+                            text="EAN: 14519901 UPC: 673419283328 productTitle"))
+    r = gtin_lookup.buscar_gtin("B0TESTAAAA")
+
+    assert r["gtin"] == "673419283328"
+    assert r["dudoso"] is False
+
+
+def test_avisa_cuando_el_unico_codigo_es_corto(monkeypatch):
+    """Si es lo único que hay se devuelve igual, pero diciendo que dude."""
+    import descarga
+    import gtin_lookup
+
+    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
+    monkeypatch.setattr(descarga.requests, "get",
+                        lambda url, **kw: _RespGtin(
+                            text="EAN: 14519901 productTitle"))
+    r = gtin_lookup.buscar_gtin("B0TESTAAAA")
+
+    assert r["gtin"] == "14519901" and r["dudoso"] is True
+    assert "Verificalo" in r["mensaje"]
