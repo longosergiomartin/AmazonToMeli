@@ -1640,3 +1640,19 @@ def test_por_proxy_se_procesan_menos_por_llamada(client, monkeypatch):
     client.post("/api/importar/procesar", json={"maximo": 10})
 
     assert pedidos == [2, 10]
+
+
+def test_el_lote_de_videos_marca_los_que_no_son_oficiales(client, monkeypatch):
+    """Un video de un canal de confianza no es del fabricante: hay que poder
+    distinguirlo para revisarlo antes de publicar."""
+    import api.catalogo_routes as rutas
+    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
+    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
+        "video_id": "dQw4w9WgXcQ", "titulo": "LEGO 21042",
+        "canal": "AustrianBrickFan", "oficial": False})
+
+    pid = _alta(client, marca="LEGO", titulo_ml="LEGO 21042").json()["id"]
+    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
+
+    assert d["resultados"][0]["oficial"] is False
+    assert d["resultados"][0]["canal"] == "AustrianBrickFan"

@@ -122,3 +122,62 @@ def test_buscar_asin_sin_resultados(monkeypatch):
                         lambda *a, **k: _resp(200, "<div>sin resultados</div>"))
     r = gtin_lookup.buscar_asin("5702016914498")
     assert r["ok"] is False and r["bloqueado"] is False
+
+
+# ---- búsqueda de código por proxy ---------------------------------------
+
+class _RespGtin:
+    def __init__(self, status=200, text=""):
+        self.status_code = status
+        self.text = text
+
+
+def test_el_gtin_se_busca_por_proxy_cuando_hay_clave(monkeypatch):
+    """Sin proxy, desde el servidor Amazon rechaza y no se consigue ningún
+    código: es lo que dejaba los productos sin poder publicarse."""
+    import descarga
+    import gtin_lookup
+
+    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
+    pedidos = []
+
+    def _get(url, **kw):
+        pedidos.append((url, kw.get("params") or {}))
+        return _RespGtin(text="EAN: 5702017425627 productTitle")
+
+    monkeypatch.setattr(descarga.requests, "get", _get)
+    r = gtin_lookup.buscar_gtin("B0TESTAAAA")
+
+    assert all(u == descarga.SCRAPERAPI for u, _ in pedidos), pedidos
+    # La URL de Amazon viaja como parámetro del proxy, no como destino.
+    assert "amazon.com" in pedidos[0][1]["url"]
+    assert r["gtin"] == "5702017425627"
+
+
+def test_sin_clave_el_gtin_se_busca_directo(monkeypatch):
+    import descarga
+    import gtin_lookup
+
+    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
+    pedidos = []
+    monkeypatch.setattr(descarga.requests, "get",
+                        lambda url, **kw: pedidos.append(url) or
+                        _RespGtin(text="EAN: 5702017425627 productTitle"))
+    gtin_lookup.buscar_gtin("B0TESTAAAA")
+
+    assert pedidos and pedidos[0].startswith("https://www.amazon.com/")
+
+
+def test_los_parametros_viajan_pegados_a_la_url_del_proxy(monkeypatch):
+    """El proxy recibe la URL como parámetro: lo que iba en `params` tiene que
+    ir ya dentro de esa URL o se pierde."""
+    import descarga
+
+    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
+    pedidos = []
+    monkeypatch.setattr(descarga.requests, "get",
+                        lambda url, **kw: pedidos.append(kw.get("params") or {})
+                        or _RespGtin())
+    descarga.bajar("https://www.amazon.com/s", params={"k": "673419281423"})
+
+    assert "k=673419281423" in pedidos[0]["url"]

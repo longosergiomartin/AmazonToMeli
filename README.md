@@ -384,6 +384,29 @@ tercero también dice "LEGO 21042" ahí, y ese es justo el video que no queremos
 en la ficha. Por eso encuentra pocos, y está bien: quedarse sin video es gratis,
 publicar el video de otro producto no.
 
+#### Canales de terceros elegidos a mano
+
+Cuando el fabricante no tiene video del producto, se aceptan **canales de
+terceros elegidos para esa marca**. Para LEGO vienen dos: **AustrianBrickFan**
+y **Brick Studio Architect**.
+
+Es una segunda opción, no un empate: si el canal oficial tiene el video, gana
+el oficial aunque YouTube lo devuelva más abajo. Y en un canal de terceros se
+exige **siempre el número de set**, aunque el producto no lo tenga en la ficha:
+esos canales suben de todas las marcas y sin número no hay forma de saber de
+cuál es el video. El panel avisa cuando el video no es del canal oficial, para
+poder mirarlo antes de publicar.
+
+Los canales van **atados a la marca** a propósito: un video de AustrianBrickFan
+que mencione "12345" no dice nada sobre un Fisher-Price con ese número.
+
+Se pueden agregar más sin tocar el código, con `CANALES_VIDEO_CONFIABLES` en
+formato `marca=canal|otro canal;otra marca=canal`. Por ejemplo:
+
+```
+LEGO=Tercer Canal;Playmobil=Canal De Playmobil
+```
+
 Para sacar la clave: [consola de Google Cloud](https://console.cloud.google.com/)
 → crear un proyecto → habilitar **YouTube Data API v3** → Credenciales → Crear
 credenciales → Clave de API. Es autoservicio y gratis; no hay que pedir permiso

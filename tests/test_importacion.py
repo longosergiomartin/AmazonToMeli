@@ -1,5 +1,6 @@
 """Tests de los cálculos de costo de importación (no tocan la red)."""
 
+import descarga
 from arbitraje.config import Config
 from arbitraje.models import Producto
 from arbitraje.importacion import costo_courier, costo_general, calcular_costo
@@ -170,7 +171,7 @@ def test_con_clave_va_por_el_proxy(monkeypatch):
 
     d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
     url, kw = pedidos[0]
-    assert url == amazon_import.SCRAPERAPI
+    assert url == descarga.SCRAPERAPI
     assert kw["params"]["url"] == "https://www.amazon.com/dp/B0TESTAAAA"
     assert kw["params"]["country_code"] == "us"
     assert d["via_proxy"] is True

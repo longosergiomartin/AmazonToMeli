@@ -106,7 +106,10 @@
 <div class="wrap">
   <div class="bar">
     <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina ·
-      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a></div></div>
+      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a>
+      <!-- "¿me quedó andando la clave?" es de las primeras preguntas que uno se
+           hace; estaba adentro de un desplegable cerrado, donde no se encontraba. -->
+      <span id="extras" style="display:block;margin-top:4px"></span></div></div>
     <div class="ml">
       <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
       <button class="sm" id="ml-btn" type="button">Conectar</button>
@@ -591,9 +594,15 @@
     api("POST","/api/catalogo/lote/videos",{ids:ids}).then(function(d){
       b.disabled=false;
       var m=d.encontrados+" de "+d.total+" con video.";
+      // Los que salieron de un canal de confianza y no del oficial conviene
+      // mirarlos antes de publicar.
+      var terceros=(d.resultados||[]).filter(function(r){
+        return r.ok && r.oficial===false;});
+      if(terceros.length) m+="\nDe canal de confianza (no oficial, revisalos): "
+        +terceros.map(function(r){return r.nombre+" → "+r.canal;}).join(" · ");
       var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
       // Encontrar pocos es lo esperado: solo se acepta el canal de la marca.
-      if(sin.length) m+="\nSin video oficial: "+sin.map(function(r){
+      if(sin.length) m+="\nSin video: "+sin.map(function(r){
         return r.nombre;}).join(" · ");
       $("lote-msg").textContent=m;
       cargar();
@@ -698,6 +707,20 @@
       if(f.proxy_amazon) partes.push("Amazon por proxy ✓");
       if(f.brickset) partes.push("Brickset ✓");
       $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
+
+      // Arriba, a la vista, solo lo que depende de una clave: es lo único que
+      // el usuario acaba de configurar y quiere confirmar.
+      var claves=[
+        {on:f.proxy_amazon, si:"🟢 Amazon por proxy",
+         no:"⚪ Amazon directo (sin SCRAPER_API_KEY: la carga en lote se frena "
+            +"desde el servidor)"},
+        {on:f.youtube, si:"🟢 Videos de YouTube",
+         no:"⚪ Videos de YouTube apagados (falta YOUTUBE_API_KEY)"}];
+      $("extras").innerHTML=claves.map(function(c){
+        return '<span style="margin-right:12px;color:'
+          +(c.on?"var(--good)":"var(--muted)")+'">'+esc(c.on?c.si:c.no)+'</span>';
+      }).join("");
+
       // El botón de videos no sirve sin la clave: mejor decirlo antes de que
       // lo aprieten, no después.
       var bv=$("lote-videos");
@@ -883,7 +906,10 @@
         .then(function(r){
           bv.disabled=false; bv.textContent=antes;
           if(r.encontrado){ $("ed-video").value=r.video_id;
-            alert("✓ "+r.titulo+"\nCanal: "+r.canal); }
+            // Si no es del canal oficial conviene decirlo: sale de un canal
+            // elegido a mano y vale la pena mirarlo antes de publicar.
+            alert("✓ "+r.titulo+"\nCanal: "+r.canal
+              +(r.oficial?" (oficial de la marca)":" (canal de confianza, no oficial — miralo antes de publicar)")); }
           else alert("No encontré video oficial de este producto.\n"
             +"Solo se aceptan videos del canal de la marca: es preferible "
             +"quedarse sin video antes que poner el de otro producto.");
