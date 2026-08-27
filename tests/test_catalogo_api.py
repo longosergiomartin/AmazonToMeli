@@ -1782,22 +1782,22 @@ def test_solo_entran_los_que_estan_publicados(tmp_path, monkeypatch):
     assert [f["id"] for f in d["filas"]] == [pid]
 
 
-def test_compro_a_un_dolar_y_vendo_a_otro_desde_el_panel(tmp_path, monkeypatch):
-    """El caso completo: LEGO ya publicado, costo a dólar 1600 y venta a 3200,
-    con el precio nuevo llegando a MercadoLibre."""
+def test_precio_a_dolar_1600_con_margen_y_envio_desde_el_panel(tmp_path, monkeypatch):
+    """El caso completo: LEGO ya publicado, costo a dólar 1600, margen del 30%
+    y el envío gratis descontado, con el precio nuevo llegando a MercadoLibre."""
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "dosdolares.db")
 
     d = c.post("/api/catalogo/precios/simular",
-               json={"tc_costo": 1600, "tc_venta": 3200}).json()
+               json={"tc_costo": 1600, "margen_pct": 30, "envio_ars": 9860}).json()
     fila = d["filas"][0]
 
-    assert d["tc_costo"] == 1600 and d["tc_venta"] == 3200
-    # El costo en USD valuado a cada cotización: la venta es exactamente el
-    # doble del costo, porque 3200 es el doble de 1600.
-    assert abs(fila["precio_nuevo"] - fila["costo_nuevo"] * 2) < 0.01
+    assert d["tc_costo"] == 1600 and d["envio_ars"] == 9860
+    # El margen pedido es el que queda después de todos los descuentos.
+    assert abs(fila["margen_pct"] - 30.0) < 0.2
 
     c.post("/api/catalogo/precios/aplicar",
-           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+           json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30,
+                 "envio_ars": 9860})
     assert cli.puestos == [("MLA100", fila["precio_nuevo"])]
 
 
@@ -1805,9 +1805,20 @@ def test_un_dolar_invalido_se_rechaza(tmp_path, monkeypatch):
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "dolarmal.db")
 
     for cuerpo in ({"tc_costo": "mil quinientos"}, {"tc_costo": 0},
-                   {"tc_venta": -3200}):
+                   {"envio_ars": -100}, {"margen_pct": -5}):
         r = c.post("/api/catalogo/precios/simular", json=cuerpo)
         assert r.status_code == 422, cuerpo
+
+
+def test_el_envio_en_cero_es_valido(tmp_path, monkeypatch):
+    """Cero significa "no ofrezco envío gratis". Vacío significa "usá el
+    configurado". No son lo mismo y el cero no puede rebotar como inválido."""
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "envio0.db")
+
+    d = c.post("/api/catalogo/precios/simular",
+               json={"tc_costo": 1600, "envio_ars": 0})
+    assert d.status_code == 200
+    assert d.json()["envio_ars"] == 0
 
 
 def test_la_tabla_queda_con_los_mismos_numeros_que_se_simularon(tmp_path, monkeypatch):
@@ -1817,9 +1828,9 @@ def test_la_tabla_queda_con_los_mismos_numeros_que_se_simularon(tmp_path, monkey
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "coherente.db")
 
     sim = c.post("/api/catalogo/precios/simular",
-                 json={"tc_costo": 1600, "tc_venta": 3200}).json()["filas"][0]
+                 json={"tc_costo": 1600, "margen_pct": 30}).json()["filas"][0]
     c.post("/api/catalogo/precios/aplicar",
-           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+           json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30})
     guardado = c.get(f"/api/catalogo/{pid}").json()
 
     assert guardado["costo_total_ars"] == sim["costo_nuevo"]
@@ -1836,7 +1847,7 @@ def test_el_dolar_elegido_queda_fijado_para_todo_el_catalogo(tmp_path, monkeypat
     antes = c.get(f"/api/catalogo/{otro}").json()["costo_total_ars"]
 
     c.post("/api/catalogo/precios/aplicar",
-           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+           json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30})
 
     assert c.get("/api/dolar-costo").json()["tc_manual"] == 1600
     # El que no se tocó también quedó valuado al dólar nuevo.
@@ -1846,7 +1857,7 @@ def test_el_dolar_elegido_queda_fijado_para_todo_el_catalogo(tmp_path, monkeypat
 def test_se_puede_volver_al_dolar_del_mercado(tmp_path, monkeypatch):
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "volver.db")
     c.post("/api/catalogo/precios/aplicar",
-           json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200})
+           json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30})
     con_manual = c.get(f"/api/catalogo/{pid}").json()["costo_total_ars"]
 
     r = c.patch("/api/dolar-costo", json={"tc_manual": None}).json()
@@ -1894,7 +1905,7 @@ def test_si_el_precio_no_queda_en_ml_no_se_informa_como_actualizado(tmp_path, mo
     antes = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
 
     d = c.post("/api/catalogo/precios/aplicar",
-               json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200}).json()
+               json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30}).json()
 
     assert d["actualizados"] == 0
     # Y el mensaje dice qué pasó, no un diccionario crudo.
@@ -1921,7 +1932,7 @@ def test_con_las_cotizaciones_si_cuenta_como_actualizada(tmp_path, monkeypatch):
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "distinto.db")
 
     d = c.post("/api/catalogo/precios/aplicar",
-               json={"ids": [pid], "tc_costo": 1600, "tc_venta": 3200}).json()
+               json={"ids": [pid], "tc_costo": 1600, "margen_pct": 30}).json()
 
     assert d["resultados"][0]["sin_cambios"] is False
     assert d["actualizados"] == 1 and d["sin_cambios"] == 0

@@ -44,7 +44,7 @@ class AltaProducto(BaseModel):
     disponibilidad: str = "in_stock"
     regimen: str = "courier"
     categoria: str = "default"
-    margen_deseado: float = 0.35
+    margen_deseado: float = 0.30
     stock: int = 1
     dias_preparacion: int = 25
     modelo_fabricante: str = ""
@@ -486,11 +486,14 @@ def registrar_catalogo(app: FastAPI, conn,
             "costo_puesto_ars": costo,
             "detalle": {
                 "costos_ml": d["costos_ml"],
+                "envio": d["envio"],
+                "percepcion_iva": d["percepcion_iva"],
                 "iva": d["iva"],
                 "ganancias": d["ganancias"],
                 "iibb": d["iibb"],
                 "impuestos_total": round(impuestos, 2),
                 "costos_ml_pct": round(cfg_ef.meli.costos_ml_pct(p.categoria) * 100, 1),
+                "percepcion_iva_desde": cfg_ef.meli.percepcion_iva_desde_ars,
             },
             "neto_conservador": venta.neto_ars,
             "conservador": _m(venta.neto_ars),
@@ -885,7 +888,7 @@ def registrar_catalogo(app: FastAPI, conn,
     # aplicar— porque toca el precio de publicaciones vivas: se ve qué cambia
     # antes de cambiarlo.
 
-    def _numero(body, clave, etiqueta) -> Optional[float]:
+    def _numero(body, clave, etiqueta, permitir_cero: bool = False) -> Optional[float]:
         """Un número puesto a mano, o None si el campo vino vacío."""
         crudo = (body or {}).get(clave)
         if crudo in (None, ""):
@@ -894,16 +897,21 @@ def registrar_catalogo(app: FastAPI, conn,
             valor = float(crudo)
         except (TypeError, ValueError):
             raise HTTPException(422, f"{etiqueta} tiene que ser un número.")
-        if valor <= 0:
+        if permitir_cero:
+            # El envío en cero es un dato válido: significa que no ofrecés envío
+            # gratis. Distinto de vacío, que significa "usá el configurado".
+            if valor < 0:
+                raise HTTPException(422, f"{etiqueta} no puede ser negativo.")
+        elif valor <= 0:
             raise HTTPException(422, f"{etiqueta} tiene que ser mayor que cero.")
         return valor
 
     def _parametros(body) -> dict:
-        """Cómo se pide recalcular: por cotizaciones a mano o por margen.
+        """Con qué números recalcular: el dólar del costo, el margen y el envío.
 
-        Son dos formas de decir lo mismo. La de las cotizaciones es como se
-        piensa el negocio —*compro a dólar 1600 y vendo a dólar 3200*— y el
-        margen queda expresado en el precio, no como un porcentaje aparte.
+        El dólar es el oficial que se estima para cuando se compre —hoy 1600,
+        mañana 1650— y el margen es lo que tiene que quedar limpio después de
+        todos los descuentos.
         """
         margen = (body or {}).get("margen_pct")
         if margen in (None, ""):
@@ -917,8 +925,9 @@ def registrar_catalogo(app: FastAPI, conn,
                 raise HTTPException(422, "El margen no puede ser negativo.")
             margen = margen / 100.0
         return {"tc_costo": _numero(body, "tc_costo", "El dólar de costo"),
-                "tc_venta": _numero(body, "tc_venta", "El dólar de venta"),
-                "margen": margen}
+                "margen": margen,
+                "envio": _numero(body, "envio_ars", "El costo de envío",
+                                 permitir_cero=True)}
 
     def _publicados_con_item():
         return [p for p in cat.todos()
@@ -952,7 +961,8 @@ def registrar_catalogo(app: FastAPI, conn,
         c = cat.cotizacion or {}
         return {"filas": filas, "total": len(filas),
                 "dolar_costo": cat.dolar_costo,
-                "tc_costo": par["tc_costo"], "tc_venta": par["tc_venta"],
+                "tc_costo": par["tc_costo"],
+                "envio_ars": cat.envio_efectivo(par["envio"]),
                 "cotizacion": {"oficial": c.get("oficial"),
                                "tarjeta": c.get("tarjeta"),
                                "actualizado": c.get("actualizado")}}
@@ -969,12 +979,19 @@ def registrar_catalogo(app: FastAPI, conn,
         if not ids:
             raise HTTPException(422, "No hay publicaciones para actualizar.")
         cli = _client()
-        # El dólar de costo elegido pasa a ser el del catálogo. Sin esto la
-        # tabla volvería a mostrar el costo a la cotización del mercado y el
-        # margen no coincidiría con el que se vio al decidir el precio.
+        # El dólar de costo y el envío elegidos pasan a ser los del catálogo.
+        # Sin esto la tabla volvería a mostrar el costo a la cotización del
+        # mercado y el margen no coincidiría con el que se vio al decidir el
+        # precio.
+        cambio = False
         if par["tc_costo"] and par["tc_costo"] != cat.tc_manual:
             cat.tc_manual = par["tc_costo"]
-            # Y se recalcula todo el catálogo, no solo lo que se está
+            cambio = True
+        if par["envio"] is not None and par["envio"] != cat.envio_manual:
+            cat.envio_manual = par["envio"]
+            cambio = True
+        if cambio:
+            # Se recalcula todo el catálogo, no solo lo que se está
             # actualizando: si no, unos productos quedarían valuados al dólar
             # nuevo y otros al viejo, en la misma tabla.
             cat.recalcular_todos()

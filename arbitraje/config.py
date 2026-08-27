@@ -60,14 +60,20 @@ class GeneralConfig:
 # =======================================================================
 
 def _costos_ml_default() -> Dict[str, float]:
-    """Costos de MercadoLibre como % del precio de venta: incluyen la comisión
-    por vender Y el cargo por ofrecer envío gratis. Verificado contra el
-    simulador de la Central de vendedores (~16%). AJUSTAR por categoría."""
+    """Comisión de MercadoLibre como % del precio de venta.
+
+    Es SOLO la comisión por vender: el envío gratis va aparte, en
+    `envio_gratis_ars`, porque es un monto fijo en pesos y no un porcentaje.
+    Meterlo acá adentro sale caro en los productos baratos: un envío de $9.860
+    es el 4,8% de una publicación de $206.000 pero el 1,4% de una de $710.000,
+    así que ningún porcentaje único lo representa.
+    """
     return {
         "electronica": 0.17,
         "computacion": 0.16,
         "hogar":       0.15,
-        "default":     0.16,
+        "lego":        0.145,
+        "default":     0.145,
     }
 
 
@@ -88,18 +94,34 @@ CONDICIONES_FISCALES = tuple(PRESETS_FISCALES)
 
 @dataclass
 class MeliConfig:
-    # % del precio que se lleva MercadoLibre (comisión + envío gratis).
+    # % del precio que se lleva MercadoLibre de comisión (sin el envío).
     costos_ml: Dict[str, float] = field(default_factory=_costos_ml_default)
+    # Lo que PAGÁS de envío por ofrecer "envío gratis", en pesos y ya neto del
+    # descuento por reputación. Es fijo: no depende del precio de venta, sí del
+    # peso del producto y de tu reputación como vendedor. VERIFICAR en la
+    # publicación ("Ofrecés envío gratis · Pagás $X").
+    envio_gratis_ars: float = 9860.0
     # Condición fiscal del vendedor: define las alícuotas de abajo.
     condicion_fiscal: str = "monotributo"
     # Impuestos argentinos sobre la venta (% del precio de venta):
     iva_pct: float = 0.0         # 0 en Monotributo; 21% si sos RI
     ganancias_pct: float = 0.0   # 0 en Monotributo; retención si sos RI
     iibb_pct: float = 0.03       # según jurisdicción — VERIFICAR si te retienen
+    # Percepción de IVA que ARCA le aplica al monotributista cuando el precio de
+    # una venta supera el tope. Es un escalón, no una alícuota continua: por
+    # debajo del tope no se paga nada.
+    percepcion_iva_pct: float = 0.07
+    percepcion_iva_desde_ars: float = 716840.77
     site: str = "MLA"            # MLA = Argentina
 
     def costos_ml_pct(self, categoria: str = "default") -> float:
         return self.costos_ml.get(categoria, self.costos_ml["default"])
+
+    def percepcion_iva_ars(self, precio_venta_ars: float) -> float:
+        """La percepción sobre este precio. Cero por debajo del tope."""
+        if precio_venta_ars > self.percepcion_iva_desde_ars:
+            return precio_venta_ars * self.percepcion_iva_pct
+        return 0.0
 
     def con_condicion_fiscal(self, condicion: str) -> "MeliConfig":
         """Copia con las alícuotas del preset de esa condición fiscal."""
@@ -127,6 +149,11 @@ class Config:
     # precargar el costo de envío; podés pisarlo con el Total real del checkout.
     envio_import_pct: float = 0.26
     umbral_margen_bueno_pct: float = 30.0  # a partir de acá lo marcamos como oportunidad
+    # Piso de margen para no cruzar el tope de la percepción de IVA. Si el
+    # precio que da el margen deseado se pasa del tope, conviene publicar justo
+    # por debajo y resignar unos puntos antes que saltar ~10% de precio y perder
+    # competitividad. Si ni así llega a este piso, se acepta el salto.
+    margen_piso_pct: float = 0.25
     courier: CourierConfig = field(default_factory=CourierConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
     meli: MeliConfig = field(default_factory=MeliConfig)
@@ -153,7 +180,8 @@ class Config:
 
         top = {k: v for k, v in data.items()
                if k in {"tipo_cambio_oficial", "recargo_tarjeta_pct",
-                        "umbral_margen_bueno_pct", "envio_import_pct"}}
+                        "umbral_margen_bueno_pct", "envio_import_pct",
+                        "margen_piso_pct"}}
         return replace(base, courier=courier, general=general, meli=meli, **top)
 
     @classmethod
