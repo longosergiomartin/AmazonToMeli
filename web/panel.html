@@ -704,11 +704,15 @@
     var b=$("pr-aplicar"); b.disabled=true;
     // De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
     // todas juntas serían una petición que el servidor corta por tiempo.
-    var pendientes=prFilas.map(function(f){return f.id;}), hechos=0, fallas=[];
+    var pendientes=prFilas.map(function(f){return f.id;});
+    var hechos=0, iguales=0, fallas=[];
     function tanda(){
       if(!pendientes.length){
         b.disabled=false; $("pr-aplicar").style.display="none";
-        $("pr-msg").textContent=hechos+" publicación/es actualizada/s."
+        // «Sin cambios» se dice aparte: mandar el precio que ya estaba y
+        // contarlo como actualizado no se distingue de que funcione.
+        $("pr-msg").textContent=hechos+" publicación/es con precio nuevo."
+          +(iguales?" "+iguales+" ya estaban en ese precio (no cambió nada).":"")
           +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
         // El dólar de costo pudo cambiar: la tabla y el indicador se releen.
         cargar(); cargarDolarCosto(); return;
@@ -716,9 +720,14 @@
       var lote=pendientes.splice(0,10);
       $("pr-msg").textContent="Actualizando… "+hechos+" listas, "
         +(pendientes.length+lote.length)+" por hacer.";
-      api("POST","/api/catalogo/precios/aplicar",
-          {ids:lote, margen_pct:prCuerpo().margen_pct}).then(function(d){
-        hechos+=d.actualizados||0;
+      // Se mandan **los mismos parámetros con los que se simuló**. Armar el
+      // cuerpo a mano acá ya se comió las dos cotizaciones una vez: aplicaba
+      // con el margen viejo, le mandaba a MercadoLibre el precio que la
+      // publicación ya tenía, y lo contaba como actualizado.
+      var cuerpo = prCuerpo();
+      cuerpo.ids = lote;
+      api("POST","/api/catalogo/precios/aplicar", cuerpo).then(function(d){
+        hechos+=d.actualizados||0; iguales+=d.sin_cambios||0;
         (d.resultados||[]).forEach(function(r){
           if(!r.ok) fallas.push(r.nombre+" ("+r.error+")"); });
         tanda();
