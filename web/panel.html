@@ -765,6 +765,11 @@
       var cuerpo = prCuerpo();
       cuerpo.ids = lote;
       api("POST","/api/catalogo/precios/aplicar", cuerpo).then(function(d){
+        // El servidor se corta solo si se le acaba el tiempo. Lo que no llegó a
+        // tocar vuelve al principio de la cola: el panel ya lo había sacado de
+        // su lista y si no se perdería sin que nadie lo note.
+        if(d.pendientes && d.pendientes.length)
+          pendientes=d.pendientes.concat(pendientes);
         hechos+=d.actualizados||0; iguales+=d.sin_cambios||0;
         (d.resultados||[]).forEach(function(r){
           if(!r.ok) fallas.push(r.nombre+" ("+r.error+")"); });
