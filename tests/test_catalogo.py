@@ -507,32 +507,40 @@ def test_sin_ninguno_de_los_dos_si_falta_algo():
 
 # ---- comprar a un dólar y vender a otro ---------------------------------
 
-def test_compro_a_1600_y_vendo_a_3200(cat):
-    """La forma en que se piensa el negocio: dos cotizaciones puestas a mano,
-    no un porcentaje. El margen queda expresado en el precio."""
+def test_compro_a_dolar_1600_y_el_margen_es_el_que_queda_limpio(cat):
+    """El costo se valúa al dólar oficial que se estima para cuando se compre, y
+    el precio sale del margen que tiene que quedar después de TODO: comisión de
+    MercadoLibre, envío gratis, IIBB y percepción."""
     p = cat.agregar(ProductoCatalogo(
         asin="B0SW000001", marca="LEGO", modelo="LEGO Star Wars 75192",
         titulo_ml="LEGO Star Wars 75192", precio_usd=100.0, regimen="landed",
-        margen_deseado=0.35, stock=1))
+        margen_deseado=0.30, stock=1))
     p = cat.obtener(p.id)
 
     # 100 USD de Amazon + 26% de envío e impuestos = 126 USD puestos acá.
     assert p.precio_usd + p.costo_envio_usd == 126.0
 
-    r = cat.simular(p, tc_costo=1600, tc_venta=3200)
+    r = cat.simular(p, tc_costo=1600)
     assert r["costo_ars"] == 126.0 * 1600
-    assert r["precio_ars"] == 126.0 * 3200
+    # El margen pedido es el que efectivamente queda.
+    assert r["margen_pct"] == pytest.approx(30.0, abs=0.1)
 
 
-def test_vender_al_doble_del_dolar_no_es_100_por_ciento_de_margen(cat):
-    """La comisión de MercadoLibre y los impuestos se llevan una parte: el
-    margen real es menor que la diferencia entre las dos cotizaciones."""
+def test_el_envio_gratis_se_descuenta_del_margen(cat):
+    """Si el envío no se cobra en el precio, sale del bolsillo. Es la falla que
+    tenía el modelo viejo, que lo mezclaba dentro de un porcentaje."""
     p = cat.agregar(ProductoCatalogo(
         asin="B0SW000002", marca="LEGO", modelo="Set", titulo_ml="Set",
-        precio_usd=100.0, regimen="landed", stock=1))
-    r = cat.simular(cat.obtener(p.id), tc_costo=1600, tc_venta=3200)
+        precio_usd=100.0, regimen="landed", margen_deseado=0.30, stock=1))
+    p = cat.obtener(p.id)
 
-    assert 0 < r["margen_pct"] < 100
+    con_envio = cat.simular(p, tc_costo=1600, envio=9860)
+    sin_envio = cat.simular(p, tc_costo=1600, envio=0)
+    # Mismo costo de compra, pero hay que cobrar más para bancar el envío.
+    assert con_envio["costo_ars"] == sin_envio["costo_ars"]
+    assert con_envio["precio_ars"] > sin_envio["precio_ars"]
+    # Y lo que hay que cobrar de más es el envío, ya bruto de comisiones.
+    assert con_envio["margen_ars"] == pytest.approx(sin_envio["margen_ars"], abs=1)
 
 
 def test_el_dolar_a_mano_gana_sobre_la_cotizacion_en_vivo(cat):
@@ -568,7 +576,7 @@ def test_simular_no_modifica_el_producto(cat):
         asin="B0SW000005", marca="LEGO", modelo="Set", titulo_ml="Set",
         precio_usd=100.0, regimen="landed", margen_deseado=0.35, stock=1))
     antes = cat.obtener(p.id)
-    cat.simular(antes, tc_costo=9999, tc_venta=99999, margen=5.0)
+    cat.simular(antes, tc_costo=9999, margen=5.0, envio=1234)
     despues = cat.obtener(p.id)
 
     assert despues.costo_total_ars == antes.costo_total_ars

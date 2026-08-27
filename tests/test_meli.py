@@ -12,17 +12,33 @@ def test_neto_menor_al_precio_de_venta():
     cfg = Config()
     r = calcular_neto_venta_meli(100000, "electronica", cfg)
     assert r.neto_ars < 100000
-    assert set(r.detalle_ars) == {"costos_ml", "iva", "ganancias", "iibb"}
+    assert set(r.detalle_ars) == {"costos_ml", "iva", "ganancias", "iibb",
+                                  "percepcion_iva", "envio"}
 
 
-def test_descuentos_son_proporcionales_al_precio():
+def test_el_envio_no_escala_con_el_precio_pero_la_comision_si():
+    """El envío gratis es un monto fijo en pesos. Meterlo dentro de un
+    porcentaje se lo come en los productos baratos, que es donde más pesa."""
     cfg = Config()
     d1 = calcular_neto_venta_meli(100000, "default", cfg).detalle_ars
     d2 = calcular_neto_venta_meli(200000, "default", cfg).detalle_ars
-    for k in d1:
+    for k in ("costos_ml", "iva", "ganancias", "iibb"):
         assert d2[k] == pytest.approx(d1[k] * 2, abs=0.5)
-    # Costos de ML ~16% del precio.
-    assert d1["costos_ml"] == pytest.approx(100000 * 0.16, abs=1)
+    assert d2["envio"] == d1["envio"] == cfg.meli.envio_gratis_ars
+    # Comisión de LEGO: 14,5% del precio, sin el envío adentro.
+    assert d1["costos_ml"] == pytest.approx(100000 * 0.145, abs=1)
+
+
+def test_la_percepcion_de_iva_es_un_escalon():
+    """Recién se paga por encima del tope de ARCA, no es una alícuota que
+    corra desde el peso uno."""
+    cfg = Config()
+    tope = cfg.meli.percepcion_iva_desde_ars
+    assert calcular_neto_venta_meli(tope - 1, "default", cfg
+                                    ).detalle_ars["percepcion_iva"] == 0
+    arriba = calcular_neto_venta_meli(tope + 1000, "default", cfg)
+    assert arriba.detalle_ars["percepcion_iva"] == pytest.approx(
+        (tope + 1000) * 0.07, abs=1)
 
 
 def test_monotributo_es_el_default_y_no_paga_iva_ni_ganancias():

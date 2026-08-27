@@ -81,21 +81,28 @@ def calcular_neto_venta_meli(
 ) -> ResultadoVentaMeli:
     """Cuánto queda neto (ARS) de una venta en MercadoLibre.
 
-    Descuentos, todos como % del precio de venta:
-      - costos_ml : comisión por vender + cargo por ofrecer envío gratis (~16%).
+    Como % del precio de venta:
+      - costos_ml : comisión por vender (sin el envío).
       - iva       : IVA débito fiscal de la venta (21% si sos RI). Ojo: la
                     importación genera crédito fiscal que lo compensa, así que
                     el impacto real suele ser menor. Poné 0 si sos Monotributista.
       - ganancias, iibb : retenciones, a cuenta de impuestos anuales
                     (recuperables, pero salen de la caja al momento de cobrar).
+      - percepcion_iva : escalón, solo por encima del tope de ARCA.
+
+    En pesos fijos, sin importar el precio:
+      - envio     : lo que pagás por ofrecer envío gratis.
     """
     m = cfg.meli
     costos_ml = precio_venta_ars * m.costos_ml_pct(categoria)
     iva = precio_venta_ars * m.iva_pct
     ganancias = precio_venta_ars * m.ganancias_pct
     iibb = precio_venta_ars * m.iibb_pct
+    percepcion_iva = m.percepcion_iva_ars(precio_venta_ars)
+    envio = m.envio_gratis_ars
 
-    neto = precio_venta_ars - (costos_ml + iva + ganancias + iibb)
+    neto = precio_venta_ars - (costos_ml + iva + ganancias + iibb
+                               + percepcion_iva + envio)
 
     return ResultadoVentaMeli(
         precio_venta_ars=round(precio_venta_ars, 2),
@@ -105,5 +112,7 @@ def calcular_neto_venta_meli(
             "iva": round(iva, 2),
             "ganancias": round(ganancias, 2),
             "iibb": round(iibb, 2),
+            "percepcion_iva": round(percepcion_iva, 2),
+            "envio": round(envio, 2),
         },
     )

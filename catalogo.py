@@ -77,7 +77,7 @@ class ProductoCatalogo:
     regimen: str = "courier"           # courier | general
     arancel_pct: float = 0.16
     categoria: str = "default"         # categoría de comisión de MeLi
-    margen_deseado: float = 0.35       # fracción sobre el costo
+    margen_deseado: float = 0.30       # fracción sobre el costo
     stock: int = 1
     # Días de preparación/disponibilidad que se muestran en la entrega de la
     # publicación (ML los suma a la fecha estimada). Clave para dropshipping.
@@ -124,38 +124,39 @@ class Catalogo:
         self._proveedor_cotizacion = proveedor_cotizacion
         self._crear_tablas()
 
-    def _cfg_efectivo(self, tc: Optional[float] = None) -> Config:
-        """Config con el tipo de cambio en vivo, el dólar elegido para el costo
-        y la condición fiscal.
+    def _cfg_efectivo(self, tc: Optional[float] = None,
+                      envio: Optional[float] = None) -> Config:
+        """Config con el tipo de cambio en vivo, el dólar elegido para el costo,
+        el envío que pagás y la condición fiscal.
 
         `tc` fuerza un tipo de cambio puesto a mano: gana sobre la cotización en
         vivo y sobre el dólar elegido, porque es el número que el usuario
-        escribió y no una estimación.
+        escribió y no una estimación. `envio` funciona igual.
         """
         cfg = self.cfg
         tc = tc or self.tc_manual
         if tc:
             cfg = replace(cfg, tipo_cambio_oficial=float(tc),
                           recargo_tarjeta_pct=0.0)
-            condicion = self.condicion_fiscal
-            if condicion and condicion != cfg.meli.condicion_fiscal:
-                cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
-            return cfg
-        if self.cotizacion is None and self._proveedor_cotizacion is not None:
-            try:
-                self.cotizacion = self._proveedor_cotizacion() or {}
-            except Exception:  # noqa: BLE001 - sin cotización se usa la de config
-                self.cotizacion = {}
-        c = self.cotizacion
-        if c and c.get("oficial") and c.get("tarjeta"):
-            recargo = c["tarjeta"] / c["oficial"] - 1
-            cfg = replace(cfg, tipo_cambio_oficial=c["oficial"],
-                          recargo_tarjeta_pct=recargo)
-        # Con qué dólar se valúa la compra en Amazon: "tarjeta" (lo que
-        # realmente debita la tarjeta) u "oficial" (si comprás con dólares
-        # propios o recuperás las percepciones).
-        if self.dolar_costo == "oficial":
-            cfg = replace(cfg, recargo_tarjeta_pct=0.0)
+        else:
+            if self.cotizacion is None and self._proveedor_cotizacion is not None:
+                try:
+                    self.cotizacion = self._proveedor_cotizacion() or {}
+                except Exception:  # noqa: BLE001 - sin cotización, la de config
+                    self.cotizacion = {}
+            c = self.cotizacion
+            if c and c.get("oficial") and c.get("tarjeta"):
+                recargo = c["tarjeta"] / c["oficial"] - 1
+                cfg = replace(cfg, tipo_cambio_oficial=c["oficial"],
+                              recargo_tarjeta_pct=recargo)
+            # Con qué dólar se valúa la compra en Amazon: "tarjeta" (lo que
+            # realmente debita la tarjeta) u "oficial" (si comprás con dólares
+            # propios o recuperás las percepciones).
+            if self.dolar_costo == "oficial":
+                cfg = replace(cfg, recargo_tarjeta_pct=0.0)
+        envio = self.envio_manual if envio is None else envio
+        if envio is not None:
+            cfg = replace(cfg, meli=replace(cfg.meli, envio_gratis_ars=float(envio)))
         condicion = self.condicion_fiscal
         if condicion and condicion != cfg.meli.condicion_fiscal:
             cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
@@ -222,6 +223,34 @@ class Catalogo:
         if v <= 0:
             raise ValueError("El tipo de cambio tiene que ser mayor que cero.")
         self._set_pref("tc_manual", str(v))
+
+    @property
+    def envio_manual(self) -> Optional[float]:
+        """Lo que pagás de envío gratis, fijado a mano.
+
+        Depende del peso del producto y de tu reputación como vendedor, así que
+        no hay forma de deducirlo: sale de mirar la publicación. Como el costo
+        del dólar, queda guardado para que la tabla y la simulación muestren el
+        mismo margen. Vacío = el valor de la configuración.
+        """
+        crudo = self._pref("envio_manual", "")
+        try:
+            return float(crudo) or None
+        except (TypeError, ValueError):
+            return None
+
+    @envio_manual.setter
+    def envio_manual(self, valor) -> None:
+        if valor in (None, ""):
+            self._set_pref("envio_manual", "")
+            return
+        try:
+            v = float(valor)
+        except (TypeError, ValueError):
+            raise ValueError("El costo de envío tiene que ser un número.")
+        if v < 0:
+            raise ValueError("El costo de envío no puede ser negativo.")
+        self._set_pref("envio_manual", str(v))
 
     @property
     def filtro(self) -> dict:
@@ -418,29 +447,28 @@ class Catalogo:
         return calcular_costo(pa, regimen=copia.regimen, cfg=cfg).total_ars
 
     def simular(self, p: ProductoCatalogo, tc_costo: Optional[float] = None,
-                tc_venta: Optional[float] = None,
-                margen: Optional[float] = None) -> dict:
-        """Costo y precio de venta bajo tipos de cambio puestos a mano.
+                margen: Optional[float] = None,
+                envio: Optional[float] = None) -> dict:
+        """Costo y precio de venta con el dólar y el envío puestos a mano.
 
-        Es la forma en que se piensa el negocio de verdad: *compro a dólar
-        1600 y vendo a dólar 3200*. El precio de venta sale de valuar el mismo
-        costo en dólares al tipo de cambio de venta, así que el "margen" queda
-        expresado como una cotización y no como un porcentaje.
-
-        Si no se da `tc_venta`, el precio sale del margen (el de `margen` o el
-        del producto), que es el modo de siempre.
+        El costo en USD se valúa a `tc_costo` —el dólar oficial que estimás para
+        cuando compres— y el precio sale del margen que querés que te quede
+        limpio, ya descontados la comisión de MercadoLibre, el envío gratis, el
+        IIBB y la percepción de IVA si el precio la alcanza.
         """
+        cfg = self._cfg_efectivo(tc_costo, envio)
         costo = self._costo_ars(p, tc_costo)
-        if tc_venta:
-            precio = self._costo_ars(p, tc_venta)
-        else:
-            m = p.margen_deseado if margen is None else margen
-            precio = precio_sugerido(costo, m, p.categoria, self._cfg_efectivo(tc_costo))
-        real = margen_real_al_precio(costo, precio, p.categoria,
-                                     self._cfg_efectivo(tc_costo))
+        m = p.margen_deseado if margen is None else margen
+        precio = precio_sugerido(costo, m, p.categoria, cfg)
+        real = margen_real_al_precio(costo, precio, p.categoria, cfg)
         return {"costo_ars": round(costo, 2), "precio_ars": round(precio, 2),
                 "margen_pct": round(real["margen_pct"], 1),
                 "margen_ars": round(real["margen_ars"], 2)}
+
+    def envio_efectivo(self, envio: Optional[float] = None) -> float:
+        """Cuánto se está descontando por envío gratis: lo pedido, lo guardado a
+        mano o lo de la configuración, en ese orden."""
+        return self._cfg_efectivo(envio=envio).meli.envio_gratis_ars
 
     def margen_insuficiente(self, p: ProductoCatalogo) -> bool:
         return p.margen_pct < self.cfg.umbral_margen_bueno_pct

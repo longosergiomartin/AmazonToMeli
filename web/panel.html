@@ -206,7 +206,7 @@
         </select></div>
       <div class="f"><label>Categoría (comisión)</label>
         <select id="categoria"><option value="default">Otra / default</option><option value="electronica">Electrónica</option><option value="computacion">Computación</option><option value="hogar">Hogar</option></select></div>
-      <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="35"></div>
+      <div class="f"><label>Margen deseado (%)</label><input id="margen_deseado" type="number" step="1" value="30"></div>
       <div class="f"><label>Stock a publicar</label><input id="stock" type="number" step="1" value="1"></div>
       <div class="f"><label>Días de preparación (entrega)</label><input id="dias_preparacion" type="number" step="1" value="25">
         <span class="hint">Se muestra en la publicación: "el vendedor necesita N días para tener listo el producto".</span></div>
@@ -279,16 +279,16 @@
         <span class="hint">El costo en USD se valúa a esta cotización.</span>
       </div>
       <div class="f" style="margin:0">
-        <label>Vendo a dólar</label>
-        <input type="number" id="pr-tc-venta" min="1" step="1"
-               placeholder="o usá el margen →" style="width:150px">
-        <span class="hint">El precio sale de valuar el mismo costo acá.</span>
-      </div>
-      <div class="f" style="margin:0">
-        <label>…o margen sobre el costo</label>
+        <label>Margen sobre el costo</label>
         <input type="number" id="pr-margen" min="0" step="1"
                placeholder="el de cada uno" style="width:150px">
-        <span class="hint">Solo si no ponés dólar de venta.</span>
+        <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
+      </div>
+      <div class="f" style="margin:0">
+        <label>Envío gratis que pagás</label>
+        <input type="number" id="pr-envio" min="0" step="1"
+               placeholder="el configurado" style="width:150px">
+        <span class="hint">En pesos, ya con tu descuento por reputación.</span>
       </div>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px">
@@ -685,8 +685,8 @@
 
   function prCuerpo(){
     var num=function(id){ var v=($(id).value||"").trim(); return v===""?null:Number(v); };
-    return {tc_costo:num("pr-tc-costo"), tc_venta:num("pr-tc-venta"),
-            margen_pct:num("pr-margen"),
+    return {tc_costo:num("pr-tc-costo"), margen_pct:num("pr-margen"),
+            envio_ars:num("pr-envio"),
             refrescar_cotizacion:$("pr-refrescar").checked};
   }
 
@@ -699,11 +699,12 @@
       if(!prFilas.length){ $("pr-msg").textContent="No hay publicaciones para actualizar.";
         $("pr-tabla").innerHTML=""; return; }
       var c=d.cotizacion||{};
-      // Si se pusieron cotizaciones a mano manda eso, no la del mercado.
+      // Si se puso la cotización a mano manda eso, no la del mercado.
       $("pr-msg").textContent=(d.tc_costo
-          ? "Compro a "+fmt(d.tc_costo)+(d.tc_venta?" · vendo a "+fmt(d.tc_venta):"")
+          ? "Compro a "+fmt(d.tc_costo)
           : "Dólar oficial "+fmt(c.oficial)+" · tarjeta "+fmt(c.tarjeta)
             +" · costo al dólar "+(d.dolar_costo||"—"))
+        +" · envío "+fmt(d.envio_ars)
         +". "+prFilas.length+" publicación/es.";
       $("pr-tabla").innerHTML=prFilas.map(function(f){
         var v=f.variacion_pct;
@@ -1101,7 +1102,12 @@
       function colr(m){return m.margen_pct<0?'var(--bad)':(m.margen_pct<30?'var(--warn)':'var(--good)');}
       var dt=d.detalle;
       el.innerHTML=
-        fila("MercadoLibre ("+dt.costos_ml_pct+"% comisión + envío gratis)","−"+fmt(dt.costos_ml))+
+        fila("Comisión de MercadoLibre ("+dt.costos_ml_pct+"%)","−"+fmt(dt.costos_ml))+
+        fila("Envío gratis que pagás","−"+fmt(dt.envio))+
+        (dt.percepcion_iva
+          ? fila("Percepción de IVA (7%, arriba de "+fmt(dt.percepcion_iva_desde)+")",
+                 "−"+fmt(dt.percepcion_iva),' style="color:var(--warn)"')
+          : "")+
         fila("IVA de la venta","−"+fmt(dt.iva))+
         fila("Ganancias + IIBB (a cuenta)","−"+fmt(dt.ganancias+dt.iibb))+
         fila("Neto (estilo \"Recibís\" de ML, sin impuestos)",fmt(d.neto_estilo_ml)+' · <span style="color:'+colr(cMl)+'">'+cMl.margen_pct.toFixed(1)+'%</span>')+
