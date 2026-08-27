@@ -122,6 +122,8 @@ class Catalogo:
         # Si no se pasa hecha, se busca en el primer uso: pedirla al arrancar
         # deja el arranque a merced de que la API del dólar responda.
         self._proveedor_cotizacion = proveedor_cotizacion
+        # Preferencias leídas: se llenan al primer uso y las invalida su setter.
+        self._cache_pref: dict[str, Optional[str]] = {}
         self._crear_tablas()
 
     def _cfg_efectivo(self, tc: Optional[float] = None,
@@ -165,9 +167,23 @@ class Catalogo:
     # ---- preferencias -----------------------------------------------------
 
     def _pref(self, clave: str, default: str) -> str:
-        row = self.conn.execute(
-            "SELECT valor FROM preferencias WHERE clave = ?", (clave,)).fetchone()
-        return row["valor"] if row else default
+        """Una preferencia, con la lectura cacheada en memoria.
+
+        Sin la caché, recalcular el catálogo entero eran ~1.000 consultas para
+        leer cuatro valores que no cambian en toda la operación: el 90% de los
+        viajes a la base, y con la base por red eso solo ya se comía el minuto y
+        medio. Las preferencias únicamente cambian por los setters de acá, así
+        que alcanza con invalidar en `_set_pref`.
+        """
+        if clave not in self._cache_pref:
+            row = self.conn.execute(
+                "SELECT valor FROM preferencias WHERE clave = ?", (clave,)).fetchone()
+            # Se cachea lo que hay en la base, no el default: dos llamadas
+            # podrían pedir la misma clave con defaults distintos y la primera
+            # le fijaría el suyo a la segunda.
+            self._cache_pref[clave] = row["valor"] if row else None
+        guardado = self._cache_pref[clave]
+        return default if guardado is None else guardado
 
     def _set_pref(self, clave: str, valor: str) -> None:
         self.conn.execute(
@@ -175,6 +191,7 @@ class Catalogo:
                ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor""",
             (clave, valor))
         self.conn.commit()
+        self._cache_pref[clave] = valor
 
     @property
     def condicion_fiscal(self) -> str:
@@ -278,10 +295,17 @@ class Catalogo:
 
     def recalcular_todos(self) -> None:
         """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras
-        cambiar la condición fiscal)."""
+        cambiar la condición fiscal o el dólar).
+
+        Corre dentro del pedido web, así que el tiempo importa: la config se
+        arma una sola vez para todos y se hace un solo commit al final. Con un
+        commit por producto eran 114 viajes de ida y vuelta a la base.
+        """
+        cfg = self._cfg_efectivo()
         for p in self.todos():
-            self._calcular(p)
-            self._guardar(p)
+            self._calcular(p, cfg)
+            self._guardar(p, commit=False)
+        self.conn.commit()
 
     def limpiar_marcas(self) -> int:
         """Arregla las marcas que quedaron con el texto del byline de Amazon
@@ -398,8 +422,13 @@ class Catalogo:
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
 
-    def _calcular(self, p: ProductoCatalogo) -> None:
-        """Completa costo_total_ars, precio_sugerido_ars y margen_pct."""
+    def _calcular(self, p: ProductoCatalogo,
+                  cfg_base: Optional[Config] = None) -> None:
+        """Completa costo_total_ars, precio_sugerido_ars y margen_pct.
+
+        `cfg_base` permite armar la config una sola vez cuando se recalcula todo
+        el catálogo: es la misma para los 114 productos.
+        """
         # Si no se cargó el envío+importación, se estima como % del precio de
         # Amazon (envio_import_pct, ~26%). Cargando el Total real del checkout
         # el número es exacto.
@@ -410,7 +439,8 @@ class Catalogo:
             nombre=p.modelo or p.asin or "producto", query_meli=p.modelo or "",
             precio_amazon_usd=base_usd, peso_kg=p.peso_kg, arancel_pct=p.arancel_pct,
         )
-        cfg = self._cfg_efectivo()
+        cfg_base = self._cfg_efectivo() if cfg_base is None else cfg_base
+        cfg = cfg_base
         regimen = p.regimen
         if regimen == "landed":
             # Amazon ya informó el Total puesto en Argentina (producto + envío +
@@ -423,11 +453,11 @@ class Catalogo:
         costo = calcular_costo(pa, regimen=regimen, cfg=cfg)
         p.costo_total_ars = costo.total_ars
         p.precio_sugerido_ars = precio_sugerido(
-            costo.total_ars, p.margen_deseado, p.categoria, self._cfg_efectivo())
+            costo.total_ars, p.margen_deseado, p.categoria, cfg_base)
         # margen real al precio que efectivamente se usará (publicado o sugerido)
         precio_ref = p.precio_publicado_ars or p.precio_sugerido_ars
         p.margen_pct = margen_real_al_precio(
-            costo.total_ars, precio_ref, p.categoria, self._cfg_efectivo())["margen_pct"]
+            costo.total_ars, precio_ref, p.categoria, cfg_base)["margen_pct"]
 
     def _costo_ars(self, p: ProductoCatalogo, tc: Optional[float] = None) -> float:
         """El costo puesto en Argentina, valuado al tipo de cambio que se pida."""
@@ -539,7 +569,7 @@ class Catalogo:
         rows = self.conn.execute("SELECT * FROM catalogo ORDER BY creado DESC").fetchall()
         return [self._fila_a_producto(r) for r in rows]
 
-    def _guardar(self, p: ProductoCatalogo) -> None:
+    def _guardar(self, p: ProductoCatalogo, commit: bool = True) -> None:
         sets = ", ".join(f"{c} = ?" for c in self._CAMPOS)
         vals = [getattr(p, c) for c in self._CAMPOS]
         self.conn.execute(
@@ -548,7 +578,10 @@ class Catalogo:
             [_ahora(), json.dumps(p.ml_attributes), json.dumps(p.pictures),
              json.dumps(p.videos)] + vals + [p.id],
         )
-        self.conn.commit()
+        # `commit=False` es para guardar muchos productos en una sola
+        # transacción; el que llama tiene que cerrarla.
+        if commit:
+            self.conn.commit()
 
     # ---- historial -------------------------------------------------------
 

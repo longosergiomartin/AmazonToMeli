@@ -1936,3 +1936,34 @@ def test_con_las_cotizaciones_si_cuenta_como_actualizada(tmp_path, monkeypatch):
 
     assert d["resultados"][0]["sin_cambios"] is False
     assert d["actualizados"] == 1 and d["sin_cambios"] == 0
+
+
+def test_una_tanda_lenta_devuelve_lo_pendiente_en_vez_de_morirse(tmp_path, monkeypatch):
+    """Una publicación lenta puede tardar 20 segundos: cinco alcanzan para
+    pasarse del tope del panel. Si la llamada se muere entera no se sabe qué se
+    aplicó y los que no se tocaron se pierden, porque el panel ya los sacó de su
+    cola. El servidor se corta solo y los devuelve."""
+    import api.catalogo_routes as rutas
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "lento.db")
+    otros = [_alta(c, asin=f"B0LENTO{i:04d}", marca="LEGO", titulo_ml=f"Set {i}",
+                   precio_usd=100.0).json()["id"] for i in range(3)]
+    for i, oid in enumerate(otros):
+        c.post(f"/api/catalogo/{oid}/publicado",
+               json={"ml_item_id": f"MLA90{i}", "ml_permalink": "http://x"})
+
+    # Cada publicación consume todo el presupuesto: solo entra la primera.
+    monkeypatch.setattr(rutas, "TOPE_APLICAR_SEG", 0.0)
+
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid] + otros, "tc_costo": 1600}).json()
+
+    assert len(d["resultados"]) == 1, "no intentó ni una: no avanzaría nunca"
+    assert d["pendientes"] == otros, "los que no se tocaron se perderían"
+
+
+def test_sin_apuro_no_queda_nada_pendiente(tmp_path, monkeypatch):
+    c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "sinapuro.db")
+    d = c.post("/api/catalogo/precios/aplicar",
+               json={"ids": [pid], "tc_costo": 1600}).json()
+    assert d["pendientes"] == []
+    assert len(d["resultados"]) == 1

@@ -581,3 +581,81 @@ def test_simular_no_modifica_el_producto(cat):
 
     assert despues.costo_total_ars == antes.costo_total_ars
     assert despues.margen_deseado == antes.margen_deseado
+
+
+def _contar_viajes(cat):
+    """Cuenta consultas y commits: con la base por red, cada uno es ida y vuelta.
+
+    Es lo que importa acá. El tiempo de reloj en un SQLite en memoria no dice
+    nada del servidor real, donde cada viaje son decenas de milisegundos.
+    """
+    conn = cat.conn
+    real_q, real_c = conn.execute, conn.commit
+    n = {"viajes": 0, "pref": 0}
+
+    def q(sql, *a, **k):
+        n["viajes"] += 1
+        if "preferencias" in str(sql):
+            n["pref"] += 1
+        return real_q(sql, *a, **k)
+
+    def c(*a, **k):
+        n["viajes"] += 1
+        return real_c(*a, **k)
+
+    conn.execute, conn.commit = q, c
+    return n
+
+
+def test_recalcular_todo_no_relee_las_preferencias_por_producto(cat):
+    """Recalcular 114 productos eran ~1.250 viajes a la base, 1.026 de ellos
+    releyendo cuatro preferencias que no cambian en toda la operación. Con la
+    base por red eso solo se comía el minuto y medio del pedido, y el cambio de
+    precios se cortaba antes de llamar a MercadoLibre."""
+    for i in range(40):
+        cat.agregar(ProductoCatalogo(
+            asin=f"B{i:09d}", marca="LEGO", modelo=f"Set {i}", titulo_ml=f"Set {i}",
+            precio_usd=100.0, regimen="landed", margen_deseado=0.30, stock=1))
+    cat.tc_manual = 1600
+    cat.envio_manual = 9860
+
+    n = _contar_viajes(cat)
+    cat.recalcular_todos()
+
+    assert n["pref"] == 0, "se releen preferencias que ya estaban en memoria"
+    # Un SELECT de todos, un UPDATE por producto y un solo commit al final.
+    assert n["viajes"] <= 45, f"{n['viajes']} viajes para 40 productos"
+
+
+def test_recalcular_todo_hace_un_solo_commit(cat):
+    """Un commit por producto son 114 esperas de durabilidad contra el servidor."""
+    for i in range(20):
+        cat.agregar(ProductoCatalogo(
+            asin=f"C{i:09d}", marca="LEGO", modelo=f"Set {i}", titulo_ml=f"Set {i}",
+            precio_usd=100.0, regimen="landed", margen_deseado=0.30, stock=1))
+    conn = cat.conn
+    real = conn.commit
+    commits = []
+    conn.commit = lambda *a, **k: (commits.append(1), real(*a, **k))[1]
+
+    cat.recalcular_todos()
+    assert len(commits) == 1, f"{len(commits)} commits para 20 productos"
+
+
+def test_la_cache_de_preferencias_no_devuelve_valores_viejos(cat):
+    """Cachear sin invalidar sería peor que el problema que arregla: el catálogo
+    seguiría valuando al dólar anterior después de cambiarlo."""
+    cat.tc_manual = 1600
+    assert cat.tc_manual == 1600
+    cat.tc_manual = 1700
+    assert cat.tc_manual == 1700
+    cat.tc_manual = None
+    assert cat.tc_manual is None
+
+
+def test_la_cache_no_le_pega_el_default_de_una_clave_a_otra_lectura(cat):
+    """`_pref` recibe defaults distintos según quién llame. Si se cacheara el
+    default en vez de lo que hay en la base, el primero en preguntar le fijaría
+    su default a todos los demás."""
+    assert cat._pref("no_existe", "primero") == "primero"
+    assert cat._pref("no_existe", "segundo") == "segundo"

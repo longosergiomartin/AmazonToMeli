@@ -11,6 +11,7 @@ y que no falte ningún dato obligatorio. Nunca se publica en un solo paso.
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from typing import Optional
 
@@ -86,6 +87,12 @@ class Publicacion(BaseModel):
     videos: Optional[list[str]] = None
     # Se acepta el link de YouTube pegado tal cual, no solo el id.
     video_youtube: Optional[str] = None
+
+
+# Cuánto puede tardar como mucho una tanda del cambio de precios antes de
+# devolver lo hecho y dejar el resto para la próxima. Bien por debajo del tope
+# del panel (180 s), para que conteste él y no lo corte el navegador.
+TOPE_APLICAR_SEG = 100.0
 
 
 def registrar_catalogo(app: FastAPI, conn,
@@ -973,6 +980,12 @@ def registrar_catalogo(app: FastAPI, conn,
 
         De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
         todas juntas serían una petición eterna que el servidor corta.
+
+        Y aun así la llamada se controla el tiempo: una publicación lenta puede
+        tardar hasta 20 segundos, así que cinco alcanzan para pasarse del tope
+        del panel. Si se acaba el presupuesto se devuelve lo hecho y los que
+        quedaron sin tocar, en vez de que la llamada muera entera y no se sepa
+        qué se aplicó.
         """
         par = _parametros(body)
         ids = [int(i) for i in (body or {}).get("ids", [])][:20]
@@ -997,7 +1010,15 @@ def registrar_catalogo(app: FastAPI, conn,
             cat.recalcular_todos()
 
         resultados = []
-        for pid in ids:
+        pendientes = []
+        arranque = time.monotonic()
+        for i, pid in enumerate(ids):
+            # El recálculo de arriba ya consumió parte del presupuesto, así que
+            # se mide desde el principio de la llamada. Al menos uno se intenta
+            # siempre: si no, con el presupuesto agotado no avanzaría nunca.
+            if i and time.monotonic() - arranque > TOPE_APLICAR_SEG:
+                pendientes = ids[i:]
+                break
             p = cat.obtener(pid)
             if not p or not (p.ml_item_id or "").strip():
                 continue
@@ -1038,6 +1059,9 @@ def registrar_catalogo(app: FastAPI, conn,
             resultados.append(fila)
 
         return {"resultados": resultados,
+                # Los que no se llegaron a tocar vuelven a la cola del panel.
+                # Sin esto se perderían: el panel ya los sacó de su lista.
+                "pendientes": pendientes,
                 # Se cuentan aparte los que cambiaron de precio de verdad.
                 "actualizados": sum(1 for r in resultados
                                     if r["ok"] and not r["sin_cambios"]),
