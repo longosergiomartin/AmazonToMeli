@@ -56,3 +56,22 @@ def test_aplicar_precios_manda_los_mismos_parametros_que_simular():
         "el aplicar no reutiliza prCuerpo(): puede volver a perder campos"
     assert "margen_pct:" not in aplicar[:200], \
         "el aplicar arma el cuerpo a mano otra vez"
+
+
+def test_las_llamadas_tienen_tope_de_tiempo():
+    """`fetch` no vence solo. Sin un tope, un servidor colgado deja el panel con
+    el cartel de «Actualizando…» para siempre y no hay forma de distinguirlo de
+    que siga trabajando —que es exactamente lo que se vio con los precios."""
+    js = _js()
+    assert "AbortController" in js and "ctrl.signal" in js, \
+        "el panel llama sin tope de tiempo: un cuelgue queda esperando para siempre"
+
+
+def test_el_aplicar_precios_muestra_que_sigue_vivo():
+    """El cartel tiene que moverse mientras se espera. Un número quieto no dice
+    si el servidor trabaja o se frenó."""
+    js = _js()
+    aplicar = js[js.index('$("pr-aplicar").onclick'):js.index('$("lote-borrar")')]
+    assert "setInterval" in aplicar, \
+        "el aplicar no refresca el cartel: no se ve si sigue vivo"
+    assert "pr-frenar" in aplicar, "el aplicar no se puede frenar"

@@ -298,6 +298,8 @@
       <button type="button" class="sm" id="pr-simular">Ver qué cambiaría</button>
       <button type="button" class="sm primary" id="pr-aplicar"
               style="display:none">Aplicar en MercadoLibre</button>
+      <button type="button" class="sm" id="pr-frenar"
+              style="display:none">■ Frenar</button>
     </div>
     <div class="msg" id="pr-msg"></div>
     <div id="pr-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
@@ -331,8 +333,25 @@
   "use strict";
   var $=function(s){return document.getElementById(s);};
   var fmt=function(v){return v==null?"—":"$"+Math.round(v).toLocaleString("es-AR");};
-  var api=function(m,u,b){return fetch(u,{method:m,headers:{"Content-Type":"application/json"},
-    body:b?JSON.stringify(b):undefined}).then(function(r){
+  // `fetch` no vence nunca por su cuenta: si el servidor se queda colgado, la
+  // promesa no se resuelve jamás y el panel se queda con el cartel de
+  // "Actualizando…" para siempre, sin forma de distinguirlo de que siga
+  // trabajando. Por eso toda llamada lleva un tope de tiempo.
+  var TOPE_MS=180000;
+  var api=function(m,u,b,ms){
+    var ctrl=("AbortController" in window)?new AbortController():null;
+    var vencio=false, reloj=null;
+    if(ctrl){ reloj=setTimeout(function(){ vencio=true; ctrl.abort(); },
+                               ms||TOPE_MS); }
+    return fetch(u,{method:m,headers:{"Content-Type":"application/json"},
+    body:b?JSON.stringify(b):undefined,
+    signal:ctrl?ctrl.signal:undefined}).catch(function(e){
+      if(vencio) throw "El servidor no contestó en "+Math.round((ms||TOPE_MS)/1000)
+        +" segundos. Lo que ya se hizo quedó guardado: volvé a apretar «Ver qué "
+        +"cambiaría» para ver qué falta.";
+      throw e;
+    }).then(function(r){
+      if(reloj) clearTimeout(reloj);
       // Si el cuerpo no es JSON —500 con página HTML, corte del gateway— hay
       // que decir el código igual: un "Error: {}" pelado no deja ni empezar a
       // buscar el problema.
@@ -702,24 +721,42 @@
     if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es EN TU CUENTA "
       +"de MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
     var b=$("pr-aplicar"); b.disabled=true;
+    $("pr-frenar").style.display="";
     // De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
     // todas juntas serían una petición que el servidor corta por tiempo.
+    // Cinco y no diez: con la verificación del precio cada producto son hasta
+    // dos viajes, y diez daban una llamada más larga de lo que el servidor
+    // aguanta despierto.
     var pendientes=prFilas.map(function(f){return f.id;});
-    var hechos=0, iguales=0, fallas=[];
+    var hechos=0, iguales=0, fallas=[], frenado=false, reloj=null;
+    function parar(){ if(reloj) clearInterval(reloj); reloj=null;
+      b.disabled=false; $("pr-frenar").style.display="none"; }
+    $("pr-frenar").onclick=function(){ frenado=true;
+      $("pr-msg").textContent="Frenando al terminar la tanda en curso…"; };
+    function cerrar(cortado){
+      parar(); $("pr-aplicar").style.display="none";
+      // «Sin cambios» se dice aparte: mandar el precio que ya estaba y
+      // contarlo como actualizado no se distingue de que funcione.
+      $("pr-msg").textContent=(cortado?"Frenado. ":"")
+        +hechos+" publicación/es con precio nuevo."
+        +(iguales?" "+iguales+" ya estaban en ese precio (no cambió nada).":"")
+        +(pendientes.length?" Quedaron "+pendientes.length+" sin tocar.":"")
+        +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
+      // El dólar de costo pudo cambiar: la tabla y el indicador se releen.
+      cargar(); cargarDolarCosto();
+    }
     function tanda(){
-      if(!pendientes.length){
-        b.disabled=false; $("pr-aplicar").style.display="none";
-        // «Sin cambios» se dice aparte: mandar el precio que ya estaba y
-        // contarlo como actualizado no se distingue de que funcione.
-        $("pr-msg").textContent=hechos+" publicación/es con precio nuevo."
-          +(iguales?" "+iguales+" ya estaban en ese precio (no cambió nada).":"")
-          +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
-        // El dólar de costo pudo cambiar: la tabla y el indicador se releen.
-        cargar(); cargarDolarCosto(); return;
+      if(!pendientes.length || frenado) return cerrar(frenado);
+      var lote=pendientes.splice(0,5);
+      // El cartel cuenta los segundos de la tanda. Sin eso no hay forma de
+      // saber si el servidor sigue trabajando o se quedó colgado.
+      var desde=Date.now();
+      function pintar(){
+        $("pr-msg").textContent="Actualizando… "+hechos+" listas, "
+          +(pendientes.length+lote.length)+" por hacer. ("
+          +Math.round((Date.now()-desde)/1000)+"s en esta tanda)";
       }
-      var lote=pendientes.splice(0,10);
-      $("pr-msg").textContent="Actualizando… "+hechos+" listas, "
-        +(pendientes.length+lote.length)+" por hacer.";
+      pintar(); if(reloj) clearInterval(reloj); reloj=setInterval(pintar,1000);
       // Se mandan **los mismos parámetros con los que se simuló**. Armar el
       // cuerpo a mano acá ya se comió las dos cotizaciones una vez: aplicaba
       // con el margen viejo, le mandaba a MercadoLibre el precio que la
@@ -731,7 +768,13 @@
         (d.resultados||[]).forEach(function(r){
           if(!r.ok) fallas.push(r.nombre+" ("+r.error+")"); });
         tanda();
-      }).catch(function(e){ b.disabled=false; err(e); });
+      }).catch(function(e){ parar();
+        // Lo que ya se aplicó quedó guardado producto por producto: conviene
+        // decir cuánto se alcanzó a hacer antes de mostrar el error.
+        if(hechos||iguales) $("pr-msg").textContent="Se cortó con "+hechos
+          +" con precio nuevo y "+iguales+" sin cambios. Quedaron "
+          +(pendientes.length+lote.length)+" sin tocar.";
+        cargar(); err(e); });
     }
     tanda();
   };
