@@ -2149,3 +2149,50 @@ def test_las_condiciones_de_compra_se_guardan_y_salen_en_la_descripcion(tmp_path
     texto = d["filas"][0]["descripcion_nueva"]
     assert "Llega en 25 días hábiles." in texto
     assert "CÓMO ES LA COMPRA" not in texto
+
+
+def test_el_diagnostico_dice_por_que_no_se_puede_cambiar_el_titulo(tmp_path, monkeypatch):
+    """Averiguarlo intentando el cambio cuesta un pedido por producto, dispara
+    el límite de ritmo de ML y mezcla el diagnóstico con los errores. Una
+    consulta de solo lectura contesta lo mismo sin tocar nada."""
+    escrituras = []
+    cli = _cli_lote([])
+    cli.actualizar = lambda *a, **k: escrituras.append(a) or {}
+    cli.obtener_varios = lambda ids: {
+        "MLA100": {"id": "MLA100", "title": "El de ML", "catalog_listing": True,
+                   "status": "active"},
+    }
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "diag.db", cli)
+
+    d = c.get("/api/catalogo/publicaciones/diagnostico").json()
+
+    assert d["resumen"]["catalogo"] == 1 and d["resumen"]["editable"] == 0
+    assert "catálogo" in d["filas"][0]["motivo"]
+    assert escrituras == [], "el diagnóstico no puede escribir nada"
+
+
+def test_el_diagnostico_distingue_familia_de_editable(tmp_path, monkeypatch):
+    cli = _cli_lote([])
+    cli.obtener_varios = lambda ids: {
+        "MLA100": {"id": "MLA100", "title": "Set", "family_name": "LEGO Minecraft",
+                   "status": "active"},
+    }
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "diag2.db", cli)
+    d = c.get("/api/catalogo/publicaciones/diagnostico").json()
+    assert d["resumen"]["familia"] == 1
+    assert d["filas"][0]["family_name"] == "LEGO Minecraft"
+
+    cli.obtener_varios = lambda ids: {"MLA100": {"id": "MLA100", "title": "Set",
+                                                 "status": "active"}}
+    d2 = c.get("/api/catalogo/publicaciones/diagnostico").json()
+    assert d2["resumen"]["editable"] == 1
+
+
+def test_el_diagnostico_no_miente_si_no_pudo_leer(tmp_path, monkeypatch):
+    """Lo que no vuelve del multiget no se puede clasificar: decir que es
+    editable sería inventar."""
+    cli = _cli_lote([])
+    cli.obtener_varios = lambda ids: {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "diag3.db", cli)
+    d = c.get("/api/catalogo/publicaciones/diagnostico").json()
+    assert d["resumen"]["no_leido"] == 1 and d["resumen"]["editable"] == 0
