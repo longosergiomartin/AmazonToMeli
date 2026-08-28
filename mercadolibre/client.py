@@ -194,6 +194,42 @@ class MeliClient:
                 status=200, cuerpo=resp)
         return resp
 
+    def actualizar_titulo(self, item_id: str, titulo: str) -> dict:
+        """Cambia el título de una publicación viva y **verifica que quedó**.
+
+        Dos cosas que MercadoLibre no avisa de frente:
+
+        - Según la categoría el campo es `title` o `family_name`, y manda uno u
+          otro: se prueba el primero y se reintenta con el otro si lo rechaza.
+        - En una publicación de catálogo el título es de la ficha de ML, no
+          tuyo. Ahí el pedido puede volver 200 y el título seguir igual, que es
+          el caso que hay que detectar y no contar como éxito.
+        """
+        titulo = (titulo or "").strip()[:60]
+        if not titulo:
+            raise MeliAPIError("El título no puede quedar vacío.", status=0)
+        resp, ultimo = {}, None
+        for campo in ("title", "family_name"):
+            try:
+                resp = self.actualizar(item_id, {campo: titulo}) or {}
+                break
+            except MeliAPIError as e:
+                ultimo = e
+                resp = {}
+        if not resp and ultimo is not None:
+            raise ultimo
+        quedo = resp.get("title") or resp.get("family_name")
+        if quedo is None:
+            item = self.obtener(item_id) or {}
+            quedo = item.get("title") or item.get("family_name")
+        if (quedo or "").strip() != titulo:
+            raise MeliAPIError(
+                f"MercadoLibre aceptó el pedido pero el título quedó en "
+                f"«{quedo}» en vez de «{titulo}». Suele pasar en publicaciones "
+                f"de catálogo, donde el título lo pone MercadoLibre.",
+                status=200, cuerpo=resp)
+        return resp
+
     def actualizar_stock(self, item_id: str, cantidad: int) -> dict:
         return self.actualizar(item_id, {"available_quantity": cantidad})
 
@@ -346,9 +382,18 @@ class MeliClient:
             f"({'; '.join(errores[:2]) or 'sin resultados'})")
 
     def poner_descripcion(self, item_id: str, texto: str) -> dict:
-        """Setea la descripción del ítem (endpoint aparte de la creación)."""
-        return self._req("POST", f"/items/{item_id}/description",
-                         json={"plain_text": texto})
+        """Setea la descripción del ítem (endpoint aparte de la creación).
+
+        POST la crea y PUT la reemplaza: en una publicación que ya tiene
+        descripción el POST rebota, así que se reintenta con PUT. Es lo que
+        permite mejorar la descripción de lo ya publicado y no solo de lo nuevo.
+        """
+        try:
+            return self._req("POST", f"/items/{item_id}/description",
+                             json={"plain_text": texto})
+        except MeliAPIError:
+            return self._req("PUT", f"/items/{item_id}/description",
+                             json={"plain_text": texto})
 
     def mis_items(self, limit: int = 200) -> list[str]:
         """IDs de las publicaciones que existen de verdad en la cuenta.

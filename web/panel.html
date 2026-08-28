@@ -305,6 +305,36 @@
     <div id="pr-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
   </div>
 
+  <div class="card">
+    <b>✍️ Mejorar títulos y descripciones de lo publicado</b>
+    <p class="hint" style="margin:6px 0 10px">Rehace el título con la estrategia
+      de publicación y reescribe la descripción con la ficha y las condiciones de
+      compra. Primero se ve qué cambiaría; nada se toca hasta que confirmes.
+      <b>En las publicaciones de catálogo el título lo pone MercadoLibre</b> y no
+      se puede cambiar: esas se informan aparte.</p>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="tx-titulo" checked> Título</label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="tx-descripcion" checked> Descripción</label>
+      <button type="button" class="sm" id="tx-simular">Ver qué cambiaría</button>
+      <button type="button" class="sm primary" id="tx-aplicar"
+              style="display:none">Aplicar en MercadoLibre</button>
+      <button type="button" class="sm" id="tx-frenar"
+              style="display:none">■ Frenar</button>
+    </div>
+    <div class="msg" id="tx-msg"></div>
+    <div id="tx-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
+    <details style="margin-top:10px">
+      <summary class="hint">Editar las condiciones de compra que van en la descripción</summary>
+      <p class="hint" style="margin:6px 0">Lo que digas acá es un compromiso con
+        el comprador. <code>{dias}</code> se reemplaza por los días de preparación
+        de cada publicación.</p>
+      <textarea id="tx-compra" rows="8" style="width:100%"></textarea>
+      <button type="button" class="sm" id="tx-guardar-compra">Guardar</button>
+    </details>
+  </div>
+
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
     <button type="button" class="sm" id="diagnostico"
             title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
@@ -785,6 +815,84 @@
     tanda();
   };
 
+  // ---- mejorar títulos y descripciones de lo ya publicado ---------------
+  var txFilas=[];
+
+  $("tx-simular").onclick=function(){
+    var b=$("tx-simular"); b.disabled=true;
+    $("tx-msg").textContent="Armando los títulos y las descripciones…";
+    $("tx-aplicar").style.display="none";
+    api("POST","/api/catalogo/publicaciones/simular",{}).then(function(d){
+      b.disabled=false; txFilas=d.filas||[];
+      if(!txFilas.length){ $("tx-msg").textContent="No hay publicaciones.";
+        $("tx-tabla").innerHTML=""; return; }
+      $("tx-msg").textContent=d.con_titulo_nuevo+" de "+d.total
+        +" cambiarían de título. La descripción se rehace en todas.";
+      $("tx-tabla").innerHTML=txFilas.map(function(f){
+        return '<div style="margin-bottom:6px">'
+          +(f.cambia_titulo
+             ? '<span style="color:var(--muted)">'+esc(f.titulo_actual)+'</span><br>→ <b>'
+               +esc(f.titulo_nuevo)+'</b> <span class="hint">('
+               +f.titulo_nuevo.length+' caracteres)</span>'
+             : '<b>'+esc(f.titulo_actual)+'</b> <span class="hint">(el título ya está bien)</span>')
+          +'</div>';
+      }).join("");
+      $("tx-aplicar").style.display="";
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  $("tx-aplicar").onclick=function(){
+    if(!txFilas.length) return;
+    if(!confirm("Esto cambia "+txFilas.length+" publicación/es EN TU CUENTA de "
+      +"MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
+    var b=$("tx-aplicar"); b.disabled=true; $("tx-frenar").style.display="";
+    var pendientes=txFilas.map(function(f){return f.id;});
+    var tit=0, des=0, fallas=[], frenado=false, reloj=null;
+    function parar(){ if(reloj) clearInterval(reloj); reloj=null;
+      b.disabled=false; $("tx-frenar").style.display="none"; }
+    $("tx-frenar").onclick=function(){ frenado=true;
+      $("tx-msg").textContent="Frenando al terminar la tanda en curso…"; };
+    function cerrar(cortado){
+      parar(); $("tx-aplicar").style.display="none";
+      $("tx-msg").textContent=(cortado?"Frenado. ":"")
+        +tit+" título/s y "+des+" descripción/es actualizados."
+        +(pendientes.length?" Quedaron "+pendientes.length+" sin tocar.":"")
+        +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
+      cargar();
+    }
+    function tanda(){
+      if(!pendientes.length || frenado) return cerrar(frenado);
+      var lote=pendientes.splice(0,5), desde=Date.now();
+      function pintar(){
+        $("tx-msg").textContent="Actualizando… "+tit+" títulos, "
+          +(pendientes.length+lote.length)+" por hacer. ("
+          +Math.round((Date.now()-desde)/1000)+"s en esta tanda)";
+      }
+      pintar(); if(reloj) clearInterval(reloj); reloj=setInterval(pintar,1000);
+      api("POST","/api/catalogo/publicaciones/aplicar",
+          {ids:lote, titulo:$("tx-titulo").checked,
+           descripcion:$("tx-descripcion").checked}).then(function(d){
+        if(d.pendientes && d.pendientes.length)
+          pendientes=d.pendientes.concat(pendientes);
+        tit+=d.titulos||0; des+=d.descripciones||0;
+        (d.resultados||[]).forEach(function(r){
+          if(r.error) fallas.push(r.nombre+" ("+r.error+")"); });
+        tanda();
+      }).catch(function(e){ parar();
+        if(tit||des) $("tx-msg").textContent="Se cortó con "+tit+" título/s y "
+          +des+" descripción/es. Quedaron "+(pendientes.length+lote.length)
+          +" sin tocar.";
+        cargar(); err(e); });
+    }
+    tanda();
+  };
+
+  $("tx-guardar-compra").onclick=function(){
+    api("POST","/api/catalogo/config",{texto_compra:$("tx-compra").value})
+      .then(function(){ $("tx-msg").textContent="Condiciones de compra guardadas."; })
+      .catch(err);
+  };
+
   $("lote-borrar").onclick=function(){
     var ids=seleccionados();
     if(ids.length && confirm("¿Borrar "+ids.length+" producto(s) del catálogo?"))
@@ -1242,8 +1350,17 @@
     api("POST","/api/importar/limpiar",{}).then(function(e){pintarCola(e);}).catch(err);
   });
 
+  function cargarConfigPublicacion(){
+    api("GET","/api/catalogo/config").then(function(c){
+      // Vacío muestra el texto por defecto, que es el que se va a usar: así se
+      // ve y se edita lo mismo que va a leer el comprador.
+      $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
+    }).catch(function(){});
+  }
+
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes(); cargarAgente(); cargar();
+  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes();
+  cargarConfigPublicacion(); cargarAgente(); cargar();
 })();
 </script>
 </body>

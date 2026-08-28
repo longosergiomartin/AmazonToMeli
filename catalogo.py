@@ -242,6 +242,25 @@ class Catalogo:
         self._set_pref("tc_manual", str(v))
 
     @property
+    def publicar_en_catalogo(self) -> bool:
+        """Si se intenta primero publicar contra el catálogo de MercadoLibre.
+
+        Apagado por defecto. En el catálogo todos los vendedores comparten la
+        misma ficha, así que lo único que distingue una oferta de otra es el
+        precio y el tiempo de entrega: las dos peores cartas de quien importa
+        contra alguien con stock local. Con publicación propia se compite en la
+        búsqueda, que es donde tener sets que nadie más tiene sí es una ventaja.
+
+        Encendido, vuelve al comportamiento anterior. Apagado, el catálogo sigue
+        usándose como salida de emergencia cuando la publicación propia no sale.
+        """
+        return self._pref("publicar_en_catalogo", "0") == "1"
+
+    @publicar_en_catalogo.setter
+    def publicar_en_catalogo(self, valor) -> None:
+        self._set_pref("publicar_en_catalogo", "1" if valor else "0")
+
+    @property
     def tipo_producto(self) -> str:
         """Palabra con la que arranca el título ("Set", "Kit", "Muñeco"…).
 
@@ -355,6 +374,41 @@ class Catalogo:
             piezas_del_titulo(origen)
         return titulo_para_ml(p.marca, origen, set_id,
                               piezas=str(piezas or ""), tipo=self.tipo_producto)
+
+    @property
+    def texto_compra(self) -> str:
+        """El bloque de condiciones de compra que va en cada descripción.
+
+        Vacío usa el texto por defecto. Lo que dice ahí es un compromiso
+        comercial —plazos, originalidad, garantía—, así que tiene que poder
+        escribirlo el vendedor y no quedar enterrado en el código.
+        """
+        return self._pref("texto_compra", "")
+
+    @texto_compra.setter
+    def texto_compra(self, valor) -> None:
+        self._set_pref("texto_compra", (valor or "").strip()[:3000])
+
+    def descripcion_armada(self, p: ProductoCatalogo) -> str:
+        """La descripción con la que conviene publicar este producto.
+
+        Se arma al publicar y no se guarda: así el bloque de la compra siempre
+        sale con los días de preparación vigentes, y lo que el usuario editó en
+        el campo Descripción sigue siendo el detalle del producto, sin que se lo
+        pisemos con texto nuestro.
+        """
+        import re
+        from titulos import numero_de_set, piezas_del_titulo
+        from descripcion import armar
+        origen = p.modelo or p.titulo_ml or ""
+        set_id = p.modelo_fabricante if re.fullmatch(
+            r"\d{4,6}", p.modelo_fabricante or "") else numero_de_set(origen)
+        piezas = (p.ml_attributes or {}).get("PIECES_NUMBER") or \
+            piezas_del_titulo(origen)
+        return armar(titulo=p.titulo_ml or p.modelo,
+                     detalle=p.descripcion or "",
+                     marca=p.marca, numero_set=set_id, piezas=str(piezas or ""),
+                     dias=p.dias_preparacion, compra=self.texto_compra)
 
     def limpiar_titulos(self, solo_sucios: bool = False) -> int:
         """Rearma los títulos de todo el catálogo con la estrategia de publicación.
