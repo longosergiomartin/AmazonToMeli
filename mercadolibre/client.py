@@ -14,9 +14,14 @@ Endpoints usados (API pública de MercadoLibre):
 
 from __future__ import annotations
 
+import time
 from typing import Callable, Optional
 
 import requests
+
+# Cuánto esperar antes de cada reintento cuando MercadoLibre limita el ritmo.
+# Tres intentos alcanzan para pasar una ráfaga sin dejar el pedido colgado.
+ESPERAS_429 = (2.0, 5.0, 12.0)
 
 API_BASE = "https://api.mercadolibre.com"
 
@@ -26,6 +31,28 @@ class MeliAPIError(RuntimeError):
         super().__init__(mensaje)
         self.status = status
         self.cuerpo = cuerpo
+
+
+def _motivo_titulo(e: "MeliAPIError") -> str:
+    """Por qué MercadoLibre no dejó cambiar el título, en castellano.
+
+    Los códigos que devuelve no dicen qué hacer. Estos tres son los que
+    aparecen de verdad al editar publicaciones vivas, y cada uno tiene una
+    salida distinta: uno se espera, otro no se puede y el tercero obliga a
+    republicar.
+    """
+    texto = f"{describir_error(e.cuerpo)} {e}".lower()
+    if "too_many_requests" in texto or e.status == 429:
+        return ("MercadoLibre está limitando los pedidos (too_many_requests). "
+                "Se reintenta más lento; volvé a correrlo en un rato.")
+    if "catalog" in texto:
+        return ("Es una publicación de catálogo: el título lo pone MercadoLibre "
+                "y no se puede cambiar. Habría que republicarla como propia.")
+    if "family_name" in texto or "family name" in texto:
+        return ("MercadoLibre no deja editar el título de esta publicación "
+                "(quedó atada a una familia de productos al crearse). Para "
+                "cambiarlo hay que republicarla.")
+    return describir_error(e.cuerpo) or str(e)
 
 
 def describir_error(cuerpo) -> str:
@@ -93,10 +120,26 @@ class MeliClient:
         return {"Authorization": f"Bearer {self._token()}",
                 "Content-Type": "application/json"}
 
-    def _req(self, metodo: str, path: str, **kw):
+    def _req(self, metodo: str, path: str, _intento: int = 0, **kw):
+        """Una llamada a la API, con espera y reintento si ML limita el ritmo.
+
+        Editando muchas publicaciones seguidas MercadoLibre contesta 429
+        (`too_many_requests`). Sin esto, cada producto que cae en el límite se
+        pierde y hay que descubrir cuáles a mano.
+        """
         url = f"{self.base_url}{path}"
         resp = self.session.request(metodo, url, headers=self._headers(),
                                     timeout=self.timeout, **kw)
+        if resp.status_code == 429 and _intento < len(ESPERAS_429):
+            espera = ESPERAS_429[_intento]
+            # ML puede decir cuánto esperar; su número manda sobre el nuestro.
+            try:
+                espera = max(espera, float(getattr(resp, "headers", {})
+                                   .get("Retry-After", 0)))
+            except (TypeError, ValueError):
+                pass
+            time.sleep(min(espera, 30.0))
+            return self._req(metodo, path, _intento=_intento + 1, **kw)
         if resp.status_code >= 400:
             try:
                 cuerpo = resp.json()
@@ -208,16 +251,18 @@ class MeliClient:
         titulo = (titulo or "").strip()[:60]
         if not titulo:
             raise MeliAPIError("El título no puede quedar vacío.", status=0)
-        resp, ultimo = {}, None
-        for campo in ("title", "family_name"):
-            try:
-                resp = self.actualizar(item_id, {campo: titulo}) or {}
-                break
-            except MeliAPIError as e:
-                ultimo = e
-                resp = {}
-        if not resp and ultimo is not None:
-            raise ultimo
+        # `title` es el campo con el que se edita una publicación viva.
+        # `family_name` solo existe al crearla y en una que ya existe siempre
+        # rebota: reintentarlo con él gastaba una segunda llamada condenada por
+        # producto —el doble de pedidos, que es lo que hacía saltar el límite de
+        # MercadoLibre— y encima tapaba el error de `title`, que es el que
+        # explica de verdad por qué no se pudo.
+        resp = {}
+        try:
+            resp = self.actualizar(item_id, {"title": titulo}) or {}
+        except MeliAPIError as e:
+            raise MeliAPIError(_motivo_titulo(e), status=e.status,
+                               cuerpo=e.cuerpo) from e
         quedo = resp.get("title") or resp.get("family_name")
         if quedo is None:
             item = self.obtener(item_id) or {}
@@ -388,12 +433,25 @@ class MeliClient:
         descripción el POST rebota, así que se reintenta con PUT. Es lo que
         permite mejorar la descripción de lo ya publicado y no solo de lo nuevo.
         """
-        try:
-            return self._req("POST", f"/items/{item_id}/description",
-                             json={"plain_text": texto})
-        except MeliAPIError:
-            return self._req("PUT", f"/items/{item_id}/description",
-                             json={"plain_text": texto})
+        # Dos ejes, y hay que probar los dos:
+        #  - POST la crea, PUT la reemplaza. En una publicación que ya tiene
+        #    descripción el POST rebota.
+        #  - `plain_text` está discontinuado en parte del catálogo de ML y
+        #    contesta DESCRIPTION_PLAIN_TEXT_NOT_ALLOWED; ahí va `text`.
+        ultimo = None
+        for metodo in ("POST", "PUT"):
+            for campo in ("plain_text", "text"):
+                try:
+                    return self._req(metodo, f"/items/{item_id}/description",
+                                     json={campo: texto})
+                except MeliAPIError as e:
+                    ultimo = e
+                    detalle = f"{describir_error(e.cuerpo)} {e}".lower()
+                    # Si el rechazo no es por el formato del texto, cambiar de
+                    # campo no arregla nada: se pasa al otro método.
+                    if "plain_text" not in detalle and "plain text" not in detalle:
+                        break
+        raise ultimo
 
     def mis_items(self, limit: int = 200) -> list[str]:
         """IDs de las publicaciones que existen de verdad en la cuenta.
