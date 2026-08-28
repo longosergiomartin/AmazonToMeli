@@ -2234,3 +2234,32 @@ def test_probar_titulo_guarda_si_mercadolibre_lo_acepta(tmp_path, monkeypatch):
 def test_probar_titulo_rebota_si_no_esta_publicado(client):
     pid = _alta(client, marca="LEGO", modelo="LEGO Set 21181").json()["id"]
     assert client.post(f"/api/catalogo/{pid}/probar-titulo").status_code == 409
+
+
+def test_el_diagnostico_cuenta_pausadas_y_sin_stock(tmp_path, monkeypatch):
+    """Una publicación pausada o sin stock se ve pero no se puede comprar:
+    junta visitas y hasta intenciones de compra, y ninguna termina en venta.
+    Es lo primero a mirar cuando el reporte de ML da visitas y cero ventas."""
+    cli = _cli_lote([])
+    cli.obtener_varios = lambda ids: {
+        "MLA100": {"id": "MLA100", "title": "Set", "status": "paused",
+                   "available_quantity": 0, "family_name": "Set"},
+    }
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "salud.db", cli)
+
+    d = c.get("/api/catalogo/publicaciones/diagnostico").json()
+
+    assert d["salud"]["pausadas"] == 1 and d["salud"]["activas"] == 0
+    assert d["salud"]["sin_stock"] == 1
+    assert d["filas"][0]["stock"] == 0
+
+
+def test_una_activa_con_stock_no_se_cuenta_como_problema(tmp_path, monkeypatch):
+    cli = _cli_lote([])
+    cli.obtener_varios = lambda ids: {
+        "MLA100": {"id": "MLA100", "title": "Set", "status": "active",
+                   "available_quantity": 3},
+    }
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "salud2.db", cli)
+    s = c.get("/api/catalogo/publicaciones/diagnostico").json()["salud"]
+    assert s == {"activas": 1, "pausadas": 0, "otro_estado": 0, "sin_stock": 0}

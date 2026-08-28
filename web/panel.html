@@ -826,10 +826,15 @@
     var b=$("tx-diagnostico"); b.disabled=true;
     $("tx-msg").textContent="Consultando MercadoLibre… (solo lee, no cambia nada)";
     api("GET","/api/catalogo/publicaciones/diagnostico").then(function(d){
-      b.disabled=false; var r=d.resumen||{};
-      $("tx-msg").textContent="De "+d.total+": "+(r.editable||0)
-        +" se les puede cambiar el título · "+(r.catalogo||0)+" son de catálogo · "
-        +(r.familia||0)+" están atadas a una familia"
+      b.disabled=false; var r=d.resumen||{}, s=d.salud||{};
+      // La salud va primero: una publicación pausada o sin stock se ve pero no
+      // se puede comprar, y eso explica visitas con cero ventas.
+      $("tx-msg").textContent=
+        "De "+d.total+": "+(s.activas||0)+" activas · "+(s.pausadas||0)
+        +" PAUSADAS · "+(s.sin_stock||0)+" sin stock"
+        +((s.otro_estado||0)?" · "+s.otro_estado+" en otro estado":"")
+        +".\nTítulo: "+(r.editable||0)+" editables · "+(r.catalogo||0)
+        +" de catálogo · "+(r.familia||0)+" con «family_name»"
         +((r.no_leido||0)?" · "+r.no_leido+" no se pudieron leer":"")+".";
       $("tx-tabla").innerHTML=(d.filas||[]).map(function(f){
         var color=f.clave==="editable"?"var(--good)":"var(--warn)";

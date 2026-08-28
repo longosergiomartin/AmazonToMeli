@@ -1154,8 +1154,23 @@ def registrar_catalogo(app: FastAPI, conn,
 
         filas, resumen = [], {"catalogo": 0, "familia": 0, "editable": 0,
                               "no_leido": 0}
+        # Una publicación pausada o sin stock se puede seguir viendo, pero no se
+        # puede comprar: junta visitas y hasta intenciones de compra, y ninguna
+        # termina en venta. Es la primera explicación a mirar cuando el reporte
+        # de MercadoLibre muestra visitas y cero ventas.
+        salud = {"activas": 0, "pausadas": 0, "otro_estado": 0, "sin_stock": 0}
         for p in publicados:
             it = items.get(p.ml_item_id)
+            if it is not None:
+                estado = (it.get("status") or "").lower()
+                if estado == "active":
+                    salud["activas"] += 1
+                elif estado == "paused":
+                    salud["pausadas"] += 1
+                else:
+                    salud["otro_estado"] += 1
+                if not int(it.get("available_quantity") or 0):
+                    salud["sin_stock"] += 1
             if it is None:
                 motivo, clave = "no se pudo leer en MercadoLibre", "no_leido"
             elif it.get("catalog_listing"):
@@ -1178,10 +1193,12 @@ def registrar_catalogo(app: FastAPI, conn,
                 "family_name": (it or {}).get("family_name") or "",
                 "catalog_listing": bool((it or {}).get("catalog_listing")),
                 "estado_ml": (it or {}).get("status") or "",
+                "stock": (it or {}).get("available_quantity"),
                 "vendidos": (it or {}).get("sold_quantity"),
                 "motivo": motivo, "clave": clave,
             })
-        return {"filas": filas, "total": len(filas), "resumen": resumen}
+        return {"filas": filas, "total": len(filas), "resumen": resumen,
+                "salud": salud}
 
     @app.post("/api/catalogo/{pid}/probar-titulo")
     def probar_titulo(pid: int):
