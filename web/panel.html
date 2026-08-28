@@ -319,6 +319,8 @@
         <input type="checkbox" id="tx-descripcion" checked> Descripción</label>
       <button type="button" class="sm" id="tx-diagnostico"
               title="Consulta a MercadoLibre, sin cambiar nada">🩺 Por qué falla el título</button>
+      <button type="button" class="sm" id="tx-probar"
+              title="Intenta el cambio en UNA sola publicación y muestra la respuesta cruda de MercadoLibre">🧪 Probar en una</button>
       <button type="button" class="sm" id="tx-simular">Ver qué cambiaría</button>
       <button type="button" class="sm primary" id="tx-aplicar"
               style="display:none">Aplicar en MercadoLibre</button>
@@ -836,6 +838,30 @@
           +(f.family_name?' <span class="hint">family_name: '+esc(f.family_name)+'</span>':'')
           +'</div>';
       }).join("");
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  $("tx-probar").onclick=function(){
+    // Se prueba sobre la primera que cambiaría de título. Hay que simular
+    // antes: sin eso no se sabe cuál tiene sentido probar.
+    var cand=txFilas.filter(function(f){return f.cambia_titulo;})[0];
+    if(!cand){ $("tx-msg").textContent="Primero apretá «Ver qué cambiaría»."; return; }
+    if(!confirm("Esto intenta cambiar el título de UNA publicación:\n\n"
+      +cand.titulo_actual+"\n→ "+cand.titulo_nuevo+"\n\nSi MercadoLibre lo "
+      +"rechaza no cambia nada. ¿Probamos?")) return;
+    var b=$("tx-probar"); b.disabled=true;
+    $("tx-msg").textContent="Probando en una publicación…";
+    api("POST","/api/catalogo/"+cand.id+"/probar-titulo",{}).then(function(d){
+      b.disabled=false;
+      $("tx-msg").textContent=d.ok
+        ? "✅ Salió. El título quedó: "+d.titulo_probado
+          +". Entonces sí se pueden cambiar: probá «Aplicar»."
+        : "❌ MercadoLibre lo rechazó. "+d.error;
+      // El cuerpo crudo se muestra siempre: es el dato para diagnosticar.
+      $("tx-tabla").innerHTML='<div><b>'+esc(cand.titulo_actual)+'</b><br>→ '
+        +esc(d.titulo_probado)+'</div>'
+        +(d.crudo?'<pre style="white-space:pre-wrap;font-size:.72rem">'
+          +esc(JSON.stringify(d.crudo,null,2))+'</pre>':'');
     }).catch(function(e){ b.disabled=false; err(e); });
   };
 

@@ -1162,8 +1162,12 @@ def registrar_catalogo(app: FastAPI, conn,
                 motivo, clave = ("publicación de catálogo: el título lo pone "
                                  "MercadoLibre", "catalogo")
             elif (it.get("family_name") or "").strip():
-                motivo, clave = ("atada a una familia de productos: ML no deja "
-                                 "editarle el título", "familia")
+                # Se describe lo que se ve, no un veredicto. Que tenga
+                # `family_name` es un hecho; que por eso ML no deje cambiar el
+                # título es una lectura, y para afirmarla hay que probarla:
+                # está el botón de prueba sobre una publicación.
+                motivo, clave = ("se creó con «family_name» (probá el cambio en "
+                                 "una para confirmar si ML lo permite)", "familia")
             else:
                 motivo, clave = "se le puede cambiar el título", "editable"
             resumen[clave] += 1
@@ -1178,6 +1182,35 @@ def registrar_catalogo(app: FastAPI, conn,
                 "motivo": motivo, "clave": clave,
             })
         return {"filas": filas, "total": len(filas), "resumen": resumen}
+
+    @app.post("/api/catalogo/{pid}/probar-titulo")
+    def probar_titulo(pid: int):
+        """Intenta cambiar el título de UNA publicación y devuelve el crudo.
+
+        Es la única forma de saber si MercadoLibre lo permite: leer el ítem dice
+        cómo se creó, no qué acepta al editarlo. Sobre una sola publicación el
+        costo es un pedido y el riesgo es nulo —si sale, el título queda mejor;
+        si no sale, no cambia nada—, en vez de descubrirlo sobre las 126.
+        """
+        p = _p(pid)
+        if not (p.ml_item_id or "").strip():
+            raise HTTPException(409, "Este producto no está publicado.")
+        cli = _client()
+        nuevo = cat.titulo_armado(p)
+        salida = {"id": pid, "ml_item_id": p.ml_item_id,
+                  "titulo_actual": p.titulo_ml or "", "titulo_probado": nuevo}
+        try:
+            cli.actualizar_titulo(p.ml_item_id, nuevo)
+        except MeliAPIError as e:
+            salida.update(ok=False, error=_motivo(e),
+                          # El cuerpo tal cual lo manda ML: es el dato con el
+                          # que se diagnostica, y ninguna lectura mía lo
+                          # reemplaza.
+                          crudo=getattr(e, "cuerpo", None), status=e.status)
+            return salida
+        cat.actualizar_publicacion(pid, titulo_ml=nuevo)
+        salida.update(ok=True, error="", crudo=None, status=200)
+        return salida
 
     @app.post("/api/catalogo/publicaciones/aplicar")
     def aplicar_publicaciones(body: dict):

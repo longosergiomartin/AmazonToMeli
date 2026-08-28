@@ -2196,3 +2196,41 @@ def test_el_diagnostico_no_miente_si_no_pudo_leer(tmp_path, monkeypatch):
     c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "diag3.db", cli)
     d = c.get("/api/catalogo/publicaciones/diagnostico").json()
     assert d["resumen"]["no_leido"] == 1 and d["resumen"]["editable"] == 0
+
+
+def test_probar_titulo_devuelve_el_cuerpo_crudo_de_mercadolibre(tmp_path, monkeypatch):
+    """Sin el crudo no hay diagnóstico. Reemplazarlo por una lectura mía ya
+    costó una vuelta entera: los 115 rechazos llegaron con un mensaje que
+    tapaba el de ML."""
+    from mercadolibre.client import MeliAPIError
+    cli = _cli_lote([])
+    cuerpo = {"message": "The field family name is invalid", "cause": []}
+
+    def _falla(item_id, t):
+        raise MeliAPIError("no", status=400, cuerpo=cuerpo)
+
+    cli.actualizar_titulo = _falla
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "probar.db", cli)
+    antes = c.get(f"/api/catalogo/{pid}").json()["titulo_ml"]
+
+    d = c.post(f"/api/catalogo/{pid}/probar-titulo").json()
+
+    assert d["ok"] is False
+    assert d["crudo"] == cuerpo, "se perdió la respuesta cruda de MercadoLibre"
+    assert c.get(f"/api/catalogo/{pid}").json()["titulo_ml"] == antes
+
+
+def test_probar_titulo_guarda_si_mercadolibre_lo_acepta(tmp_path, monkeypatch):
+    cli = _cli_lote([])
+    cli.actualizar_titulo = lambda i, t: {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "probar2.db", cli)
+
+    d = c.post(f"/api/catalogo/{pid}/probar-titulo").json()
+
+    assert d["ok"] is True
+    assert c.get(f"/api/catalogo/{pid}").json()["titulo_ml"] == d["titulo_probado"]
+
+
+def test_probar_titulo_rebota_si_no_esta_publicado(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Set 21181").json()["id"]
+    assert client.post(f"/api/catalogo/{pid}/probar-titulo").status_code == 409
