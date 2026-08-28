@@ -317,6 +317,8 @@
         <input type="checkbox" id="tx-titulo" checked> Título</label>
       <label style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="tx-descripcion" checked> Descripción</label>
+      <button type="button" class="sm" id="tx-diagnostico"
+              title="Consulta a MercadoLibre, sin cambiar nada">🩺 Por qué falla el título</button>
       <button type="button" class="sm" id="tx-simular">Ver qué cambiaría</button>
       <button type="button" class="sm primary" id="tx-aplicar"
               style="display:none">Aplicar en MercadoLibre</button>
@@ -817,6 +819,25 @@
 
   // ---- mejorar títulos y descripciones de lo ya publicado ---------------
   var txFilas=[];
+
+  $("tx-diagnostico").onclick=function(){
+    var b=$("tx-diagnostico"); b.disabled=true;
+    $("tx-msg").textContent="Consultando MercadoLibre… (solo lee, no cambia nada)";
+    api("GET","/api/catalogo/publicaciones/diagnostico").then(function(d){
+      b.disabled=false; var r=d.resumen||{};
+      $("tx-msg").textContent="De "+d.total+": "+(r.editable||0)
+        +" se les puede cambiar el título · "+(r.catalogo||0)+" son de catálogo · "
+        +(r.familia||0)+" están atadas a una familia"
+        +((r.no_leido||0)?" · "+r.no_leido+" no se pudieron leer":"")+".";
+      $("tx-tabla").innerHTML=(d.filas||[]).map(function(f){
+        var color=f.clave==="editable"?"var(--good)":"var(--warn)";
+        return '<div><b>'+esc(f.nombre)+'</b> <span style="color:'+color+'">'
+          +esc(f.motivo)+'</span>'
+          +(f.family_name?' <span class="hint">family_name: '+esc(f.family_name)+'</span>':'')
+          +'</div>';
+      }).join("");
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
 
   $("tx-simular").onclick=function(){
     var b=$("tx-simular"); b.disabled=true;

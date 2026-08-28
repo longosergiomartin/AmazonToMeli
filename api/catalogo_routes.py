@@ -1139,6 +1139,46 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"filas": filas, "total": len(filas),
                 "con_titulo_nuevo": sum(1 for f in filas if f["cambia_titulo"])}
 
+    @app.get("/api/catalogo/publicaciones/diagnostico")
+    def diagnostico_publicaciones():
+        """Por qué se puede o no cambiar el título de cada publicación.
+
+        Solo lee: ni un PUT. Intentar el cambio para averiguarlo cuesta un
+        pedido por producto, dispara el límite de ritmo de MercadoLibre y deja
+        el diagnóstico mezclado con los errores. Una sola consulta —el multiget
+        trae el ítem entero— contesta lo mismo sin tocar nada.
+        """
+        cli = _client()
+        publicados = _publicados_con_item()
+        items = cli.obtener_varios([p.ml_item_id for p in publicados])
+
+        filas, resumen = [], {"catalogo": 0, "familia": 0, "editable": 0,
+                              "no_leido": 0}
+        for p in publicados:
+            it = items.get(p.ml_item_id)
+            if it is None:
+                motivo, clave = "no se pudo leer en MercadoLibre", "no_leido"
+            elif it.get("catalog_listing"):
+                motivo, clave = ("publicación de catálogo: el título lo pone "
+                                 "MercadoLibre", "catalogo")
+            elif (it.get("family_name") or "").strip():
+                motivo, clave = ("atada a una familia de productos: ML no deja "
+                                 "editarle el título", "familia")
+            else:
+                motivo, clave = "se le puede cambiar el título", "editable"
+            resumen[clave] += 1
+            filas.append({
+                "id": p.id, "ml_item_id": p.ml_item_id,
+                "nombre": p.titulo_ml or p.modelo,
+                "titulo_en_ml": (it or {}).get("title") or "",
+                "family_name": (it or {}).get("family_name") or "",
+                "catalog_listing": bool((it or {}).get("catalog_listing")),
+                "estado_ml": (it or {}).get("status") or "",
+                "vendidos": (it or {}).get("sold_quantity"),
+                "motivo": motivo, "clave": clave,
+            })
+        return {"filas": filas, "total": len(filas), "resumen": resumen}
+
     @app.post("/api/catalogo/publicaciones/aplicar")
     def aplicar_publicaciones(body: dict):
         """Manda a MercadoLibre el título y la descripción nuevos.

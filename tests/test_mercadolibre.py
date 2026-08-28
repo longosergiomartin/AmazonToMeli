@@ -11,10 +11,11 @@ from mercadolibre.oauth import TokenStore
 
 
 class _FakeResp:
-    def __init__(self, status, data):
+    def __init__(self, status, data, headers=None):
         self.status_code = status
         self._data = data
         self.text = str(data)
+        self.headers = headers or {}
 
     def json(self):
         return self._data
@@ -376,3 +377,82 @@ def test_sin_aviso_el_mensaje_sigue_siendo_claro():
     with pytest.raises(MeliAPIError) as e:
         c.actualizar_precio("MLA1", 5000)
     assert "9999" in str(e.value)
+
+
+# ---- editar publicaciones vivas ------------------------------------------
+
+def test_cambiar_el_titulo_usa_title_y_una_sola_llamada():
+    """`family_name` solo existe al crear la publicación. Reintentar con él en
+    una que ya existe gastaba una segunda llamada condenada por producto —el
+    doble de pedidos, que es lo que hacía saltar el límite de MercadoLibre— y
+    encima tapaba el error de `title`, que es el que explica qué pasó."""
+    c, ses = _client([(200, {"id": "MLA1", "title": "Set LEGO 21181"})])
+    c.actualizar_titulo("MLA1", "Set LEGO 21181")
+
+    assert len(ses.llamadas) == 1
+    metodo, url, kw = ses.llamadas[0]
+    assert metodo == "PUT" and kw["json"] == {"title": "Set LEGO 21181"}
+
+
+def test_el_error_del_titulo_se_explica_en_castellano():
+    c, ses = _client([(400, {"message": "Item is a catalog_listing",
+                             "cause": []})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_titulo("MLA1", "Set LEGO 21181")
+    assert "catálogo" in str(e.value) and "republicarla" in str(e.value)
+
+
+def test_un_titulo_que_ml_acepta_pero_no_aplica_no_cuenta_como_exito():
+    """El PUT puede volver 200 con el título anterior: dar eso por bueno es
+    cómo se informan 115 publicaciones actualizadas sin haber cambiado nada."""
+    c, ses = _client([(200, {"id": "MLA1", "title": "El viejo"})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_titulo("MLA1", "Set LEGO 21181")
+    assert "El viejo" in str(e.value)
+
+
+def test_la_descripcion_reintenta_con_text_si_rechaza_plain_text():
+    """ML discontinuó `plain_text` en parte de su catálogo y contesta
+    DESCRIPTION_PLAIN_TEXT_NOT_ALLOWED."""
+    c, ses = _client([
+        (400, {"message": "DESCRIPTION_PLAIN_TEXT_NOT_ALLOWED", "cause": []}),
+        (200, {"text": "ok"}),
+    ])
+    c.poner_descripcion("MLA1", "Hola")
+
+    assert [k["json"] for _, _, k in ses.llamadas] == [
+        {"plain_text": "Hola"}, {"text": "Hola"}]
+
+
+def test_la_descripcion_pasa_a_put_si_el_post_no_es_por_el_formato():
+    """Si ya tiene descripción, el POST rebota por existir, no por el texto:
+    ahí probar otro campo no arregla nada, hay que reemplazarla con PUT."""
+    c, ses = _client([
+        (400, {"message": "Body already exists", "cause": []}),
+        (200, {"plain_text": "ok"}),
+    ])
+    c.poner_descripcion("MLA1", "Hola")
+
+    assert [m for m, _, _ in ses.llamadas] == ["POST", "PUT"]
+
+
+def test_espera_y_reintenta_cuando_ml_limita_el_ritmo(monkeypatch):
+    """Sin esto, cada producto que cae en el límite se pierde y hay que
+    descubrir cuáles a mano."""
+    dormido = []
+    monkeypatch.setattr("mercadolibre.client.time.sleep", dormido.append)
+    c, ses = _client([(429, {"message": "too_many_requests"}),
+                      (200, {"id": "MLA1", "title": "Set LEGO 21181"})])
+
+    c.actualizar_titulo("MLA1", "Set LEGO 21181")
+    assert len(ses.llamadas) == 2
+    assert dormido and dormido[0] >= 2.0
+
+
+def test_el_limite_de_ritmo_no_reintenta_para_siempre(monkeypatch):
+    monkeypatch.setattr("mercadolibre.client.time.sleep", lambda s: None)
+    from mercadolibre.client import ESPERAS_429
+    c, ses = _client([(429, {"message": "too_many_requests"})] * 10)
+    with pytest.raises(MeliAPIError):
+        c.actualizar_titulo("MLA1", "Set LEGO 21181")
+    assert len(ses.llamadas) == len(ESPERAS_429) + 1
