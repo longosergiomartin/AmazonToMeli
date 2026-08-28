@@ -242,6 +242,20 @@ class Catalogo:
         self._set_pref("tc_manual", str(v))
 
     @property
+    def tipo_producto(self) -> str:
+        """Palabra con la que arranca el título ("Set", "Kit", "Muñeco"…).
+
+        MercadoLibre recomienda *producto + marca + modelo*: el tipo adelante es
+        lo que engancha las búsquedas genéricas ("set lego minecraft"). Vacío
+        para no anteponer nada.
+        """
+        return self._pref("tipo_producto", "Set")
+
+    @tipo_producto.setter
+    def tipo_producto(self, valor) -> None:
+        self._set_pref("tipo_producto", (valor or "").strip()[:20])
+
+    @property
     def envio_manual(self) -> Optional[float]:
         """Lo que pagás de envío gratis, fijado a mano.
 
@@ -325,28 +339,40 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
-    def limpiar_titulos(self) -> int:
-        """Saca de los títulos el código interno de Amazon que se coló al final.
+    def titulo_armado(self, p: ProductoCatalogo) -> str:
+        """El título con el que conviene publicar este producto.
 
-        Los productos cargados antes del arreglo quedaron con un número de 7
-        dígitos pegado ("...La Catrina 21372 6589589"): Amazon lo declara como
-        número de modelo, pero no identifica nada y ensucia tanto el título como
-        la búsqueda en el catálogo de MercadoLibre.
+        Se arma siempre, no solo cuando el de Amazon viene sucio: el título
+        crudo recortado a 60 caracteres pierde el número de set y queda cortado
+        al medio, que es el peor de los dos mundos.
         """
         import re
-        from titulos import titulo_para_ml
+        from titulos import titulo_para_ml, numero_de_set, piezas_del_titulo
+        origen = p.modelo or p.titulo_ml or ""
+        set_id = p.modelo_fabricante if re.fullmatch(
+            r"\d{4,6}", p.modelo_fabricante or "") else numero_de_set(origen)
+        piezas = (p.ml_attributes or {}).get("PIECES_NUMBER") or \
+            piezas_del_titulo(origen)
+        return titulo_para_ml(p.marca, origen, set_id,
+                              piezas=str(piezas or ""), tipo=self.tipo_producto)
+
+    def limpiar_titulos(self, solo_sucios: bool = False) -> int:
+        """Rearma los títulos de todo el catálogo con la estrategia de publicación.
+
+        Con `solo_sucios` se limita a los que traen basura evidente: códigos
+        internos de Amazon de 7 dígitos ("...La Catrina 21372 6589589"), que no
+        identifican nada, o restos de puntuación ("Set # – 1 103").
+        """
+        import re
         arreglados = 0
         for p in self.todos():
-            # Restos de versiones anteriores: códigos internos de 7+ dígitos, y
-            # títulos que quedaron con basura de puntuación ("Set # – 1 103").
-            sucio = (re.search(r"\b\d{7,}\b", p.titulo_ml or "")
-                     or "#" in (p.titulo_ml or "")
-                     or re.search(r"\d\s+\d{3}\s", p.titulo_ml or ""))
-            if not sucio:
-                continue
-            set_id = p.modelo_fabricante if re.fullmatch(
-                r"\d{4,6}", p.modelo_fabricante or "") else ""
-            nuevo = titulo_para_ml(p.marca, p.modelo or p.titulo_ml, set_id)
+            if solo_sucios:
+                sucio = (re.search(r"\b\d{7,}\b", p.titulo_ml or "")
+                         or "#" in (p.titulo_ml or "")
+                         or re.search(r"\d\s+\d{3}\s", p.titulo_ml or ""))
+                if not sucio:
+                    continue
+            nuevo = self.titulo_armado(p)
             if nuevo and nuevo != p.titulo_ml:
                 anterior, p.titulo_ml = p.titulo_ml, nuevo
                 self._guardar(p)

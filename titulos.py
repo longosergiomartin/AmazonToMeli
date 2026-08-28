@@ -42,17 +42,108 @@ _PREFIJOS_MARKETING = (
     r"juego de", r"set de", r"kit de", r"building (kit|set|toy)",
 )
 
+# Desde acá hasta el final, el título de Amazon es puro argumento de venta:
+# a quién regalarlo, para qué edad, qué lindo queda en el estante. En 60
+# caracteres ese texto se come el nombre del set, que es lo que el comprador
+# busca. Se corta en la primera marca y se tira todo lo que sigue.
+_COLAS_MARKETING = (
+    r"\b(great |perfect |ideal )?(gift|present)s? (for|idea)\b",
+    r"\b(birthday|christmas|holiday|xmas)\b",
+    r"\bfor (kids|boys|girls|children|adults|teens|fans)\b",
+    r"\bboys and girls\b", r"\bkids and adults\b",
+    r"\bages?\s*\d+\s*(\+|plus|and up|y m[áa]s)?\b", r"\b\d+\+\s*years?\b",
+    r"\bpara (ni[ñn]os|ni[ñn]as|chicos|adultos|fan[áa]ticos)\b",
+    r"\bidea(l)? (de|para) regalo\b", r"\bregalo (para|de)\b",
+    r"\bcumplea[ñn]os\b", r"\bnavidad\b",
+    r"\bhome (or )?office d[ée]cor\b", r"\bd[ée]cor(ation|ativo)?\b",
+    r"\bcollectible\b", r"\bbuildable\b",
+)
+
+# Palabras que dicen lo que ya dice "Set LEGO": que es de armar. En un título
+# de 60 caracteres cada una de estas cuesta el nombre de un personaje.
+_GENERICAS = (
+    r"\bbuilding (kit|set|toys?|blocks?|pack)\b",
+    r"\bconstruction (toy|set|kit)s?\b",
+    r"\bjuguete de construcci[óo]n\b", r"\bbloques de construcci[óo]n\b",
+    r"\b(set|kit) pack\b", r"\bplayset\b", r"\bmodel kit\b",
+    r"\btoy (set|kit|figures?)\b",
+)
+
+# Un título que termina en preposición o artículo quedó cortado a la mitad
+# ("...Farm with", "...Alex Creeper and 2"). Se recorta hasta la última palabra
+# que se sostenga sola.
+_CONECTORES_FINALES = {
+    "with", "and", "for", "the", "a", "an", "in", "of", "to", "or", "on",
+    "de", "del", "la", "el", "los", "las", "un", "una", "con", "y", "para",
+    "por", "en", "que", "su", "sus", "al",
+}
+
+
+def _sin_cola_de_marketing(texto: str) -> str:
+    """Corta el título en el primer argumento de venta y tira el resto."""
+    corte = len(texto)
+    for patron in _COLAS_MARKETING:
+        m = re.search(patron, texto, flags=re.I)
+        if m and m.start() < corte:
+            corte = m.start()
+    # No se corta tan al principio que quede solo la marca: si el argumento de
+    # venta aparece en las primeras palabras, es parte del nombre del producto.
+    return texto[:corte] if corte >= 12 else texto
+
+
+# "3 in 1" / "2 en 1" es el nombre del producto, no una frase cortada: el número
+# final no se toca aunque venga después de una preposición.
+_N_EN_N = re.compile(r"\b\d+\s+(in|en)\s+\d+\s*$", re.I)
+
+
+def _sin_conector_final(texto: str) -> str:
+    """Saca del final las palabras que no se sostienen solas.
+
+    Recortar a 60 caracteres deja colgado un "with" o un "and 2": queda leyendo
+    como una frase partida al medio.
+    """
+    def limpio(w: str) -> str:
+        return normalizar(w.strip(".,-–—:"))
+
+    palabras = texto.split()
+    while palabras:
+        if _N_EN_N.search(" ".join(palabras)):
+            break
+        if limpio(palabras[-1]) in _CONECTORES_FINALES:
+            palabras.pop()
+            continue
+        # Un número suelto al final solo sobra si quedó colgado de un conector
+        # ("…Alex Creeper and 2"). Si no, puede ser parte del nombre.
+        if (len(palabras) >= 2 and limpio(palabras[-1]).isdigit()
+                and limpio(palabras[-2]) in _CONECTORES_FINALES):
+            palabras.pop()
+            palabras.pop()
+            continue
+        break
+    return " ".join(palabras)
+
 
 def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
-                   limite: int = 60) -> str:
-    """Título para MercadoLibre: marca adelante y número de set al final.
+                   limite: int = 60, piezas: str = "",
+                   tipo: str = "") -> str:
+    """Título para MercadoLibre, armado para que se encuentre y se entienda.
 
-    El título de Amazon es marketing traducido ("Set de construcción Star Wars
-    de LEGO, Darth Vader, talla única") y recortarlo a 60 caracteres deja afuera
-    justo el número de set. Acá se arma uno que entra en el límite conservando
-    lo que sirve para buscar y para que el comprador entienda qué es.
+    MercadoLibre recomienda *producto + marca + modelo + especificaciones*, sin
+    palabras promocionales ni repeticiones. Acá eso queda:
+
+        [tipo] MARCA nombre-del-set NÚMERO [N piezas]
+
+    El título de Amazon no sirve tal cual: es marketing traducido ("Set de
+    construcción Star Wars de LEGO, Darth Vader, talla única"), viene con la
+    marca en el medio y con una cola de argumentos de venta que en 60 caracteres
+    se come el nombre del set y el número, que es justo lo que el comprador
+    busca. Y recortado a lo bruto queda partido al medio ("...Farm with").
+
+    `piezas` se agrega solo si sobra lugar: es una especificación real que el
+    comprador compara, pero nunca a costa del nombre ni del número.
     """
     base = re.sub(r"\s+", " ", (titulo or "")).strip()
+    base = _sin_cola_de_marketing(base)
     for p in _PREFIJOS_MARKETING:
         base = re.sub(r"^" + p + r"\s*", "", base, flags=re.I).strip()
     marca = (marca or "").strip()
@@ -70,6 +161,15 @@ def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
     # caracteres y, al quitar el número de set, deja restos ("Set # – 1 103").
     base = re.sub(r"\(?\s*[\d.,]+\s*(piezas|pzas|pcs|pieces|bloques)\b\)?",
                   "", base, flags=re.I)
+    # Decir "building kit" es gastar 12 caracteres en repetir lo que ya dice
+    # "Set LEGO", y encima en inglés: nadie lo busca así en Argentina.
+    for g in _GENERICAS:
+        base = re.sub(g, " ", base, flags=re.I)
+    if tipo:
+        # Sin esto queda "Set LEGO ... Farm Set 21181": la misma palabra dos
+        # veces, y una de ellas ocupando el lugar del nombre.
+        base = re.sub(r"\b" + re.escape(tipo) + r"\b", " ", base, flags=re.I)
+        base = re.sub(r"\bpack\b", " ", base, flags=re.I)
     base = re.sub(r"\s*[,;·|]\s*", " ", base)
     base = re.sub(r"[#]+", " ", base)
     base = re.sub(r"\s+", " ", base).strip(" ,-–—:")
@@ -79,13 +179,24 @@ def titulo_para_ml(marca: str, titulo: str, numero_set: str = "",
     # identifica nada para el comprador ni sirve para buscar: en el título solo
     # ensucia.
     sufijo = f" {numero_set}" if re.fullmatch(r"\d{4,6}", numero_set or "") else ""
-    prefijo = f"{marca} " if marca else ""
+    tipo = (tipo or "").strip()
+    prefijo = " ".join(x for x in (tipo, marca) if x)
+    prefijo = f"{prefijo} " if prefijo else ""
     espacio = limite - len(prefijo) - len(sufijo)
     if espacio < 1:
         return (prefijo + sufijo.strip())[:limite].strip()
     if len(base) > espacio:
         base = base[:espacio].rsplit(" ", 1)[0].strip(" ,-–—")
-    return (prefijo + base + sufijo).strip()
+    base = _sin_conector_final(base)
+
+    armado = (prefijo + base + sufijo).strip()
+    # El lugar que sobra se aprovecha con la cantidad de piezas, que es lo que
+    # el comprador usa para comparar dos sets parecidos.
+    if piezas and re.fullmatch(r"\d{2,6}", str(piezas)):
+        extra = f" {piezas} Piezas"
+        if len(armado) + len(extra) <= limite:
+            armado += extra
+    return armado
 
 
 # Palabras que aparecen en cualquier título y no distinguen un producto de otro.

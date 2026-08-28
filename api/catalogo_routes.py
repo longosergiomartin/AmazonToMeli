@@ -373,7 +373,9 @@ def registrar_catalogo(app: FastAPI, conn,
         if not reparado["marcas"]:
             reparado["marcas"] = True
             cat.limpiar_marcas()
-            cat.limpiar_titulos()
+            # Solo los que traen basura evidente. Rearmar todos acá pisaría los
+            # títulos editados a mano, y sin avisar: eso se pide aparte.
+            cat.limpiar_titulos(solo_sucios=True)
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -796,6 +798,21 @@ def registrar_catalogo(app: FastAPI, conn,
                 v = {}
             if v.get("video_id"):
                 datos["video_youtube"] = v["video_id"]
+
+        # El título, al final: para armarlo bien hacen falta la marca ya
+        # limpia y la cantidad de piezas, que se resuelven más arriba.
+        #
+        # Solo se rearma **antes de publicar**. Una vez publicado, el título es
+        # el que ve el comprador y el que MercadoLibre indexó: cambiarlo por
+        # nuestra cuenta sería pisar lo que el usuario pudo haber ajustado a
+        # mano mirando la competencia.
+        if p.estado not in ("publicado", "pausado"):
+            copia = replace(p, marca=datos.get("marca", p.marca),
+                            ml_attributes=datos.get("ml_attributes",
+                                                    p.ml_attributes))
+            armado = cat.titulo_armado(copia)
+            if armado and armado != p.titulo_ml:
+                datos["titulo_ml"] = armado
 
         # El estado no se toca: los productos ya nacen en "borrador" y los
         # publicados o pausados no deben volver atrás por completarles datos.

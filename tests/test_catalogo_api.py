@@ -607,7 +607,9 @@ def test_lote_preparar_funciona_sin_sesion_de_ml(tmp_path, monkeypatch):
     r = c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
     assert r.json()["resultados"][0]["ok"] is True
     p = c.get(f"/api/catalogo/{pid}").json()
-    assert p["marca"] == "LEGO" and p["titulo_ml"] == "LEGO Star Wars 75355"
+    # El agente arma el título con la estrategia de publicación: tipo de
+    # producto adelante, marca, nombre y número de set al final.
+    assert p["marca"] == "LEGO" and p["titulo_ml"] == "Set LEGO Star Wars 75355"
 
 
 def test_lote_prepara_los_casos_que_fallaban_en_produccion(tmp_path, monkeypatch):
