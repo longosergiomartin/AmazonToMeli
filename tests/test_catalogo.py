@@ -336,10 +336,12 @@ def test_limpiar_titulos_saca_el_codigo_interno(cat):
     assert cat.limpiar_titulos() == 0            # idempotente
 
 
-def test_limpiar_titulos_no_toca_los_que_estan_bien(cat):
+def test_limpiar_solo_sucios_no_toca_los_que_estan_bien(cat):
+    """La pasada automática solo arregla basura evidente. Rearmar todos ahí
+    pisaría, sin avisar, los títulos que el usuario editó a mano."""
     cat.agregar(_prod(marca="LEGO", modelo="LEGO Star Wars 75339",
                       titulo_ml="LEGO Star Wars 75339"))
-    assert cat.limpiar_titulos() == 0
+    assert cat.limpiar_titulos(solo_sucios=True) == 0
 
 
 def test_no_se_da_por_publicado_sin_id_de_mercadolibre(cat):

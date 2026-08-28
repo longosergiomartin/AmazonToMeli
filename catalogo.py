@@ -242,6 +242,39 @@ class Catalogo:
         self._set_pref("tc_manual", str(v))
 
     @property
+    def publicar_en_catalogo(self) -> bool:
+        """Si se intenta primero publicar contra el catálogo de MercadoLibre.
+
+        Apagado por defecto. En el catálogo todos los vendedores comparten la
+        misma ficha, así que lo único que distingue una oferta de otra es el
+        precio y el tiempo de entrega: las dos peores cartas de quien importa
+        contra alguien con stock local. Con publicación propia se compite en la
+        búsqueda, que es donde tener sets que nadie más tiene sí es una ventaja.
+
+        Encendido, vuelve al comportamiento anterior. Apagado, el catálogo sigue
+        usándose como salida de emergencia cuando la publicación propia no sale.
+        """
+        return self._pref("publicar_en_catalogo", "0") == "1"
+
+    @publicar_en_catalogo.setter
+    def publicar_en_catalogo(self, valor) -> None:
+        self._set_pref("publicar_en_catalogo", "1" if valor else "0")
+
+    @property
+    def tipo_producto(self) -> str:
+        """Palabra con la que arranca el título ("Set", "Kit", "Muñeco"…).
+
+        MercadoLibre recomienda *producto + marca + modelo*: el tipo adelante es
+        lo que engancha las búsquedas genéricas ("set lego minecraft"). Vacío
+        para no anteponer nada.
+        """
+        return self._pref("tipo_producto", "Set")
+
+    @tipo_producto.setter
+    def tipo_producto(self, valor) -> None:
+        self._set_pref("tipo_producto", (valor or "").strip()[:20])
+
+    @property
     def envio_manual(self) -> Optional[float]:
         """Lo que pagás de envío gratis, fijado a mano.
 
@@ -325,28 +358,75 @@ class Catalogo:
                 arreglados += 1
         return arreglados
 
-    def limpiar_titulos(self) -> int:
-        """Saca de los títulos el código interno de Amazon que se coló al final.
+    def titulo_armado(self, p: ProductoCatalogo) -> str:
+        """El título con el que conviene publicar este producto.
 
-        Los productos cargados antes del arreglo quedaron con un número de 7
-        dígitos pegado ("...La Catrina 21372 6589589"): Amazon lo declara como
-        número de modelo, pero no identifica nada y ensucia tanto el título como
-        la búsqueda en el catálogo de MercadoLibre.
+        Se arma siempre, no solo cuando el de Amazon viene sucio: el título
+        crudo recortado a 60 caracteres pierde el número de set y queda cortado
+        al medio, que es el peor de los dos mundos.
         """
         import re
-        from titulos import titulo_para_ml
+        from titulos import titulo_para_ml, numero_de_set, piezas_del_titulo
+        origen = p.modelo or p.titulo_ml or ""
+        set_id = p.modelo_fabricante if re.fullmatch(
+            r"\d{4,6}", p.modelo_fabricante or "") else numero_de_set(origen)
+        piezas = (p.ml_attributes or {}).get("PIECES_NUMBER") or \
+            piezas_del_titulo(origen)
+        return titulo_para_ml(p.marca, origen, set_id,
+                              piezas=str(piezas or ""), tipo=self.tipo_producto)
+
+    @property
+    def texto_compra(self) -> str:
+        """El bloque de condiciones de compra que va en cada descripción.
+
+        Vacío usa el texto por defecto. Lo que dice ahí es un compromiso
+        comercial —plazos, originalidad, garantía—, así que tiene que poder
+        escribirlo el vendedor y no quedar enterrado en el código.
+        """
+        return self._pref("texto_compra", "")
+
+    @texto_compra.setter
+    def texto_compra(self, valor) -> None:
+        self._set_pref("texto_compra", (valor or "").strip()[:3000])
+
+    def descripcion_armada(self, p: ProductoCatalogo) -> str:
+        """La descripción con la que conviene publicar este producto.
+
+        Se arma al publicar y no se guarda: así el bloque de la compra siempre
+        sale con los días de preparación vigentes, y lo que el usuario editó en
+        el campo Descripción sigue siendo el detalle del producto, sin que se lo
+        pisemos con texto nuestro.
+        """
+        import re
+        from titulos import numero_de_set, piezas_del_titulo
+        from descripcion import armar
+        origen = p.modelo or p.titulo_ml or ""
+        set_id = p.modelo_fabricante if re.fullmatch(
+            r"\d{4,6}", p.modelo_fabricante or "") else numero_de_set(origen)
+        piezas = (p.ml_attributes or {}).get("PIECES_NUMBER") or \
+            piezas_del_titulo(origen)
+        return armar(titulo=p.titulo_ml or p.modelo,
+                     detalle=p.descripcion or "",
+                     marca=p.marca, numero_set=set_id, piezas=str(piezas or ""),
+                     dias=p.dias_preparacion, compra=self.texto_compra)
+
+    def limpiar_titulos(self, solo_sucios: bool = False) -> int:
+        """Rearma los títulos de todo el catálogo con la estrategia de publicación.
+
+        Con `solo_sucios` se limita a los que traen basura evidente: códigos
+        internos de Amazon de 7 dígitos ("...La Catrina 21372 6589589"), que no
+        identifican nada, o restos de puntuación ("Set # – 1 103").
+        """
+        import re
         arreglados = 0
         for p in self.todos():
-            # Restos de versiones anteriores: códigos internos de 7+ dígitos, y
-            # títulos que quedaron con basura de puntuación ("Set # – 1 103").
-            sucio = (re.search(r"\b\d{7,}\b", p.titulo_ml or "")
-                     or "#" in (p.titulo_ml or "")
-                     or re.search(r"\d\s+\d{3}\s", p.titulo_ml or ""))
-            if not sucio:
-                continue
-            set_id = p.modelo_fabricante if re.fullmatch(
-                r"\d{4,6}", p.modelo_fabricante or "") else ""
-            nuevo = titulo_para_ml(p.marca, p.modelo or p.titulo_ml, set_id)
+            if solo_sucios:
+                sucio = (re.search(r"\b\d{7,}\b", p.titulo_ml or "")
+                         or "#" in (p.titulo_ml or "")
+                         or re.search(r"\d\s+\d{3}\s", p.titulo_ml or ""))
+                if not sucio:
+                    continue
+            nuevo = self.titulo_armado(p)
             if nuevo and nuevo != p.titulo_ml:
                 anterior, p.titulo_ml = p.titulo_ml, nuevo
                 self._guardar(p)

@@ -122,3 +122,86 @@ def test_titulo_no_agrega_codigos_internos_de_amazon(numero, va):
     from titulos import titulo_para_ml
     t = titulo_para_ml("LEGO", "LEGO Ideas La Catrina set de construcción", numero)
     assert t.endswith(numero) is va
+
+
+# --- estrategia de título para publicar ---------------------------------
+
+def test_corta_la_cola_de_marketing_de_amazon():
+    """En 60 caracteres, "Toy for Kids, Boys and Girls Age 8 Plus" se come el
+    nombre del set, que es lo que el comprador busca."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml(
+        "LEGO",
+        "LEGO Minecraft The Rabbit Ranch House Farm Set, 21181 Animals Toy for "
+        "Kids, Boys and Girls Age 8 Plus with Tamer and Zombie Figures",
+        "21181", tipo="Set")
+    assert t == "Set LEGO Minecraft The Rabbit Ranch House Farm 21181"
+    for basura in ("Kids", "Boys", "Girls", "Age", "Zombie Figures"):
+        assert basura not in t
+
+
+def test_no_termina_en_conector_suelto():
+    """Recortar a lo bruto dejaba "...Farm with" y "...Creeper and 2": se lee
+    como una frase partida al medio."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml(
+        "LEGO",
+        "LEGO Minecraft The Pig House, 21170 with Alex, Creeper and 2 Pig "
+        "Figures, Animal Building Toy, Great Gift for Kids", "21170", tipo="Set")
+    assert not t.rstrip().endswith(("with", "and", "de", "para", "the"))
+    assert t.endswith("21170")
+
+
+def test_no_rompe_el_tres_en_uno():
+    """"3 in 1" es el nombre del producto, no una frase cortada: sacarle el
+    número final lo destruye."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO",
+                       "LEGO Minecraft Overworld Adventures 3 in 1 Building Set Pack",
+                       "66779", tipo="Set")
+    assert "3 in 1" in t
+
+
+def test_saca_las_palabras_que_repiten_lo_que_ya_dice_set_lego():
+    """"Building Kit" son 12 caracteres para decir en inglés lo que ya dice
+    "Set LEGO", y nadie lo busca así en Argentina."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO", "LEGO Minecraft The Polar Igloo 21142 Building Kit "
+                               "(278 Pieces)", "21142", tipo="Set")
+    assert "Building Kit" not in t and "Pieces" not in t
+    assert "Polar Igloo" in t and t.count("Set") == 1
+
+
+def test_usa_el_lugar_que_sobra_para_las_piezas():
+    """La cantidad de piezas es lo que el comprador compara entre dos sets
+    parecidos. Si entra, va."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO", "LEGO Minecraft The Polar Igloo", "21142",
+                       piezas="278", tipo="Set")
+    assert t.endswith("278 Piezas") and len(t) <= 60
+
+
+def test_las_piezas_nunca_desplazan_al_numero_de_set():
+    """Con el título justo, el número manda: sin él la publicación no se
+    encuentra por búsqueda exacta."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO", "LEGO Star Wars Halcon Milenario Ultimate "
+                               "Collector Series Edicion Coleccionista", "75192",
+                       piezas="7541", tipo="Set")
+    assert len(t) <= 60
+    assert t.endswith("75192"), "el número se perdió por meter las piezas"
+
+
+def test_el_tipo_de_producto_es_opcional():
+    """Sin tipo configurado el título arranca con la marca, como antes."""
+    from titulos import titulo_para_ml
+    assert titulo_para_ml("LEGO", "LEGO Minecraft Crafting Box", "21116") \
+        == "LEGO Minecraft Crafting Box 21116"
+
+
+def test_no_corta_cuando_el_argumento_de_venta_es_el_nombre():
+    """Si el patrón cae en las primeras palabras es parte del nombre del
+    producto, no una cola de marketing: cortar ahí dejaría el título vacío."""
+    from titulos import titulo_para_ml
+    t = titulo_para_ml("LEGO", "LEGO Gift Ideas Set Navidad 40604", "40604")
+    assert "40604" in t and len(t) > 10

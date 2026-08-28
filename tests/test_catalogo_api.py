@@ -607,7 +607,9 @@ def test_lote_preparar_funciona_sin_sesion_de_ml(tmp_path, monkeypatch):
     r = c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
     assert r.json()["resultados"][0]["ok"] is True
     p = c.get(f"/api/catalogo/{pid}").json()
-    assert p["marca"] == "LEGO" and p["titulo_ml"] == "LEGO Star Wars 75355"
+    # El agente arma el título con la estrategia de publicación: tipo de
+    # producto adelante, marca, nombre y número de set al final.
+    assert p["marca"] == "LEGO" and p["titulo_ml"] == "Set LEGO Star Wars 75355"
 
 
 def test_lote_prepara_los_casos_que_fallaban_en_produccion(tmp_path, monkeypatch):
@@ -777,8 +779,67 @@ def test_si_el_catalogo_rechaza_se_publica_por_la_via_normal(tmp_path, monkeypat
 
     assert r.status_code == 200, r.text
     assert r.json()["ml_item_id"] == "MLA5"
-    assert enviados[0].get("catalog_listing") is True      # intento por catálogo
-    assert "family_name" in enviados[1]                    # y después el normal
+    # Publicación propia primero: en el catálogo se compite solo por precio y
+    # tiempo de entrega, que es donde un dropshipper que importa siempre pierde.
+    assert "family_name" in enviados[0]
+    assert not any(i.get("catalog_listing") for i in enviados), \
+        "se fue al catálogo teniendo la publicación propia disponible"
+
+
+def test_el_catalogo_es_la_salida_de_emergencia_si_falta_el_codigo(tmp_path, monkeypatch):
+    """Sin código de barras la publicación propia no sale, y ahí sí conviene el
+    catálogo: ML pone el GTIN de su ficha. Mejor esa publicación que ninguna."""
+    enviados = []
+    cli = _cli_lote(enviados, gtin_catalogo={"gtin": "", "product_id": "MLA77",
+                                             "nombre": "LEGO 75429"})
+    cli.atributos_obligatorios = lambda cid: [
+        {"id": "GTIN", "name": "Código universal de producto"}]
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "emerg.db")))
+    completo = "LEGO Casco de conductor AT-AT de Star Wars 75429"
+    pid = _alta(c, marca="LEGO", modelo=completo, titulo_ml=completo,
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"pictures": ["http://img/1.jpg"], "ml_attributes": {}})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    assert enviados and enviados[-1].get("catalog_listing") is True
+
+
+def test_si_la_publicacion_propia_es_rechazada_se_prueba_el_catalogo(tmp_path, monkeypatch):
+    """Antes de dar la publicación por perdida se prueba la ficha del catálogo,
+    que exige muchos menos datos."""
+    from mercadolibre.client import MeliAPIError
+    enviados = []
+    cli = _cli_lote(enviados, gtin_catalogo={"gtin": "", "product_id": "MLA77",
+                                             "nombre": "LEGO 75429"})
+
+    def _publicar(item):
+        enviados.append(item)
+        if item.get("catalog_listing"):
+            return {"id": "MLA9", "permalink": "http://ml/cat"}
+        raise MeliAPIError("no", status=400, cuerpo={"error": "invalid"})
+
+    cli.publicar = _publicar
+    _con_ml(monkeypatch, cli)
+
+    c = TestClient(crear_app(db_path=str(tmp_path / "rechazo.db")))
+    completo = "LEGO Casco de conductor AT-AT de Star Wars 75429"
+    pid = _alta(c, marca="LEGO", modelo=completo, titulo_ml=completo,
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion",
+            json={"pictures": ["http://img/1.jpg"],
+                  "ml_attributes": {"GTIN": "5702017424101", "IVA": "21 %"}})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    r = c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["ml_item_id"] == "MLA9"
+    assert "family_name" in enviados[0]                    # se intentó propia
+    assert enviados[-1].get("catalog_listing") is True     # y cayó al catálogo
 
 
 def test_diagnostico_explica_donde_se_corta(client):
@@ -1967,3 +2028,124 @@ def test_sin_apuro_no_queda_nada_pendiente(tmp_path, monkeypatch):
                json={"ids": [pid], "tc_costo": 1600}).json()
     assert d["pendientes"] == []
     assert len(d["resultados"]) == 1
+
+
+# ---- mejorar títulos y descripciones de lo ya publicado -------------------
+
+def _publicado_con_titulo_crudo(tmp_path, monkeypatch, nombre, cli=None):
+    """Una publicación como las que ya están: título crudo de Amazon."""
+    cli = cli or _cli_lote([])
+    cli.publicar = lambda item: {"id": "MLA100", "permalink": "http://ml/x",
+                                 "status": "active"}
+    cli.atributos_obligatorios = lambda cid: []
+    _con_ml(monkeypatch, cli)
+    c = TestClient(crear_app(db_path=str(tmp_path / nombre)))
+    crudo = ("LEGO Minecraft The Rabbit Ranch House Farm Set, 21181 Animals Toy "
+             "for Kids, Boys and Girls Age 8 Plus")
+    pid = _alta(c, marca="LEGO", modelo=crudo, titulo_ml=crudo[:60],
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    assert c.post(f"/api/catalogo/{pid}/publicar", json={}).status_code == 200
+    return c, cli, pid
+
+
+def test_simular_muestra_el_titulo_nuevo_sin_tocar_mercadolibre(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx1.db")
+    d = c.post("/api/catalogo/publicaciones/simular", json={}).json()
+    f = d["filas"][0]
+
+    assert f["cambia_titulo"] is True
+    assert f["titulo_nuevo"] == "Set LEGO Minecraft The Rabbit Ranch House Farm 21181"
+    assert len(f["titulo_nuevo"]) <= 60
+    # La descripción se rehace siempre: la de Amazon no dice lo que hace falta.
+    assert "CÓMO ES LA COMPRA" in f["descripcion_nueva"]
+    # Y el título local sigue intacto: simular no cambia nada.
+    assert c.get(f"/api/catalogo/{pid}").json()["titulo_ml"].startswith("LEGO Minecraft")
+
+
+def test_aplicar_manda_el_titulo_a_mercadolibre_y_lo_guarda(tmp_path, monkeypatch):
+    puestos = []
+    cli = _cli_lote([])
+    cli.actualizar_titulo = lambda item_id, t: puestos.append((item_id, t)) or {}
+    cli.poner_descripcion = lambda item_id, t: puestos.append((item_id, "desc")) or {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx2.db", cli)
+
+    d = c.post("/api/catalogo/publicaciones/aplicar", json={"ids": [pid]}).json()
+
+    esperado = "Set LEGO Minecraft The Rabbit Ranch House Farm 21181"
+    assert d["titulos"] == 1 and d["descripciones"] == 1
+    assert ("MLA100", esperado) in puestos
+    # El catálogo local queda con el título que MercadoLibre aceptó.
+    assert c.get(f"/api/catalogo/{pid}").json()["titulo_ml"] == esperado
+
+
+def test_si_ml_no_deja_cambiar_el_titulo_no_se_guarda_como_cambiado(tmp_path, monkeypatch):
+    """En una publicación de catálogo el título lo pone MercadoLibre. Guardarlo
+    local igual sería decir que la publicación tiene un título que no tiene."""
+    from mercadolibre.client import MeliAPIError
+    cli = _cli_lote([])
+
+    def _falla(item_id, t):
+        raise MeliAPIError("el título quedó en «otro»", status=200, cuerpo={})
+
+    cli.actualizar_titulo = _falla
+    cli.poner_descripcion = lambda item_id, t: {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx3.db", cli)
+    antes = c.get(f"/api/catalogo/{pid}").json()["titulo_ml"]
+
+    d = c.post("/api/catalogo/publicaciones/aplicar", json={"ids": [pid]}).json()
+
+    assert d["titulos"] == 0 and d["fallas"] == 1
+    assert c.get(f"/api/catalogo/{pid}").json()["titulo_ml"] == antes
+    # La descripción es independiente: que el título no salga no la frena.
+    assert d["descripciones"] == 1
+
+
+def test_se_puede_pedir_solo_la_descripcion(tmp_path, monkeypatch):
+    puestos = []
+    cli = _cli_lote([])
+    cli.actualizar_titulo = lambda i, t: puestos.append("titulo") or {}
+    cli.poner_descripcion = lambda i, t: puestos.append("desc") or {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx4.db", cli)
+
+    d = c.post("/api/catalogo/publicaciones/aplicar",
+               json={"ids": [pid], "titulo": False}).json()
+    assert d["titulos"] == 0 and d["descripciones"] == 1
+    assert "titulo" not in puestos
+
+
+def test_aplicar_publicaciones_devuelve_lo_pendiente_si_se_acaba_el_tiempo(tmp_path, monkeypatch):
+    import api.catalogo_routes as rutas
+    cli = _cli_lote([])
+    cli.actualizar_titulo = lambda i, t: {}
+    cli.poner_descripcion = lambda i, t: {}
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx5.db", cli)
+    otros = []
+    for i in range(3):
+        oid = _alta(c, asin=f"B0TX{i:05d}", marca="LEGO",
+                    modelo=f"LEGO Minecraft Set {i} 2110{i}",
+                    titulo_ml=f"LEGO Minecraft Set {i} 2110{i}",
+                    ml_category_id="MLA1157").json()["id"]
+        c.patch(f"/api/catalogo/{oid}/publicacion",
+                json={"pictures": ["http://i/1.jpg"]})
+        c.post(f"/api/catalogo/{oid}/aprobar")
+        assert c.post(f"/api/catalogo/{oid}/publicar", json={}).status_code == 200
+        otros.append(oid)
+    monkeypatch.setattr(rutas, "TOPE_APLICAR_SEG", 0.0)
+
+    d = c.post("/api/catalogo/publicaciones/aplicar",
+               json={"ids": [pid] + otros}).json()
+    assert len(d["resultados"]) == 1
+    assert d["pendientes"] == otros
+
+
+def test_las_condiciones_de_compra_se_guardan_y_salen_en_la_descripcion(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "tx6.db")
+    c.post("/api/catalogo/config",
+           json={"texto_compra": "ENVÍO\n• Llega en {dias} días hábiles."})
+
+    d = c.post("/api/catalogo/publicaciones/simular", json={}).json()
+    texto = d["filas"][0]["descripcion_nueva"]
+    assert "Llega en 25 días hábiles." in texto
+    assert "CÓMO ES LA COMPRA" not in texto

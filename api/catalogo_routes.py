@@ -202,6 +202,27 @@ def registrar_catalogo(app: FastAPI, conn,
         cat.recalcular_todos()  # los márgenes cambian con las alícuotas
         return fiscal()
 
+    # ---- cómo se arman título y descripción -------------------------------
+
+    @app.get("/api/catalogo/config")
+    def config_publicacion():
+        from descripcion import COMPRA_DEFAULT
+        return {"tipo_producto": cat.tipo_producto,
+                "texto_compra": cat.texto_compra,
+                "texto_compra_default": COMPRA_DEFAULT,
+                "publicar_en_catalogo": cat.publicar_en_catalogo}
+
+    @app.post("/api/catalogo/config")
+    def config_publicacion_set(body: dict):
+        cuerpo = body or {}
+        if "tipo_producto" in cuerpo:
+            cat.tipo_producto = cuerpo.get("tipo_producto") or ""
+        if "texto_compra" in cuerpo:
+            cat.texto_compra = cuerpo.get("texto_compra") or ""
+        if "publicar_en_catalogo" in cuerpo:
+            cat.publicar_en_catalogo = bool(cuerpo.get("publicar_en_catalogo"))
+        return config_publicacion()
+
     # ---- qué productos entran al catálogo ---------------------------------
 
     @app.get("/api/filtro")
@@ -373,7 +394,9 @@ def registrar_catalogo(app: FastAPI, conn,
         if not reparado["marcas"]:
             reparado["marcas"] = True
             cat.limpiar_marcas()
-            cat.limpiar_titulos()
+            # Solo los que traen basura evidente. Rearmar todos acá pisaría los
+            # títulos editados a mano, y sin avisar: eso se pide aparte.
+            cat.limpiar_titulos(solo_sucios=True)
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -546,6 +569,9 @@ def registrar_catalogo(app: FastAPI, conn,
         for a in obligatorios:
             a["sugerido"] = valor_por_defecto(a)
         preview = vista_previa(p, pictures=pics)
+        # La vista previa tiene que mostrar lo que se va a publicar de verdad,
+        # no el campo crudo: la descripción se arma al publicar.
+        preview["descripcion_a_publicar"] = cat.descripcion_armada(p)
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         return {"preview": preview, "categorias_sugeridas": sugeridas,
                 "atributos_obligatorios": obligatorios, "faltantes": faltan}
@@ -797,6 +823,21 @@ def registrar_catalogo(app: FastAPI, conn,
             if v.get("video_id"):
                 datos["video_youtube"] = v["video_id"]
 
+        # El título, al final: para armarlo bien hacen falta la marca ya
+        # limpia y la cantidad de piezas, que se resuelven más arriba.
+        #
+        # Solo se rearma **antes de publicar**. Una vez publicado, el título es
+        # el que ve el comprador y el que MercadoLibre indexó: cambiarlo por
+        # nuestra cuenta sería pisar lo que el usuario pudo haber ajustado a
+        # mano mirando la competencia.
+        if p.estado not in ("publicado", "pausado"):
+            copia = replace(p, marca=datos.get("marca", p.marca),
+                            ml_attributes=datos.get("ml_attributes",
+                                                    p.ml_attributes))
+            armado = cat.titulo_armado(copia)
+            if armado and armado != p.titulo_ml:
+                datos["titulo_ml"] = armado
+
         # El estado no se toca: los productos ya nacen en "borrador" y los
         # publicados o pausados no deben volver atrás por completarles datos.
         if datos:
@@ -894,6 +935,20 @@ def registrar_catalogo(app: FastAPI, conn,
     # cada publicación a mano. Va en dos partes a propósito —simular y
     # aplicar— porque toca el precio de publicaciones vivas: se ve qué cambia
     # antes de cambiarlo.
+
+    def _motivo(e: MeliAPIError) -> str:
+        """El texto legible de un rechazo de MercadoLibre.
+
+        `describir_error` sirve para los cuerpos de error de ML; con cualquier
+        otra cosa escupe el diccionario crudo y tapa el mensaje bueno de la
+        excepción, que es justo el que explica qué pasó.
+        """
+        cuerpo = getattr(e, "cuerpo", None)
+        detalle = (describir_error(cuerpo)
+                   if isinstance(cuerpo, dict)
+                   and {"cause", "message", "error"} & set(cuerpo)
+                   else "")
+        return detalle or str(e)
 
     def _numero(body, clave, etiqueta, permitir_cero: bool = False) -> Optional[float]:
         """Un número puesto a mano, o None si el campo vino vacío."""
@@ -1041,15 +1096,7 @@ def registrar_catalogo(app: FastAPI, conn,
                 # Si MercadoLibre lo rechaza —o acepta y deja el precio como
                 # estaba— no se guarda: el catálogo no puede decir un precio que
                 # la publicación no tiene.
-                cuerpo = getattr(e, "cuerpo", None)
-                # `describir_error` sirve para los cuerpos de error de ML; con
-                # cualquier otra cosa escupe el diccionario crudo y tapa el
-                # mensaje bueno de la excepción.
-                detalle = (describir_error(cuerpo)
-                           if isinstance(cuerpo, dict)
-                           and {"cause", "message", "error"} & set(cuerpo)
-                           else "")
-                fila["error"] = detalle or str(e)
+                fila["error"] = _motivo(e)
                 resultados.append(fila)
                 continue
             if par["margen"] is not None:
@@ -1067,6 +1114,86 @@ def registrar_catalogo(app: FastAPI, conn,
                                     if r["ok"] and not r["sin_cambios"]),
                 "sin_cambios": sum(1 for r in resultados
                                    if r["ok"] and r["sin_cambios"]),
+                "total": len(resultados)}
+
+    # ---- mejorar el título y la descripción de lo ya publicado -------------
+
+    @app.post("/api/catalogo/publicaciones/simular")
+    def simular_publicaciones(body: dict = None):
+        """Qué título y qué descripción quedarían, sin tocar MercadoLibre.
+
+        Lo ya publicado se armó con el título crudo de Amazon recortado a 60
+        caracteres. Rehacerlo vale tanto o más que hacerlo bien de acá en
+        adelante: son las publicaciones que ya están compitiendo.
+        """
+        filas = []
+        for p in _publicados_con_item():
+            titulo = cat.titulo_armado(p)
+            filas.append({
+                "id": p.id, "ml_item_id": p.ml_item_id,
+                "titulo_actual": p.titulo_ml or "",
+                "titulo_nuevo": titulo,
+                "cambia_titulo": bool(titulo) and titulo != (p.titulo_ml or ""),
+                "descripcion_nueva": cat.descripcion_armada(p),
+            })
+        return {"filas": filas, "total": len(filas),
+                "con_titulo_nuevo": sum(1 for f in filas if f["cambia_titulo"])}
+
+    @app.post("/api/catalogo/publicaciones/aplicar")
+    def aplicar_publicaciones(body: dict):
+        """Manda a MercadoLibre el título y la descripción nuevos.
+
+        Mismo esquema que el cambio de precios: de a pocos, con presupuesto de
+        tiempo y devolviendo los que no se llegaron a tocar.
+        """
+        ids = [int(i) for i in (body or {}).get("ids", [])][:20]
+        if not ids:
+            raise HTTPException(422, "No hay publicaciones para actualizar.")
+        con_titulo = (body or {}).get("titulo", True)
+        con_descripcion = (body or {}).get("descripcion", True)
+        cli = _client()
+
+        resultados, pendientes = [], []
+        arranque = time.monotonic()
+        for i, pid in enumerate(ids):
+            if i and time.monotonic() - arranque > TOPE_APLICAR_SEG:
+                pendientes = ids[i:]
+                break
+            p = cat.obtener(pid)
+            if not p or not (p.ml_item_id or "").strip():
+                continue
+            fila = {"id": pid, "nombre": p.titulo_ml or p.modelo,
+                    "ml_item_id": p.ml_item_id, "titulo": "", "error": "",
+                    "titulo_ok": False, "descripcion_ok": False}
+            if con_titulo:
+                nuevo = cat.titulo_armado(p)
+                if nuevo and nuevo != (p.titulo_ml or ""):
+                    try:
+                        cli.actualizar_titulo(p.ml_item_id, nuevo)
+                        # Recién con el título ya cambiado en MercadoLibre se
+                        # guarda acá: el catálogo no puede afirmar un título que
+                        # la publicación no tiene.
+                        cat.actualizar_publicacion(pid, titulo_ml=nuevo)
+                        fila["titulo"], fila["titulo_ok"] = nuevo, True
+                    except MeliAPIError as e:
+                        fila["error"] = _motivo(e)
+            if con_descripcion:
+                try:
+                    texto = cat.descripcion_armada(cat.obtener(pid) or p)
+                    if texto.strip():
+                        cli.poner_descripcion(p.ml_item_id, texto)
+                        fila["descripcion_ok"] = True
+                except MeliAPIError as e:
+                    # La descripción es independiente del título: que falle una
+                    # no puede tapar que la otra sí salió.
+                    fila["error"] = (fila["error"] + " · " if fila["error"] else "") \
+                        + _motivo(e)
+            resultados.append(fila)
+
+        return {"resultados": resultados, "pendientes": pendientes,
+                "titulos": sum(1 for r in resultados if r["titulo_ok"]),
+                "descripciones": sum(1 for r in resultados if r["descripcion_ok"]),
+                "fallas": sum(1 for r in resultados if r["error"]),
                 "total": len(resultados)}
 
     def _buscar_video(p) -> dict:
@@ -1512,15 +1639,39 @@ def registrar_catalogo(app: FastAPI, conn,
             raise HTTPException(502, str(e))
 
     def _registrar(pid, p, creado, cli, item_id, estado_ml) -> dict:
-        # La descripción va en un endpoint aparte, después de crear el ítem.
-        if item_id and (p.descripcion or "").strip():
-            try:
-                cli.poner_descripcion(item_id, p.descripcion)
-            except MeliAPIError:
-                pass  # el ítem ya se publicó; la descripción se puede reintentar
+        # La descripción va en un endpoint aparte, después de crear el ítem. Se
+        # arma acá —ficha, condiciones de compra y recién después el detalle de
+        # Amazon— porque vendiendo importado la objeción del comprador es el
+        # plazo, no el producto: eso tiene que estar antes que nada.
+        if item_id:
+            texto = cat.descripcion_armada(p)
+            if texto.strip():
+                try:
+                    cli.poner_descripcion(item_id, texto)
+                except MeliAPIError:
+                    pass  # el ítem ya se publicó; la descripción se reintenta
         return _dict(cat.registrar_publicacion(pid, item_id,
                                                creado.get("permalink", ""),
                                                estado_ml))
+
+    def _intento_catalogo(p, cli, listing_type_id):
+        """Publica contra la ficha del catálogo de ML, o None si no se puede.
+
+        Nunca lanza: es una salida de emergencia, así que un fallo acá tiene que
+        dejar que el que llama informe el problema original.
+        """
+        try:
+            ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli,
+                                    p.modelo_fabricante, p.marca)
+        except Exception:  # noqa: BLE001 - la búsqueda de ficha no puede tumbar esto
+            return None
+        if not ficha.get("product_id"):
+            return None
+        try:
+            return cli.publicar(construir_item_catalogo(
+                p, ficha["product_id"], listing_type_id=listing_type_id))
+        except MeliAPIError:
+            return None
 
     @app.post("/api/catalogo/{pid}/publicar")
     def publicar(pid: int, body: Borrador):
@@ -1543,25 +1694,29 @@ def registrar_catalogo(app: FastAPI, conn,
             raise HTTPException(422, {"faltantes": faltan})
         cli = _client()  # exige sesión OAuth
 
-        # 2) Vía del catálogo: si el producto está en el catálogo de
-        #    MercadoLibre, se publica contra su ficha. ML toma de ahí el GTIN y
-        #    el resto de los atributos, así que no hay nada más que validar. Es
-        #    la única forma de publicar los sets cuyo código de barras no se
-        #    consigue, y además deja la publicación bien matcheada.
-        ficha = _ficha_catalogo(p.modelo or p.titulo_ml or "", cli,
-                                p.modelo_fabricante, p.marca)
+        # 2) Publicación propia, que es la que conviene salvo que no haya otra.
+        #
+        #    En el catálogo de MercadoLibre todos los vendedores comparten la
+        #    misma ficha: mismo título, mismas fotos, misma descripción. Lo
+        #    único que distingue una oferta de otra es el precio y el tiempo de
+        #    entrega, y esas son justamente las dos peores cartas de un
+        #    dropshipper que importa: contra alguien con stock local y envío
+        #    Full no gana la caja de compra, y queda como oferta secundaria.
+        #
+        #    Con publicación propia se compite en la búsqueda, no en una caja
+        #    de compra: título propio, y la ventaja pasa a ser tener sets que
+        #    nadie más tiene en el país.
+        #
+        #    El catálogo queda como salida de emergencia (paso 5): es la única
+        #    vía cuando no se consigue el código de barras, porque ML toma el
+        #    GTIN de su propia ficha.
         creado = None
-        if ficha.get("product_id"):
-            try:
-                creado = cli.publicar(construir_item_catalogo(
-                    p, ficha["product_id"], listing_type_id=body.listing_type_id))
-            except MeliAPIError:
-                creado = None  # no es catalogable: seguimos por la vía normal
+        if cat.publicar_en_catalogo:
+            creado = _intento_catalogo(p, cli, body.listing_type_id)
+            if creado is not None:
+                return _publicado(pid, p, creado, cli)
 
-        if creado is not None:
-            return _publicado(pid, p, creado, cli)
-
-        # 3) Vía normal: hay que mandar todos los atributos obligatorios de la
+        # 3) Vía propia: hay que mandar todos los atributos obligatorios de la
         #    categoría (GTIN, cantidad de piezas, etc.).
         obligatorios = []
         try:
@@ -1570,6 +1725,12 @@ def registrar_catalogo(app: FastAPI, conn,
             pass
         faltan = faltantes_para_publicar(p, obligatorios, pics)
         if faltan:
+            # Emergencia: lo que falta casi siempre es el código de barras, y
+            # publicando contra la ficha del catálogo lo pone MercadoLibre.
+            # Mejor una publicación en el catálogo que ninguna publicación.
+            creado = _intento_catalogo(p, cli, body.listing_type_id)
+            if creado is not None:
+                return _publicado(pid, p, creado, cli)
             raise HTTPException(422, {"faltantes": faltan})
         # 4) Valores que ML acepta en la categoría: nos dejan mandar `value_id`
         #    en vez de texto libre y evitan el "invalid value name" (la marca
@@ -1607,13 +1768,21 @@ def registrar_catalogo(app: FastAPI, conn,
         try:
             creado = cli.publicar(_armar("family_name"))
         except MeliAPIError as e:
+            cuerpo = e.cuerpo
             if "family_name" in str(e.cuerpo):
                 try:
                     creado = cli.publicar(_armar("title"))
                 except MeliAPIError as e2:
-                    raise _rechazo(e2.cuerpo)
+                    creado, cuerpo = None, e2.cuerpo
             else:
-                raise _rechazo(e.cuerpo)
+                creado = None
+            if creado is None:
+                # 5) Emergencia: MercadoLibre rechazó la publicación propia. Antes
+                #    de darla por perdida se prueba contra su catálogo, que exige
+                #    muchos menos datos.
+                creado = _intento_catalogo(p, cli, body.listing_type_id)
+                if creado is None:
+                    raise _rechazo(cuerpo)
         return _publicado(pid, p, creado, cli)
 
     # ---- agente: completa y publica solo ----------------------------------
