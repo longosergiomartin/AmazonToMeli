@@ -1790,6 +1790,40 @@ def test_simular_precios_no_toca_nada(tmp_path, monkeypatch):
     assert cli.puestos == [], "no debería llamar a MercadoLibre"
 
 
+def _publicar_otro(c, asin, titulo):
+    pid = _alta(c, asin=asin, marca="LEGO", titulo_ml=titulo, precio_usd=100.0,
+                margen_deseado=0.35, ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    c.post(f"/api/catalogo/{pid}/publicar", json={})
+    return pid
+
+
+def test_simular_precios_respeta_lo_tildado_en_la_tabla(tmp_path, monkeypatch):
+    """Repreciar lo que no se tildó es cambiar precios en publicaciones vivas
+    sin que nadie lo haya pedido."""
+    c, _, pid = _app_con_publicado(tmp_path, monkeypatch, "simsel.db")
+    otro = _publicar_otro(c, "B0PRECIO02", "LEGO Set 21043")
+
+    d = c.post("/api/catalogo/precios/simular", json={"ids": [pid]}).json()
+
+    assert d["solo_seleccionadas"] is True
+    assert [f["id"] for f in d["filas"]] == [pid]
+    assert otro not in [f["id"] for f in d["filas"]]
+
+
+def test_sin_tildar_nada_se_simula_todo_el_catalogo(tmp_path, monkeypatch):
+    """Es el caso normal cuando cambió el dólar: obligar a tildar 126 filas
+    para eso sería peor que el problema."""
+    c, _, pid = _app_con_publicado(tmp_path, monkeypatch, "simtodo.db")
+    otro = _publicar_otro(c, "B0PRECIO03", "LEGO Set 21044")
+
+    d = c.post("/api/catalogo/precios/simular", json={}).json()
+
+    assert d["solo_seleccionadas"] is False
+    assert {f["id"] for f in d["filas"]} == {pid, otro}
+
+
 def test_aplicar_precios_manda_el_nuevo_a_mercadolibre(tmp_path, monkeypatch):
     c, cli, pid = _app_con_publicado(tmp_path, monkeypatch, "apl.db")
     esperado = c.post("/api/catalogo/precios/simular",
@@ -2669,6 +2703,34 @@ def test_el_costo_a_mano_se_edita_desde_el_panel(client):
     d = r.json()
     assert d["costo_total_ars"] == caro
     assert d["precio_sugerido_ars"] > antes["precio_sugerido_ars"]
+
+
+def test_listar_repara_el_porcentaje_de_envio_heredado(tmp_path):
+    """La migración no corre al arrancar —la base puede estar dormida— sino en
+    el primer listado. Sin esto el panel mostraría costos que ya se saben mal."""
+    ruta = str(tmp_path / "migapi.db")
+    c = TestClient(crear_app(db_path=ruta))
+    c.post("/api/catalogo/config", json={"envio_import_pct": 70})
+    pid = _alta(c, marca="LEGO", modelo="LEGO Heredado", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/envio-gratis", json={"envio_gratis": True})
+    # Se borra la marca para dejar la base como la de alguien que venía usando
+    # la versión de un solo porcentaje.
+    from catalogo import Catalogo
+    from db import conectar
+    conn = conectar(ruta)
+    conn.execute("DELETE FROM preferencias WHERE clave = ?",
+                 (Catalogo._PREF_MIGRACION_PCT,))
+    conn.commit()
+
+    c2 = TestClient(crear_app(db_path=ruta))
+    filas = c2.get("/api/catalogo").json()
+
+    cfg = c2.get("/api/catalogo/config").json()
+    assert cfg["envio_import_pct"] == 26.0
+    assert cfg["envio_import_sin_gratis_pct"] == 70.0
+    fila = next(f for f in filas if f["id"] == pid)
+    assert fila["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
 
 
 def test_el_precio_del_producto_a_mano_se_edita_desde_el_panel(client):

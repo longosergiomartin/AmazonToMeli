@@ -431,6 +431,11 @@ def registrar_catalogo(app: FastAPI, conn,
             # Solo los que traen basura evidente. Rearmar todos acá pisaría los
             # títulos editados a mano, y sin avisar: eso se pide aparte.
             cat.limpiar_titulos(solo_sucios=True)
+            # El porcentaje de envío viejo quedó en la casilla equivocada y los
+            # costos se estimaron con él: acá se rehace esa cuenta, antes de
+            # devolver la tabla, para que no se muestre un costo que ya se sabe
+            # mal. Es idempotente: se anota en la base cuando queda pendiente.
+            cat.migrar_pct_envio()
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -1025,9 +1030,19 @@ def registrar_catalogo(app: FastAPI, conn,
                 "envio": _numero(body, "envio_ars", "El costo de envío",
                                  permitir_cero=True)}
 
-    def _publicados_con_item():
+    def _publicados_con_item(ids=None):
+        """Las publicaciones que se pueden repreciar, opcionalmente filtradas.
+
+        `ids` viene de los tildes de la tabla. Vacío o ausente significa "todas":
+        repreciar el catálogo entero es el caso normal cuando cambió el dólar,
+        y obligar a tildar 126 filas para eso sería peor. Pero cuando el usuario
+        tildó algo, tocar lo que no tildó es cambiarle precios en publicaciones
+        vivas sin que lo haya pedido.
+        """
+        elegidos = {int(i) for i in ids} if ids else None
         return [p for p in cat.todos()
-                if p.estado in ("publicado", "pausado") and (p.ml_item_id or "").strip()]
+                if p.estado in ("publicado", "pausado") and (p.ml_item_id or "").strip()
+                and (elegidos is None or p.id in elegidos)]
 
     @app.post("/api/catalogo/precios/simular")
     def simular_precios(body: dict):
@@ -1041,8 +1056,9 @@ def registrar_catalogo(app: FastAPI, conn,
         if (body or {}).get("refrescar_cotizacion") and not par["tc_costo"]:
             _cotizacion(refrescar=True)
 
+        seleccion = (body or {}).get("ids") or []
         filas = []
-        for p in _publicados_con_item():
+        for p in _publicados_con_item(seleccion):
             r = cat.simular(p, **par)
             actual = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
             filas.append({
@@ -1056,6 +1072,9 @@ def registrar_catalogo(app: FastAPI, conn,
             })
         c = cat.cotizacion or {}
         return {"filas": filas, "total": len(filas),
+                # Para que el panel pueda decir sobre qué está operando: no es
+                # lo mismo repreciar 3 tildadas que las 126 del catálogo.
+                "solo_seleccionadas": bool(seleccion),
                 "dolar_costo": cat.dolar_costo,
                 "tc_costo": par["tc_costo"],
                 "envio_ars": cat.envio_efectivo(par["envio"]),

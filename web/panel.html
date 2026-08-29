@@ -296,7 +296,8 @@
     <b>💲 Actualizar precios de lo publicado</b>
     <p class="hint" style="margin:6px 0 10px">Recalcula el costo y vuelve a fijar
       el precio en MercadoLibre. Primero se ve qué cambiaría; nada se toca hasta
-      que confirmes.</p>
+      que confirmes. <b>Si tildás filas en la tabla, se reprecian solo esas</b>;
+      sin tildar nada, todo el catálogo publicado.</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
       <div class="f" style="margin:0">
         <label>Compro a dólar</label>
@@ -868,12 +869,14 @@
   // ---- actualización de precios ---------------------------------------
   // Simular y aplicar están separados a propósito: cambiar el precio de una
   // publicación viva no se deshace con un botón.
-  var prFilas=[];
+  var prFilas=[], prSoloSel=false;
 
   function prCuerpo(){
     var num=function(id){ var v=($(id).value||"").trim(); return v===""?null:Number(v); };
+    // Si hay filas tildadas en la tabla, se reprecian solo esas. Sin tildar
+    // nada se reprecia todo, que es el caso normal cuando cambió el dólar.
     return {tc_costo:num("pr-tc-costo"), margen_pct:num("pr-margen"),
-            envio_ars:num("pr-envio"),
+            envio_ars:num("pr-envio"), ids:seleccionados(),
             refrescar_cotizacion:$("pr-refrescar").checked};
   }
 
@@ -882,8 +885,10 @@
     $("pr-msg").textContent="Calculando con la cotización de hoy…";
     $("pr-aplicar").style.display="none";
     api("POST","/api/catalogo/precios/simular",prCuerpo()).then(function(d){
-      b.disabled=false; prFilas=d.filas||[];
-      if(!prFilas.length){ $("pr-msg").textContent="No hay publicaciones para actualizar.";
+      b.disabled=false; prFilas=d.filas||[]; prSoloSel=!!d.solo_seleccionadas;
+      if(!prFilas.length){ $("pr-msg").textContent=d.solo_seleccionadas
+          ? "De lo que tildaste, ninguna está publicada en MercadoLibre."
+          : "No hay publicaciones para actualizar.";
         $("pr-tabla").innerHTML=""; return; }
       var c=d.cotizacion||{};
       // Si se puso la cotización a mano manda eso, no la del mercado.
@@ -892,7 +897,8 @@
           : "Dólar oficial "+fmt(c.oficial)+" · tarjeta "+fmt(c.tarjeta)
             +" · costo al dólar "+(d.dolar_costo||"—"))
         +" · envío "+fmt(d.envio_ars)
-        +". "+prFilas.length+" publicación/es.";
+        +". "+prFilas.length+" publicación/es"
+        +(d.solo_seleccionadas?" (solo las tildadas)":" (TODO el catálogo)")+".";
       $("pr-tabla").innerHTML=prFilas.map(function(f){
         var v=f.variacion_pct;
         var color=v==null?"var(--muted)":(v>0?"var(--good)":"var(--bad)");
@@ -906,8 +912,10 @@
 
   $("pr-aplicar").onclick=function(){
     if(!prFilas.length) return;
-    if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es EN TU CUENTA "
-      +"de MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
+    if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es "
+      +(prSoloSel?"(las que tildaste) ":"(TODO el catálogo publicado) ")
+      +"EN TU CUENTA de MercadoLibre, ya visibles para los compradores. "
+      +"¿Confirmás?")) return;
     var b=$("pr-aplicar"); b.disabled=true;
     $("pr-frenar").style.display="";
     // De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
