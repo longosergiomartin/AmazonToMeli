@@ -593,7 +593,16 @@
         var tr=document.createElement("tr");
         var flag=p.margen_insuficiente?' <span class="warnflag" title="Margen por debajo del umbral">⚠ bajo</span>':'';
         tr.innerHTML='<td class="chk"><input type="checkbox" class="sel" value="'+p.id+'"></td>'+
-          '<td class="prod">'+esc(p.modelo||p.asin||"(sin nombre)")+'<div class="sub">'+esc(p.marca||"(sin marca)")+'</div></td>'+
+          // El link a Amazon es lo que hace falta para comprar el producto
+          // cuando se vende: sin él hay que buscarlo a mano en Amazon.
+          '<td class="prod">'+esc(p.modelo||p.asin||"(sin nombre)")
+            +'<div class="sub">'+esc(p.marca||"(sin marca)")
+            +(p.amazon_link||p.asin
+               ? ' · <a href="'+esc(p.amazon_link
+                   || "https://www.amazon.com/dp/"+p.asin)
+                 +'" target="_blank" rel="noopener">comprar en Amazon ↗</a>'
+               : '')
+            +'</div></td>'+
           '<td class="num">'+fmt(p.costo_total_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
