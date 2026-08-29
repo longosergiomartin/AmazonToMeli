@@ -64,11 +64,19 @@ def _norm(texto: str) -> str:
 def acepta(titulo: str, marca_producto: str = "",
            precio_usd: Optional[float] = None,
            marca: str = "", descartar_accesorios: bool = True,
-           precio_min: float = PRECIO_MIN_USD) -> tuple[bool, str]:
+           precio_min: float = PRECIO_MIN_USD,
+           envia_al_exterior: Optional[bool] = None,
+           exigir_envio: bool = False) -> tuple[bool, str]:
     """¿Este producto entra al catálogo? Devuelve (sí/no, motivo).
 
     `marca` vacío significa cualquier marca: la herramienta no está atada a un
     rubro. Con una marca cargada, además se descartan las réplicas conocidas.
+
+    `envia_al_exterior` tiene TRES valores: sí, no, y `None` = no se pudo
+    saber. Con `exigir_envio` solo se descarta el `False`: descartar también lo
+    que no se pudo determinar dejaría afuera casi todo el catálogo, porque la
+    página se lee desde una IP de EE.UU. y ahí Amazon rara vez dice si manda a
+    Argentina.
     """
     t = _norm(titulo)
     m = _norm(marca_producto)
@@ -96,6 +104,9 @@ def acepta(titulo: str, marca_producto: str = "",
 
     if precio_usd is not None and precio_min > 0 and precio_usd < precio_min:
         return False, f"precio bajo (USD {precio_usd:.0f} < {precio_min:.0f})"
+
+    if exigir_envio and envia_al_exterior is False:
+        return False, "Amazon no lo envía al exterior"
 
     return True, "aceptado"
 

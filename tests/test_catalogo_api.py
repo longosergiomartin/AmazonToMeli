@@ -922,7 +922,11 @@ def test_configurar_el_filtro_persiste(client):
     r = client.patch("/api/filtro", json={"marca": "Bosch", "precio_min_usd": 50,
                                           "descartar_accesorios": False})
     assert r.json() == {"marca": "Bosch", "precio_min_usd": 50.0,
-                        "descartar_accesorios": False}
+                        "descartar_accesorios": False,
+                        # Se descarta lo que Amazon dice que no manda afuera.
+                        "exigir_envio": True,
+                        # Y por defecto se lee desde EE.UU., como siempre.
+                        "pais_lectura": "us"}
     assert client.get("/api/filtro").json()["marca"] == "Bosch"
 
 

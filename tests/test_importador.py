@@ -317,3 +317,54 @@ def test_un_numero_de_set_declarado_por_amazon_si_se_guarda(cola):
         "modelo_fabricante": "21350", "precio_usd": 150.0, "imagenes": []})
 
     assert cola.cat.todos()[0].modelo_fabricante == "21350"
+
+
+# ---- envío a Argentina ---------------------------------------------------
+
+def _ficha_envio(asin, envia):
+    d = _ficha(asin)
+    d["envia_al_exterior"] = envia
+    return d
+
+
+def test_no_encola_lo_que_amazon_no_manda_al_exterior(cola):
+    """Pasó de verdad: entraron productos que después resultaron sin envío a
+    Argentina, y se publicó algo que no se puede entregar."""
+    cola.encolar(["B0NOENVIA1"])
+    r = cola.procesar_uno(lambda url, **k: _ficha_envio("B0NOENVIA1", False))
+
+    assert r["hecho"] is False and r["motivo"] == "descartado"
+    assert "no lo envía" in r["mensaje"]
+    assert cola.cat.todos() == []
+
+
+def test_si_no_se_pudo_saber_el_envio_igual_entra(cola):
+    """Leyendo desde EE.UU. el resultado normal es no saber. Descartar por eso
+    dejaría afuera casi todo el catálogo."""
+    cola.encolar(["B0NOSESAB1"])
+    r = cola.procesar_uno(lambda url, **k: _ficha_envio("B0NOSESAB1", None))
+
+    assert r["hecho"] is True
+    assert len(cola.cat.todos()) == 1
+
+
+def test_apagando_el_filtro_entra_igual_el_que_no_manda(cola):
+    cola.cat.filtro = {"exigir_envio": False}
+    cola.encolar(["B0NOENVIA2"])
+    r = cola.procesar_uno(lambda url, **k: _ficha_envio("B0NOENVIA2", False))
+    assert r["hecho"] is True
+
+
+def test_el_pais_de_lectura_llega_al_importador(cola):
+    """Con "ar" Amazon contesta si el producto llega acá: si el país no viaja
+    hasta la descarga, el filtro nunca puede saber nada."""
+    cola.cat.filtro = {"pais_lectura": "ar"}
+    cola.encolar(["B0PAIS0001"])
+    visto = {}
+
+    def _lector(url, pais="us"):
+        visto["pais"] = pais
+        return _ficha_envio("B0PAIS0001", None)
+
+    cola.procesar_uno(_lector)
+    assert visto["pais"] == "ar"

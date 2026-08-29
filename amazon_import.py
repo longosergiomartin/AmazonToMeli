@@ -100,6 +100,60 @@ def _parse_disponible(texto: str) -> Optional[bool]:
     return None
 
 
+# Lo que Amazon escribe cuando el producto no llega acá.
+_NO_ENVIA = (
+    r"(?:does not|doesn't|cannot|can't|no se puede|no puede)[^.]{0,40}"
+    r"(?:ship|enviar|entregar)",
+    r"no (?:realizamos|hacemos) env[íi]os? a",
+    r"not available for (?:international )?shipping",
+    r"no est[áa] disponible para env[íi]o internacional",
+    r"this item (?:cannot|can't) be shipped to",
+    r"no se env[íi]a a tu (?:direcci[óo]n|ubicaci[óo]n)",
+)
+# Y lo que escribe cuando sí: AmazonGlobal es el programa de envío al exterior.
+_SI_ENVIA = (
+    r"amazonglobal", r"env[íi]o internacional", r"international shipping",
+    r"import fees deposit", r"dep[óo]sito de tasas de importaci[óo]n",
+    r"env[íi]a a argentina", r"ships to argentina",
+)
+
+
+def _parse_envia_al_exterior(texto: str) -> Optional[bool]:
+    """Si Amazon manda este producto fuera de Estados Unidos. `None` = no se sabe.
+
+    **Ojo con lo que este dato vale.** La página se pide desde una IP de EE.UU.,
+    así que Amazon muestra la entrega dentro de EE.UU. y casi nunca dice nada de
+    Argentina. Por eso el resultado normal es `None`, y `None` no puede
+    descartar nada: descartar por no haber podido saber dejaría afuera productos
+    que sí se pueden importar.
+
+    Lo que sí se detecta con confianza es cuando la página lo dice explícito, y
+    la pista de AmazonGlobal cuando aparece.
+    """
+    negativo = any(re.search(p, texto, re.I) for p in _NO_ENVIA)
+    positivo = any(re.search(p, texto, re.I) for p in _SI_ENVIA)
+    if negativo and not positivo:
+        return False
+    if positivo and not negativo:
+        return True
+    return None
+
+
+def _parse_vendedor(texto: str) -> str:
+    """Quién vende y despacha. Es la mejor pista indirecta que hay.
+
+    Lo que vende y despacha Amazon suele entrar en AmazonGlobal; lo de un
+    vendedor externo, casi nunca. No alcanza para descartar solo, pero sirve
+    para mostrarlo y decidir.
+    """
+    v = _buscar([
+        r'id="sellerProfileTriggerId"[^>]*>([^<]{2,60})<',
+        r'id="merchant-info"[^>]*>(.{0,200}?)</div>',
+        r'"merchantName"\s*:\s*"([^"]{2,60})"',
+    ], texto)
+    return re.sub(r"\s+", " ", _texto(v or ""))[:80]
+
+
 def _texto(fragmento: str) -> str:
     txt = re.sub(r"<[^>]+>", " ", fragmento)
     return re.sub(r"\s+", " ", _html.unescape(txt)).strip()
@@ -242,14 +296,18 @@ def _parse_peso_kg(texto: str) -> Optional[float]:
     return round(val, 2)
 
 
-def _bajar(url: str, timeout: int):
-    """La página de Amazon, por proxy si hay clave. Ver `descarga.bajar`."""
-    return descarga.bajar(url, timeout,
+def _bajar(url: str, timeout: int, pais: str = "us"):
+    """La página de Amazon, por proxy si hay clave. Ver `descarga.bajar`.
+
+    `pais` es desde dónde se pide. Con "ar" Amazon contesta si el producto
+    llega a Argentina, que es el dato que no se consigue desde EE.UU.
+    """
+    return descarga.bajar(url, timeout, country=pais,
                           headers={"User-Agent": _UA,
                                    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"})
 
 
-def importar_desde_url(url: str, timeout: int = 12) -> dict:
+def importar_desde_url(url: str, timeout: int = 12, pais: str = "us") -> dict:
     """Devuelve los datos que se pudieron obtener del producto de Amazon.
     Siempre incluye asin (si está en el link) y amazon_link; `ok` indica si se
     pudo leer la página."""
@@ -257,6 +315,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     datos = {"asin": extraer_asin(url), "amazon_link": url, "ok": False,
              "marca": "", "modelo": "", "modelo_fabricante": "", "detalles": {},
              "precio_usd": None, "peso_kg": None, "disponible": None,
+             "envia_al_exterior": None, "vendedor": "",
              "descripcion": "", "imagenes": [], "mensaje": "",
              # `status` y `bloqueado` permiten a la cola de importación
              # distinguir "no pude leer la página" de "Amazon me está
@@ -266,7 +325,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
         datos["mensaje"] = "Pegá un link válido de Amazon."
         return datos
     try:
-        resp, por_proxy = _bajar(url, timeout)
+        resp, por_proxy = _bajar(url, timeout, pais)
     except requests.RequestException as e:
         datos["mensaje"] = f"No se pudo leer la página ({e}). Completá a mano."
         return datos
@@ -323,6 +382,8 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
                       or limpiar_marca(marca or ""))
     datos["precio_usd"] = _parse_precio(texto)
     datos["disponible"] = _parse_disponible(texto)
+    datos["envia_al_exterior"] = _parse_envia_al_exterior(texto)
+    datos["vendedor"] = _parse_vendedor(texto)
     datos["peso_kg"] = _parse_peso_kg(texto)
     datos["descripcion"] = _parse_descripcion(texto)
     datos["imagenes"] = _parse_imagenes(texto)

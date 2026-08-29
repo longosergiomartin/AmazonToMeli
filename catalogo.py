@@ -311,6 +311,13 @@ class Catalogo:
             "marca": self._pref("filtro_marca", ""),
             "descartar_accesorios": self._pref("filtro_accesorios", "1") == "1",
             "precio_min_usd": float(self._pref("filtro_precio_min", "25") or 0),
+            # Descartar lo que Amazon dice explícitamente que no manda al
+            # exterior. Solo eso: lo que no se pudo determinar entra igual.
+            "exigir_envio": self._pref("filtro_envio", "1") == "1",
+            # Desde qué país se lee la página de Amazon. Con "ar" Amazon
+            # contesta si el producto llega acá; con "us" muestra la entrega en
+            # EE.UU. y casi nunca lo dice.
+            "pais_lectura": self._pref("filtro_pais", "us"),
         }
 
     @filtro.setter
@@ -326,6 +333,13 @@ class Catalogo:
             except (TypeError, ValueError):
                 raise ValueError("El precio mínimo tiene que ser un número.")
             self._set_pref("filtro_precio_min", str(minimo))
+        if "exigir_envio" in valores:
+            self._set_pref("filtro_envio", "1" if valores["exigir_envio"] else "0")
+        if "pais_lectura" in valores:
+            pais = (valores["pais_lectura"] or "us").strip().lower()[:2]
+            if pais not in ("us", "ar"):
+                raise ValueError("El país de lectura tiene que ser 'us' o 'ar'.")
+            self._set_pref("filtro_pais", pais)
 
     def recalcular_todos(self) -> None:
         """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras

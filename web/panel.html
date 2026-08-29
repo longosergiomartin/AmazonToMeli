@@ -175,6 +175,22 @@
         <input type="checkbox" id="f-accesorios" style="width:auto">
         Descartar accesorios y merchandising (luces, vitrinas, fundas, remeras…)
       </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:500">
+        <input type="checkbox" id="f-envio" style="width:auto">
+        Descartar lo que Amazon dice que no envía al exterior
+      </label>
+      <div class="f" style="margin-top:6px">
+        <label>Leer la página de Amazon desde</label>
+        <select id="f-pais" style="max-width:320px">
+          <option value="us">Estados Unidos (como siempre)</option>
+          <option value="ar">Argentina — para saber si el producto llega acá</option>
+        </select>
+        <span class="hint">Desde EE.UU. Amazon muestra la entrega dentro de EE.UU.
+          y casi nunca dice si manda a Argentina, así que el filtro de arriba
+          casi no descarta nada. Leyendo desde Argentina sí lo dice. Cuesta lo
+          mismo, pero cambia la página que devuelve: probalo con dos o tres
+          productos antes de encolar una tanda grande.</span>
+      </div>
       <button type="button" class="sm" id="f-guardar" style="margin-top:10px">Guardar filtro</button>
       <span class="msg" id="f-msg"></span>
     </details>
@@ -528,12 +544,16 @@
       $("f-marca").value=f.marca||"";
       $("f-precio").value=f.precio_min_usd;
       $("f-accesorios").checked=!!f.descartar_accesorios;
+      $("f-envio").checked=!!f.exigir_envio;
+      $("f-pais").value=f.pais_lectura||"us";
     }).catch(function(){});
   }
   $("f-guardar").onclick=function(){
     api("PATCH","/api/filtro",{marca:($("f-marca").value||"").trim(),
         precio_min_usd:parseFloat($("f-precio").value)||0,
-        descartar_accesorios:$("f-accesorios").checked}).then(function(f){
+        descartar_accesorios:$("f-accesorios").checked,
+        exigir_envio:$("f-envio").checked,
+        pais_lectura:$("f-pais").value}).then(function(f){
       $("f-msg").textContent = f.marca
         ? "Guardado: solo "+f.marca+"."
         : "Guardado: entra cualquier marca.";

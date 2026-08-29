@@ -120,3 +120,58 @@ def test_el_limite_se_respeta(cat):
     for i in range(5):
         _pub(cat, asin=f"B0X{i:05d}", amazon_link=f"https://amazon.com/dp/B0X{i:05d}")
     assert len(cat.a_revisar(3)) == 3
+
+
+# ---- envío a Argentina ---------------------------------------------------
+
+from amazon_import import _parse_envia_al_exterior as _envia, _parse_vendedor
+
+
+def test_detecta_que_amazon_no_lo_manda_afuera():
+    html = '<div id="deliveryBlock">This item cannot be shipped to your selected delivery location.</div>'
+    assert _envia(html) is False
+
+
+def test_detecta_amazonglobal_como_que_si_manda():
+    html = '<div>AmazonGlobal Import Fees Deposit included</div>'
+    assert _envia(html) is True
+
+
+def test_desde_estados_unidos_lo_normal_es_no_saber():
+    """La página se lee desde una IP de EE.UU.: ahí Amazon muestra la entrega
+    dentro de EE.UU. y no dice nada de Argentina."""
+    html = '<div id="deliveryBlockMessage">FREE delivery Tuesday, September 2</div>'
+    assert _envia(html) is None
+
+
+def test_el_vendedor_se_lee_porque_es_la_pista_indirecta():
+    """Lo que despacha Amazon suele entrar en AmazonGlobal; lo de un vendedor
+    externo, casi nunca."""
+    assert _parse_vendedor('<a id="sellerProfileTriggerId">Amazon.com</a>') == "Amazon.com"
+
+
+def test_solo_se_descarta_lo_que_amazon_dice_que_no_manda():
+    """`None` no puede descartar: dejaría afuera casi todo el catálogo, porque
+    leyendo desde EE.UU. el resultado normal es no saber."""
+    from filtros import acepta
+    comun = dict(marca="LEGO", exigir_envio=True)
+    assert acepta("LEGO Star Wars 75192", "LEGO", 100.0,
+                  envia_al_exterior=False, **comun)[0] is False
+    assert acepta("LEGO Star Wars 75192", "LEGO", 100.0,
+                  envia_al_exterior=None, **comun)[0] is True
+    assert acepta("LEGO Star Wars 75192", "LEGO", 100.0,
+                  envia_al_exterior=True, **comun)[0] is True
+
+
+def test_sin_exigir_envio_no_se_descarta_ni_el_que_no_manda():
+    from filtros import acepta
+    ok, _ = acepta("LEGO Star Wars 75192", "LEGO", 100.0, marca="LEGO",
+                   envia_al_exterior=False, exigir_envio=False)
+    assert ok is True
+
+
+def test_el_pais_de_lectura_solo_acepta_us_o_ar(cat):
+    cat.filtro = {"pais_lectura": "ar"}
+    assert cat.filtro["pais_lectura"] == "ar"
+    with pytest.raises(ValueError):
+        cat.filtro = {"pais_lectura": "brasil"}
