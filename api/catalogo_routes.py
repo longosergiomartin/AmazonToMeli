@@ -2249,6 +2249,16 @@ def registrar_catalogo(app: FastAPI, conn,
              "nombre": p.titulo_ml or p.modelo}
             for p in cat.a_revisar(limite) if (p.amazon_link or p.asin)]}
 
+    @app.patch("/api/catalogo/{pid}/costo")
+    def costo_manual(pid: int, body: dict):
+        """Costo real en pesos, puesto a mano. Vacío vuelve a la estimación."""
+        _p(pid)
+        try:
+            return _dict(cat.actualizar_costo_manual(
+                pid, (body or {}).get("costo_ars")))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
     @app.post("/api/catalogo/{pid}/pausar")
     def pausar(pid: int):
         p = _p(pid)

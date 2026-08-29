@@ -689,7 +689,11 @@
                  +'" target="_blank" rel="noopener">comprar en Amazon ↗</a>'
                : '')
             +'</div></td>'+
-          '<td class="num">'+fmt(p.costo_total_ars)+'</td>'+
+          // Se marca el costo puesto a mano: es un dato distinto de una
+          // estimación y conviene verlo de un vistazo.
+          '<td class="num">'+fmt(p.costo_total_ars)
+            +(p.costo_manual_ars?' <span class="hint" title="Costo puesto a mano">✎</span>':'')
+            +'</td>'+
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
           '<td class="num">'+(p.margen_pct||0).toFixed(0)+'%'+flag+'</td>'+
@@ -1424,6 +1428,24 @@
     principal.className="sm primary"; principal.textContent="Editar y publicar";
     principal.onclick=function(){previa(p.id);}; c.appendChild(principal);
 
+    // Pausar y reactivar salen del menú: sacar de venta algo que no se puede
+    // cumplir es la acción más urgente que hay, y adentro de «⋯» no se
+    // encontraba.
+    if(p.estado==="publicado"){
+      var pa=document.createElement("button");
+      pa.className="sm"; pa.textContent="⏸ Pausar";
+      pa.title="Saca esta publicación de venta, sin borrarla";
+      pa.onclick=function(){ op(p.id,"pausar"); };
+      c.appendChild(pa);
+    }
+    if(p.estado==="pausado"){
+      var re=document.createElement("button");
+      re.className="sm"; re.textContent="▶ Reactivar";
+      re.title="Vuelve a ponerla a la venta";
+      re.onclick=function(){ op(p.id,"reactivar"); };
+      c.appendChild(re);
+    }
+
     var d=document.createElement("details"); d.className="menu";
     var s=document.createElement("summary"); s.textContent="⋯"; d.appendChild(s);
     var body=document.createElement("div"); body.className="menu-body"; d.appendChild(body);
@@ -1433,9 +1455,17 @@
       if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
     b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);
       if(v)api("PATCH","/api/catalogo/"+p.id+"/stock",{stock:parseInt(v,10)}).then(cargar).catch(err);});
-    if(p.estado==="publicado") b("Pausar",function(){op(p.id,"pausar");});
-    if(p.estado==="pausado") b("Reactivar",function(){op(p.id,"reactivar");});
-    b("Costo",function(){
+    b("Costo ARS a mano",function(){
+      var v=prompt("Costo REAL en pesos de este producto.\n\nEs lo que te sale "
+        +"puesto acá: producto + envío + impuestos, al dólar que pagaste.\n"
+        +"Gana sobre toda la estimación y recalcula el precio sugerido.\n\n"
+        +"Vacío = volver a estimarlo.",
+        p.costo_manual_ars?Math.round(p.costo_manual_ars):"");
+      if(v===null) return;
+      api("PATCH","/api/catalogo/"+p.id+"/costo",
+          {costo_ars:v.trim()===""?null:parseFloat(v)}).then(cargar).catch(err);
+    });
+    b("Cómo se calcula el costo",function(){
       var r=prompt("Cómo calcular el costo — escribí: landed (Total de Amazon), courier o general:",p.regimen);
       if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
     });

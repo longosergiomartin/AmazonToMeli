@@ -715,3 +715,83 @@ def test_el_porcentaje_configurado_manda_sobre_el_de_fabrica(cat):
     p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
                           regimen="landed"))
     assert p.costo_envio_usd == pytest.approx(55.0, abs=0.01)
+
+
+# ---- costo puesto a mano -------------------------------------------------
+
+def test_el_costo_a_mano_gana_sobre_la_estimacion(cat):
+    """Cuando se conoce el costo real —del checkout, del resumen de la
+    tarjeta— estimarlo es peor que usarlo."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed", margen_deseado=0.30))
+    estimado = p.costo_total_ars
+
+    p2 = cat.actualizar_costo_manual(p.id, 250000)
+
+    assert p2.costo_total_ars == 250000
+    assert p2.costo_total_ars != estimado
+
+
+def test_el_costo_a_mano_recalcula_el_sugerido(cat):
+    """Es para lo que sirve: saber a cuánto hay que vender con el costo real."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed", margen_deseado=0.30))
+    sugerido_antes = p.precio_sugerido_ars
+
+    p2 = cat.actualizar_costo_manual(p.id, p.costo_total_ars * 2)
+
+    assert p2.precio_sugerido_ars > sugerido_antes
+    from arbitraje.pricing import margen_real_al_precio
+    m = margen_real_al_precio(p2.costo_total_ars, p2.precio_sugerido_ars,
+                              p2.categoria, cat._cfg_efectivo())
+    assert m["margen_pct"] == pytest.approx(30.0, abs=0.5)
+
+
+def test_sacar_el_costo_a_mano_vuelve_a_estimarlo(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    estimado = p.costo_total_ars
+    cat.actualizar_costo_manual(p.id, 999999)
+
+    p2 = cat.actualizar_costo_manual(p.id, None)
+
+    assert p2.costo_total_ars == pytest.approx(estimado, abs=1)
+    assert p2.costo_manual_ars is None
+
+
+def test_el_costo_a_mano_no_lo_pisa_la_reestimacion_de_envios(cat):
+    """Cambiar el porcentaje de envío recalcula estimaciones. Un costo real
+    cargado a mano no es una estimación."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    cat.actualizar_costo_manual(p.id, 300000)
+
+    cat.envio_import_pct = 0.75
+    cat.reestimar_envios(pct_anterior=0.26)
+
+    assert cat.obtener(p.id).costo_total_ars == 300000
+
+
+def test_el_costo_a_mano_manda_tambien_al_simular_precios(cat):
+    """La simulación de precios recalcula el costo al dólar que se pida. Con
+    costo real cargado, ese número es el que vale."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    cat.actualizar_costo_manual(p.id, 275000)
+
+    r = cat.simular(cat.obtener(p.id), tc_costo=1600)
+    assert r["costo_ars"] == 275000
+
+
+def test_un_costo_a_mano_invalido_se_rechaza(cat):
+    p = cat.agregar(_prod())
+    with pytest.raises(ValueError):
+        cat.actualizar_costo_manual(p.id, -100)
+    with pytest.raises(ValueError):
+        cat.actualizar_costo_manual(p.id, "muchos pesos")
+
+
+def test_el_costo_a_mano_queda_en_el_historial(cat):
+    p = cat.agregar(_prod())
+    cat.actualizar_costo_manual(p.id, 200000)
+    assert any(h["tipo"] == "costo" for h in cat.historial(p.id))
