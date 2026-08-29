@@ -68,10 +68,24 @@
     flex-direction:column;gap:4px;background:var(--surface);border:1px solid var(--line);
     border-radius:9px;padding:7px;min-width:150px;box-shadow:0 8px 22px rgba(0,0,0,.28)}
   .menu-body button{width:100%;text-align:left}
-  /* Barra de acciones en lote (varios productos seleccionados a la vez). */
-  .lote{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 13px;
-    border:1px solid var(--line);border-radius:var(--r);background:var(--surface);margin-top:14px}
+  /* Barra de acciones en lote (varios productos seleccionados a la vez).
+     Va anclada al pie de la pantalla y no al lugar del documento donde está
+     escrita: con 126 filas, tildar abajo y tener que subir a buscar el botón
+     hacía perder el lugar en la tabla en cada acción. */
+  .lote{position:fixed;left:0;right:0;bottom:0;z-index:30;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 16px;
+    border-top:1px solid var(--line);background:var(--surface);
+    box-shadow:0 -6px 20px rgba(0,0,0,.22);
+    /* En pantalla angosta los botones se apilan y la barra se comería media
+       pantalla: se le pone techo y se hace scrolleable. */
+    max-height:40vh;overflow-y:auto}
   .lote.off{display:none}
+  /* Con la barra a la vista, las últimas filas quedarían tapadas. El margen lo
+     mide el JS con el alto real de la barra: fijarlo a ojo tapa filas cuando
+     los botones se apilan. */
+  body.con-lote{padding-bottom:var(--alto-lote,110px)}
+  .lote .cerrar{margin-left:auto;background:transparent;border:1px solid var(--line);
+    color:var(--muted)}
   td.chk,th.chk{width:1%;padding-right:0}
   th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   td.num{font-family:var(--mono);text-align:right}
@@ -257,6 +271,10 @@
 
   <div class="lote off" id="lote">
     <b id="lote-n">0 seleccionados</b>
+    <!-- El "tildar todo" vive en el encabezado de la tabla, que se va de
+         pantalla al bajar. Acá está a mano sin volver arriba. -->
+    <button type="button" class="sm" id="lote-todas"
+            title="Tilda todas las filas de la tabla">☑ Todas</button>
     <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
     <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
     <button type="button" class="sm" id="lote-pausar"
@@ -269,6 +287,8 @@
             title="Marca las seleccionadas como «hay que pagar el envío»">✈ Sin envío gratis</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
     <span class="msg" id="lote-msg"></span>
+    <button type="button" class="sm cerrar" id="lote-limpiar-sel"
+            title="Destilda todo y esconde esta barra">✕ Soltar selección</button>
   </div>
 
   <!-- El dólar se mueve y los costos quedan viejos. Sin esto hay que reeditar
@@ -761,7 +781,21 @@
     var n=seleccionados().length;
     $("lote").className="lote"+(n?"":" off");
     $("lote-n").textContent=n+(n===1?" seleccionado":" seleccionados");
+    // La barra está anclada al pie: sin este margen taparía las últimas filas.
+    // El alto se mide, no se supone: con la pantalla angosta los botones se
+    // apilan y la barra pasa de una fila a cuatro.
+    document.body.classList.toggle("con-lote", n>0);
+    if(n) document.body.style.setProperty("--alto-lote",
+            ($("lote").offsetHeight+16)+"px");
   }
+  // Tildar o soltar todo sin volver al encabezado de la tabla.
+  function tildarTodas(v){
+    Array.prototype.forEach.call(document.querySelectorAll(".sel"),
+      function(c){ c.checked=v; });
+    $("chk-todos").checked=v; pintarLote();
+  }
+  $("lote-todas").onclick=function(){ tildarTodas(true); };
+  $("lote-limpiar-sel").onclick=function(){ tildarTodas(false); };
   $("chk-todos").onchange=function(){
     var v=this.checked;
     Array.prototype.forEach.call(document.querySelectorAll(".sel"),function(c){c.checked=v;});
