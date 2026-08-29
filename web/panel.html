@@ -324,6 +324,9 @@
         <span class="hint">Para el resto ✈. Es el caso más común y el número
           más importante de la cuenta.</span>
       </div>
+      <div class="f" style="margin:0;flex-basis:100%">
+        <span class="warnflag" id="pr-envio-cruzado"></span>
+      </div>
       <div class="f" style="margin:0">
         <label>Ganancia mínima ($)</label>
         <input type="number" id="pr-piso" min="0" step="1000"
@@ -1905,6 +1908,14 @@
       $("pr-envio-pct-sin").value=c.envio_import_sin_gratis_pct||"";
       pctEnvio.con=c.envio_import_pct||0;
       pctEnvio.sin=c.envio_import_sin_gratis_pct||0;
+      // Que traer algo con envío gratis salga más caro que sin él no tiene
+      // sentido: casi seguro los dos números están cruzados. Se avisa en vez de
+      // dejar que el error se esconda dentro del costo de cada producto.
+      $("pr-envio-cruzado").textContent = (pctEnvio.con>pctEnvio.sin)
+        ? "⚠ Con envío gratis ("+pctEnvio.con+"%) te sale más caro que sin envío "
+          +"gratis ("+pctEnvio.sin+"%). Están cruzados: el de arriba tiene que "
+          +"ser el más chico."
+        : "";
     }).catch(function(){});
   }
 
