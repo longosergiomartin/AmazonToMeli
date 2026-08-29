@@ -803,6 +803,91 @@ def test_el_costo_a_mano_manda_tambien_al_simular_precios(cat):
     assert r["costo_ars"] == 275000
 
 
+def test_el_total_de_amazon_se_usa_tal_cual(cat):
+    """El mejor dato que existe: ya trae envío e impuestos, no estima nada."""
+    p = cat.agregar(_prod(precio_usd=59.93, costo_envio_usd=0.0,
+                          regimen="landed"))
+
+    p2 = cat.actualizar_total_amazon(p.id, 84.61)
+
+    assert p2.costo_envio_usd == pytest.approx(24.68, abs=0.01)  # 84.61 − 59.93
+    tc = cat._cfg_efectivo().tc_compra()
+    assert p2.costo_total_ars == pytest.approx(84.61 * tc, abs=1)
+
+
+def test_con_el_total_de_amazon_la_marca_de_envio_no_interviene(cat):
+    """Es el punto: con el número real no hay nada que estimar, así que tildar
+    o destildar el envío gratis no puede moverlo."""
+    p = cat.agregar(_prod(precio_usd=59.93, costo_envio_usd=0.0,
+                          regimen="landed"))
+    cat.actualizar_total_amazon(p.id, 84.61)
+
+    con = cat.marcar_envio_gratis(p.id, True)
+    sin = cat.marcar_envio_gratis(p.id, False)
+
+    assert con.costo_envio_usd == pytest.approx(24.68, abs=0.01)
+    assert sin.costo_envio_usd == pytest.approx(24.68, abs=0.01)
+
+
+def test_el_total_de_amazon_se_revalua_con_el_dolar(cat):
+    """La ventaja sobre el costo en pesos a mano: queda en dólares, así que no
+    se congela a la cotización del día en que se escribió."""
+    p = cat.agregar(_prod(precio_usd=59.93, costo_envio_usd=0.0,
+                          regimen="landed"))
+    cat.actualizar_total_amazon(p.id, 84.61)
+
+    assert cat.simular(cat.obtener(p.id), tc_costo=1600)["costo_ars"] == \
+        pytest.approx(84.61 * 1600, abs=1)
+    assert cat.simular(cat.obtener(p.id), tc_costo=1800)["costo_ars"] == \
+        pytest.approx(84.61 * 1800, abs=1)
+
+
+def test_el_total_de_amazon_borra_los_costos_en_pesos_a_mano(cat):
+    """Un solo costo por producto, y el que se revalúa gana."""
+    p = cat.agregar(_prod(precio_usd=59.93, regimen="landed"))
+    cat.actualizar_costo_manual(p.id, 500000)
+
+    p2 = cat.actualizar_total_amazon(p.id, 84.61)
+
+    assert p2.costo_manual_ars is None
+    assert p2.costo_producto_manual_ars is None
+
+
+def test_un_total_menor_que_el_precio_se_rechaza(cat):
+    """El error fácil: escribir el envío en vez del Total. Daría un costo más
+    barato que el producto solo y se publicaría a pérdida."""
+    p = cat.agregar(_prod(precio_usd=59.93, regimen="landed"))
+    with pytest.raises(ValueError, match="no puede ser menor"):
+        cat.actualizar_total_amazon(p.id, 24.68)
+
+
+def test_el_total_de_amazon_fija_el_regimen_landed(cat):
+    """Amazon ya dijo cuánto sale puesto acá: estimar aduana encima sería
+    contarla dos veces."""
+    p = cat.agregar(_prod(precio_usd=59.93, regimen="courier"))
+
+    p2 = cat.actualizar_total_amazon(p.id, 84.61)
+
+    assert p2.regimen == "landed"
+
+
+def test_sacar_el_total_de_amazon_vuelve_a_estimar_por_porcentaje(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed", envio_gratis_amazon=True))
+    cat.actualizar_total_amazon(p.id, 180.0)
+
+    p2 = cat.actualizar_total_amazon(p.id, None)
+
+    assert p2.costo_envio_usd == pytest.approx(26.0, abs=0.01)   # el 26% otra vez
+
+
+def test_el_total_de_amazon_sin_precio_del_producto_se_rechaza(cat):
+    """Sin el precio no se puede separar el envío del total."""
+    p = cat.agregar(_prod(precio_usd=0.0, regimen="landed"))
+    with pytest.raises(ValueError, match="precio de Amazon"):
+        cat.actualizar_total_amazon(p.id, 84.61)
+
+
 def test_el_precio_del_producto_a_mano_le_suma_el_envio_que_corresponda(cat):
     """El otro número que se conoce es lo que sale el producto, no lo que sale
     traerlo: la herramienta le suma el envío según la marca."""
@@ -997,6 +1082,15 @@ def _sin_migrar(c):
     c._cache_pref.clear()
 
 
+def _reabrir(ruta):
+    """Abre el catálogo como lo hace la app: la migración no corre al arrancar
+    —la base puede estar dormida— sino cuando llega el primer pedido, que es
+    donde el endpoint del listado llama a `migrar_pct_envio()`."""
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.migrar_pct_envio()
+    return c
+
+
 def test_el_porcentaje_unico_viejo_pasa_a_ser_el_de_sin_envio_gratis(tmp_path):
     """El que configuró el porcentaje único lo calibró contra lo que compraba
     —productos sin envío gratis—, así que ese es su lugar. Dejarlo en la casilla
@@ -1006,7 +1100,7 @@ def test_el_porcentaje_unico_viejo_pasa_a_ser_el_de_sin_envio_gratis(tmp_path):
     c.envio_import_pct = 0.70
     _sin_migrar(c)
 
-    c2 = Catalogo(conectar(ruta), cfg=Config())
+    c2 = _reabrir(ruta)
 
     assert c2.envio_import_sin_gratis_pct == pytest.approx(0.70)
     assert c2.envio_import_pct == pytest.approx(0.26)   # vuelve al de fábrica
@@ -1023,7 +1117,7 @@ def test_la_migracion_no_le_cambia_el_costo_a_lo_que_ya_estaba(tmp_path):
     antes = p.costo_total_ars
     _sin_migrar(c)
 
-    c2 = Catalogo(conectar(ruta), cfg=Config())
+    c2 = _reabrir(ruta)
 
     assert c2.obtener(p.id).costo_total_ars == pytest.approx(antes, abs=1)
 
@@ -1040,7 +1134,7 @@ def test_la_migracion_recalcula_lo_que_ya_estaba_tildado(tmp_path):
     assert c.obtener(p.id).costo_envio_usd == pytest.approx(70.0, abs=0.01)
     _sin_migrar(c)
 
-    c2 = Catalogo(conectar(ruta), cfg=Config())
+    c2 = _reabrir(ruta)
 
     assert c2.obtener(p.id).costo_envio_usd == pytest.approx(26.0, abs=0.01)
 
@@ -1052,7 +1146,7 @@ def test_la_migracion_no_pisa_el_total_real_del_checkout(tmp_path):
     p = c.agregar(_prod(precio_usd=100.0, costo_envio_usd=43.17, regimen="landed"))
     _sin_migrar(c)
 
-    c2 = Catalogo(conectar(ruta), cfg=Config())
+    c2 = _reabrir(ruta)
 
     assert c2.obtener(p.id).costo_envio_usd == 43.17
 
@@ -1064,11 +1158,11 @@ def test_la_migracion_corre_una_sola_vez(tmp_path):
     c = Catalogo(conectar(ruta), cfg=Config())
     c.envio_import_pct = 0.70
     _sin_migrar(c)
-    Catalogo(conectar(ruta), cfg=Config())
+    _reabrir(ruta)
 
     c3 = Catalogo(conectar(ruta), cfg=Config())
     c3.envio_import_pct = 0.31          # el usuario mide su caso con envío gratis
-    c4 = Catalogo(conectar(ruta), cfg=Config())
+    c4 = _reabrir(ruta)
 
     assert c4.envio_import_pct == pytest.approx(0.31)
     assert c4.envio_import_sin_gratis_pct == pytest.approx(0.70)
@@ -1076,7 +1170,7 @@ def test_la_migracion_corre_una_sola_vez(tmp_path):
 
 def test_sin_nada_configurado_la_migracion_no_toca_nada(tmp_path):
     """Una instalación nueva no tiene un porcentaje viejo que repartir."""
-    c = Catalogo(conectar(str(tmp_path / "mig6.db")), cfg=Config())
+    c = _reabrir(str(tmp_path / "mig6.db"))
 
     assert c.envio_import_pct == pytest.approx(0.26)
     assert c.envio_import_sin_gratis_pct == pytest.approx(0.70)
@@ -1089,7 +1183,7 @@ def test_la_migracion_respeta_la_casilla_nueva_si_ya_se_uso(tmp_path):
     c.envio_import_sin_gratis_pct = 0.85
     _sin_migrar(c)
 
-    c2 = Catalogo(conectar(ruta), cfg=Config())
+    c2 = _reabrir(ruta)
 
     assert c2.envio_import_pct == pytest.approx(0.30)
     assert c2.envio_import_sin_gratis_pct == pytest.approx(0.85)

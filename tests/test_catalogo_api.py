@@ -959,9 +959,9 @@ def test_endpoint_de_codigos_avisa_lo_que_no_reconoce(client):
     assert "no parece" in d["resultados"][0]["mensaje"].lower()
 
 
-def test_lote_codigos_guarda_el_gtin_en_el_producto(tmp_path, monkeypatch):
-    """El circuito que faltaba: el conversor aplicado al catálogo, dejando el
-    código guardado y listo para publicar."""
+def test_preparar_guarda_el_gtin_en_el_producto(tmp_path, monkeypatch):
+    """El circuito completo: preparar el borrador busca el código y lo deja
+    guardado, listo para publicar. Es lo que hace el Agente en cada producto."""
     _con_ml(monkeypatch, _cli_lote([], gtin_catalogo={
         "gtin": "5702017155326", "product_id": "MLA1", "nombre": "LEGO 75339"}))
 
@@ -970,48 +970,11 @@ def test_lote_codigos_guarda_el_gtin_en_el_producto(tmp_path, monkeypatch):
     pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
                 asin="B0COD00001").json()["id"]
 
-    r = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    r = c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
     assert r.status_code == 200
-    d = r.json()
-    assert d["encontrados"] == 1
-    assert d["resultados"][0]["fuente"] == "catálogo de MercadoLibre"
-    # Y quedó guardado en el producto, no solo mostrado.
+    # Quedó guardado en el producto, no solo consultado.
     attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
     assert attrs["GTIN"] == "5702017155326"
-
-
-def test_lote_codigos_no_repite_los_que_ya_tienen(tmp_path, monkeypatch):
-    consultas = []
-    cli = _cli_lote([])
-    cli.ficha_de_catalogo = lambda *a, **k: consultas.append(1) or {}
-    _con_ml(monkeypatch, cli)
-
-    c = TestClient(crear_app(db_path=str(tmp_path / "cod2.db")))
-    pid = _alta(c, asin="B0COD00002", titulo_ml="Ya tiene").json()["id"]
-    c.patch(f"/api/catalogo/{pid}/publicacion",
-            json={"ml_attributes": {"GTIN": "5702016914498"}})
-
-    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
-    assert d["resultados"][0]["fuente"] == "ya lo tenía"
-    assert not consultas          # no se consultó nada afuera
-
-
-def test_lote_codigos_frena_si_amazon_nos_limita(tmp_path, monkeypatch):
-    """Misma disciplina de siempre: ante un bloqueo se frena y se avisa."""
-    cli = _cli_lote([])
-    cli.ficha_de_catalogo = lambda *a, **k: {}
-    _con_ml(monkeypatch, cli)
-    monkeypatch.setattr("gtin_lookup.buscar_gtin",
-                        lambda asin: {"ok": False, "gtin": "", "bloqueado": True,
-                                      "candidatos": []})
-
-    c = TestClient(crear_app(db_path=str(tmp_path / "cod3.db")))
-    ids = [_alta(c, asin=f"B0COD0000{i}", titulo_ml=f"Producto {i}").json()["id"]
-           for i in (3, 4, 5)]
-
-    d = c.post("/api/catalogo/lote/codigos", json={"ids": ids}).json()
-    assert d["detenido"] is True
-    assert d["total"] == 1 and d["pendientes"] == 2
 
 
 def test_lote_codigos_saca_el_motivo_de_gtin_vacio(tmp_path, monkeypatch):
@@ -1027,7 +990,7 @@ def test_lote_codigos_saca_el_motivo_de_gtin_vacio(tmp_path, monkeypatch):
     c.patch(f"/api/catalogo/{pid}/publicacion",
             json={"ml_attributes": {"EMPTY_GTIN_REASON": "Otra razón"}})
 
-    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
     attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
     assert attrs["GTIN"] == "5702017155326"
     assert "EMPTY_GTIN_REASON" not in attrs
@@ -1060,10 +1023,8 @@ def test_la_cascada_llega_a_la_busqueda_por_nombre(tmp_path, monkeypatch):
     pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
                 asin="B0CASC0001").json()["id"]
 
-    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
 
-    assert d["encontrados"] == 1
-    assert d["detenido"] is False          # no hizo falta llegar a Amazon
     # Probó por número y después por nombre.
     assert any(q[1] for q in consultas) and any(q[2] for q in consultas)
     attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
@@ -1091,8 +1052,7 @@ def test_brickset_gana_sobre_todo_lo_demas(tmp_path, monkeypatch):
     pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
                 asin="B0BS000001").json()["id"]
 
-    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
-    assert d["resultados"][0]["fuente"] == "Brickset"
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
     assert otras == []          # ninguna otra fuente se consultó
     assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == "5702017155326"
 
@@ -1114,47 +1074,9 @@ def test_upcitemdb_cubre_los_rubros_que_no_son_lego(tmp_path, monkeypatch):
     pid = _alta(c, marca="Bosch", modelo=titulo, titulo_ml=titulo,
                 asin="B0UPC00001").json()["id"]
 
-    d = c.post("/api/catalogo/lote/codigos", json={"ids": [pid]}).json()
-    assert d["resultados"][0]["fuente"] == "UPCitemdb"
-    assert d["detenido"] is False       # no llegó a Amazon
-
-
-def test_cargar_codigos_a_mano_por_numero_de_set(tmp_path):
-    """La salida garantizada: pegar los códigos cuando ninguna fuente los tiene."""
-    c = TestClient(crear_app(db_path=str(tmp_path / "man.db")))
-    titulo = "LEGO Star Wars Death Star Diorama 75339 Kit"
-    pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo,
-                asin="B0MAN00001").json()["id"]
-
-    d = c.post("/api/catalogo/codigos/cargar",
-               json={"lineas": "75339;5702017155326"}).json()
-    assert d["total"] == 1 and d["aplicados"][0]["id"] == pid
-    assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == "5702017155326"
-
-
-def test_cargar_codigos_a_mano_por_asin_y_varios_separadores(tmp_path):
-    c = TestClient(crear_app(db_path=str(tmp_path / "man2.db")))
-    a = _alta(c, asin="B0MAN00002", titulo_ml="Uno").json()["id"]
-    b = _alta(c, asin="B0MAN00003", titulo_ml="Dos").json()["id"]
-
-    d = c.post("/api/catalogo/codigos/cargar", json={
-        "lineas": "B0MAN00002;5702017155326\nB0MAN00003, 673419281423"}).json()
-    assert d["total"] == 2
-    for pid, gtin in ((a, "5702017155326"), (b, "673419281423")):
-        assert c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]["GTIN"] == gtin
-
-
-def test_cargar_codigos_a_mano_avisa_lo_que_no_pudo(tmp_path):
-    c = TestClient(crear_app(db_path=str(tmp_path / "man3.db")))
-    _alta(c, asin="B0MAN00004", titulo_ml="Existe")
-
-    d = c.post("/api/catalogo/codigos/cargar", json={
-        "lineas": ("B0MAN00004;1234567890123\n"      # código inválido
-                   "B0NOEXISTE;5702017155326\n"      # no está en el catálogo
-                   "una linea suelta")}).json()
-    assert d["total"] == 0
-    assert d["sin_producto"] == ["B0NOEXISTE"]
-    assert len(d["invalidos"]) == 2
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
+    attrs = c.get(f"/api/catalogo/{pid}").json()["ml_attributes"]
+    assert attrs["GTIN"] == "3165140857710"   # salió de UPCitemdb
 
 
 def test_fuentes_de_codigos_reporta_lo_disponible(client, monkeypatch):
@@ -1459,7 +1381,7 @@ def test_no_busca_por_el_codigo_interno_de_amazon(tmp_path, monkeypatch):
     pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
                 asin="B0INTERN01").json()["id"]
     c.patch(f"/api/catalogo/{pid}/publicacion", json={"modelo_fabricante": "6332955"})
-    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
 
     assert "10282" in consultas, consultas
     assert "6332955" not in consultas, "buscó por el código interno de Amazon"
@@ -1487,7 +1409,7 @@ def test_busca_mas_alla_de_los_primeros_resultados(tmp_path, monkeypatch):
     c = TestClient(crear_app(db_path=str(tmp_path / "tapado.db")))
     pid = _alta(c, marca="LEGO", modelo=titulo, titulo_ml=titulo[:60],
                 asin="B0TAPADO01").json()["id"]
-    c.post("/api/catalogo/lote/codigos", json={"ids": [pid]})
+    c.post("/api/catalogo/lote/preparar", json={"ids": [pid]})
 
     assert limites and min(limites) >= 20, limites
 
@@ -1597,57 +1519,29 @@ def test_verificar_pasa_a_publicado_cuando_ml_lo_activa(tmp_path, monkeypatch):
 
 # ---- videos de YouTube --------------------------------------------------
 
-def test_lote_videos_avisa_si_falta_la_clave(client, monkeypatch):
+def test_buscar_video_avisa_si_falta_la_clave(client, monkeypatch):
     """Sin YOUTUBE_API_KEY no se puede buscar; hay que decirlo, no fallar
     silenciosamente."""
     import api.catalogo_routes as rutas
     monkeypatch.setattr(rutas, "youtube_configurado", lambda: False)
 
     pid = _alta(client, marca="LEGO", titulo_ml="LEGO 10282").json()["id"]
-    r = client.post("/api/catalogo/lote/videos", json={"ids": [pid]})
+    r = client.post(f"/api/catalogo/{pid}/video")
     assert r.status_code == 422
     assert "YOUTUBE_API_KEY" in str(r.json())
 
 
-def test_lote_videos_guarda_el_que_encuentra(client, monkeypatch):
-    import api.catalogo_routes as rutas
-    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
-    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
-        "video_id": "dQw4w9WgXcQ", "titulo": "LEGO 10282 adidas", "canal": "LEGO"})
-
-    pid = _alta(client, marca="LEGO", titulo_ml="LEGO adidas 10282").json()["id"]
-    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
-
-    assert d["encontrados"] == 1
-    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == "dQw4w9WgXcQ"
-
-
-def test_lote_videos_sin_resultado_no_es_un_error(client, monkeypatch):
+def test_buscar_video_sin_resultado_no_es_un_error(client, monkeypatch):
     """Que no haya video oficial es lo normal, no una falla."""
     import api.catalogo_routes as rutas
     monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
     monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {})
 
     pid = _alta(client, marca="LEGO", titulo_ml="LEGO raro 99999").json()["id"]
-    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
+    d = client.post(f"/api/catalogo/{pid}/video").json()
 
-    assert d["encontrados"] == 0 and d["total"] == 1
+    assert d["encontrado"] is False
     assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == ""
-
-
-def test_lote_videos_no_repisa_el_que_ya_esta(client, monkeypatch):
-    """El video cargado a mano gana: no se lo pisa con uno automático."""
-    import api.catalogo_routes as rutas
-    monkeypatch.setattr(rutas, "youtube_configurado", lambda: True)
-    monkeypatch.setattr(rutas, "buscar_video", lambda *a, **k: {
-        "video_id": "OTROOTRO123", "titulo": "otro", "canal": "LEGO"})
-
-    pid = _alta(client, marca="LEGO", titulo_ml="LEGO 10282").json()["id"]
-    client.patch(f"/api/catalogo/{pid}/publicacion",
-                 json={"video_youtube": "dQw4w9WgXcQ"})
-    client.post("/api/catalogo/lote/videos", json={"ids": [pid]})
-
-    assert client.get(f"/api/catalogo/{pid}").json()["video_youtube"] == "dQw4w9WgXcQ"
 
 
 def test_buscar_video_de_un_producto(client, monkeypatch):
@@ -1677,7 +1571,8 @@ def test_preparar_no_busca_video_sin_clave(client, monkeypatch):
 
 
 def test_las_fuentes_informan_si_hay_clave_de_youtube(client, monkeypatch):
-    """El panel usa esto para no ofrecer un botón que no puede funcionar."""
+    """El panel lo muestra arriba: es lo único que el usuario acaba de
+    configurar y quiere confirmar que la app tomó."""
     import api.catalogo_routes as rutas
 
     monkeypatch.setattr(rutas, "youtube_configurado", lambda: False)
@@ -1707,7 +1602,7 @@ def test_por_proxy_se_procesan_menos_por_llamada(client, monkeypatch):
     assert pedidos == [2, 10]
 
 
-def test_el_lote_de_videos_marca_los_que_no_son_oficiales(client, monkeypatch):
+def test_el_video_marca_los_que_no_son_oficiales(client, monkeypatch):
     """Un video de un canal de confianza no es del fabricante: hay que poder
     distinguirlo para revisarlo antes de publicar."""
     import api.catalogo_routes as rutas
@@ -1717,10 +1612,10 @@ def test_el_lote_de_videos_marca_los_que_no_son_oficiales(client, monkeypatch):
         "canal": "AustrianBrickFan", "oficial": False})
 
     pid = _alta(client, marca="LEGO", titulo_ml="LEGO 21042").json()["id"]
-    d = client.post("/api/catalogo/lote/videos", json={"ids": [pid]}).json()
+    d = client.post(f"/api/catalogo/{pid}/video").json()
 
-    assert d["resultados"][0]["oficial"] is False
-    assert d["resultados"][0]["canal"] == "AustrianBrickFan"
+    assert d["oficial"] is False
+    assert d["canal"] == "AustrianBrickFan"
 
 
 # ---- actualización de precios en lote -----------------------------------
@@ -1788,6 +1683,40 @@ def test_simular_precios_no_toca_nada(tmp_path, monkeypatch):
     assert despues["margen_deseado"] == antes["margen_deseado"]
     assert despues["precio_publicado_ars"] == antes["precio_publicado_ars"]
     assert cli.puestos == [], "no debería llamar a MercadoLibre"
+
+
+def _publicar_otro(c, asin, titulo):
+    pid = _alta(c, asin=asin, marca="LEGO", titulo_ml=titulo, precio_usd=100.0,
+                margen_deseado=0.35, ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    c.post(f"/api/catalogo/{pid}/publicar", json={})
+    return pid
+
+
+def test_simular_precios_respeta_lo_tildado_en_la_tabla(tmp_path, monkeypatch):
+    """Repreciar lo que no se tildó es cambiar precios en publicaciones vivas
+    sin que nadie lo haya pedido."""
+    c, _, pid = _app_con_publicado(tmp_path, monkeypatch, "simsel.db")
+    otro = _publicar_otro(c, "B0PRECIO02", "LEGO Set 21043")
+
+    d = c.post("/api/catalogo/precios/simular", json={"ids": [pid]}).json()
+
+    assert d["solo_seleccionadas"] is True
+    assert [f["id"] for f in d["filas"]] == [pid]
+    assert otro not in [f["id"] for f in d["filas"]]
+
+
+def test_sin_tildar_nada_se_simula_todo_el_catalogo(tmp_path, monkeypatch):
+    """Es el caso normal cuando cambió el dólar: obligar a tildar 126 filas
+    para eso sería peor que el problema."""
+    c, _, pid = _app_con_publicado(tmp_path, monkeypatch, "simtodo.db")
+    otro = _publicar_otro(c, "B0PRECIO03", "LEGO Set 21044")
+
+    d = c.post("/api/catalogo/precios/simular", json={}).json()
+
+    assert d["solo_seleccionadas"] is False
+    assert {f["id"] for f in d["filas"]} == {pid, otro}
 
 
 def test_aplicar_precios_manda_el_nuevo_a_mercadolibre(tmp_path, monkeypatch):
@@ -2294,74 +2223,87 @@ def _publicado_para_vigilar(tmp_path, monkeypatch, nombre, respuesta):
     return c, cli, pid
 
 
-def test_revisar_avisa_cuando_amazon_subio_el_precio(tmp_path, monkeypatch):
-    """El caso real: se publicó con Amazon a US$31,69 y para cuando alguien
-    compró estaba a US$53. La venta quedó en pérdida."""
+def _pausada_con_precio_viejo(tmp_path, monkeypatch, nombre):
+    """Una publicación pausada cuyo sugerido subió después de pausarla.
+
+    Es el caso real: se pausa por costo mal calculado, se corrige el costo, y
+    la publicación sigue guardando el precio con el que se pausó.
+    """
+    pasos = []
     c, cli, pid = _publicado_para_vigilar(
-        tmp_path, monkeypatch, "vg1.db",
-        {"ok": True, "precio_usd": 53.00, "disponible": True, "mensaje": ""})
-
-    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
-    f = d["filas"][0]
-
-    assert f["precio_antes_usd"] == 31.69 and f["precio_ahora_usd"] == 53.00
-    assert f["costo_ahora_ars"] > f["costo_antes_ars"]
-    assert d["creditos_usados"] == 5
-    # El precio publicado no se toca: informar no es cambiar.
-    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == \
-        f["precio_publicado_ars"]
+        tmp_path, monkeypatch, nombre,
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.reactivar = lambda item_id: pasos.append(("reactivar", item_id)) or {"status": "active"}
+    cli.actualizar_precio = lambda item_id, precio: pasos.append(("precio", precio)) or {}
+    c.post(f"/api/catalogo/{pid}/pausar")
+    # El costo real resulta ser mucho mayor: el sugerido se va bien arriba del
+    # precio con el que quedó pausada.
+    c.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 900000})
+    return c, pid, pasos, cli
 
 
-def test_revisar_detecta_lo_que_se_quedo_sin_stock(tmp_path, monkeypatch):
-    c, cli, pid = _publicado_para_vigilar(
-        tmp_path, monkeypatch, "vg2.db",
-        {"ok": True, "precio_usd": 59.99, "disponible": False, "mensaje": ""})
+def test_reactivar_al_sugerido_manda_el_precio_nuevo(tmp_path, monkeypatch):
+    """El agujero que hacía perder plata: reactivar devolvía la publicación a la
+    venta al precio con el que se había pausado, que era el mal calculado."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react1.db")
+    sug = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
 
-    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
+    d = c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True}).json()
 
-    assert d["sin_stock"] == 1
-    assert d["filas"][0]["disponible"] is False
-    # Y no lo pausa solo: eso es un paso aparte, con confirmación.
-    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
-
-
-def test_revisar_no_pausa_lo_que_no_pudo_leer(tmp_path, monkeypatch):
-    """Amazon bloquea seguido. Tomar un bloqueo por "sin stock" sacaría de
-    venta productos que sí están disponibles."""
-    c, cli, pid = _publicado_para_vigilar(
-        tmp_path, monkeypatch, "vg3.db",
-        {"ok": False, "precio_usd": None, "disponible": None,
-         "bloqueado": True, "mensaje": "Amazon nos bloqueó"})
-
-    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
-
-    assert d["sin_stock"] == 0 and d["no_leidos"] == 1
-    assert d["filas"][0]["bloqueado"] is True
-    assert c.get(f"/api/catalogo/{pid}").json()["disponibilidad"] == "in_stock"
+    assert d["estado"] == "publicado"
+    assert d["precio_publicado_ars"] == sug
+    assert ("precio", sug) in pasos
 
 
-def test_pausar_manda_la_pausa_a_mercadolibre(tmp_path, monkeypatch):
-    pausados = []
-    c, cli, pid = _publicado_para_vigilar(
-        tmp_path, monkeypatch, "vg4.db",
-        {"ok": True, "precio_usd": 59.99, "disponible": False, "mensaje": ""})
-    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+def test_reactivar_al_sugerido_pone_el_precio_antes_de_activar(tmp_path, monkeypatch):
+    """Si se activara primero, la publicación quedaría comprable al precio viejo
+    hasta que llegue el segundo pedido. Ese hueco es una venta a pérdida."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react2.db")
 
-    d = c.post("/api/catalogo/vigilancia/pausar", json={"ids": [pid]}).json()
+    c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True})
 
-    assert d["pausadas"] == 1 and pausados == ["MLA100"]
+    assert [x[0] for x in pasos] == ["precio", "reactivar"]
+
+
+def test_reactivar_sin_pedirlo_deja_el_precio_como_estaba(tmp_path, monkeypatch):
+    """La salida de emergencia sigue existiendo: reactivar al precio viejo es
+    una decisión válida, pero explícita."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react3.db")
+    viejo = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
+
+    d = c.post(f"/api/catalogo/{pid}/reactivar", json={}).json()
+
+    assert d["precio_publicado_ars"] == viejo
+    assert [x[0] for x in pasos] == ["reactivar"]
+
+
+def test_si_falla_el_precio_no_se_reactiva(tmp_path, monkeypatch):
+    """Reactivar igual la dejaría a la venta al precio viejo, que es justo lo
+    que se estaba tratando de evitar."""
+    from mercadolibre.client import MeliAPIError
+    c, pid, pasos, cli = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react4.db")
+    cli.actualizar_precio = lambda *a, **k: (_ for _ in ()).throw(
+        MeliAPIError("precio rechazado"))
+
+    r = c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True})
+
+    assert r.status_code == 502
+    assert "reactiv" in r.json()["detail"].lower()
+    assert ("reactivar", "MLA100") not in pasos
     assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
 
 
-def test_el_limite_de_revision_esta_acotado(tmp_path, monkeypatch):
-    """Cada producto son 5 créditos de un plan de 1.000 por mes: un límite
-    suelto vacía la cuenta en una llamada."""
-    c, cli, pid = _publicado_para_vigilar(
-        tmp_path, monkeypatch, "vg5.db",
-        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+def test_reactivar_en_lote_al_sugerido(tmp_path, monkeypatch):
+    """En lote no se ve producto por producto qué se acepta, así que salen
+    todas al precio que les corresponde hoy."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react5.db")
+    sug = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
 
-    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 9999}).json()
-    assert d["revisados"] <= 40
+    d = c.post("/api/catalogo/lote/reactivar",
+               json={"ids": [pid], "al_sugerido": True}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == sug
 
 
 def test_la_ganancia_minima_se_guarda_y_recalcula_el_catalogo(tmp_path, monkeypatch):
@@ -2669,6 +2611,86 @@ def test_el_costo_a_mano_se_edita_desde_el_panel(client):
     d = r.json()
     assert d["costo_total_ars"] == caro
     assert d["precio_sugerido_ars"] > antes["precio_sugerido_ars"]
+
+
+def test_listar_repara_el_porcentaje_de_envio_heredado(tmp_path):
+    """La migración no corre al arrancar —la base puede estar dormida— sino en
+    el primer listado. Sin esto el panel mostraría costos que ya se saben mal."""
+    ruta = str(tmp_path / "migapi.db")
+    c = TestClient(crear_app(db_path=ruta))
+    c.post("/api/catalogo/config", json={"envio_import_pct": 70})
+    pid = _alta(c, marca="LEGO", modelo="LEGO Heredado", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/envio-gratis", json={"envio_gratis": True})
+    # Se borra la marca para dejar la base como la de alguien que venía usando
+    # la versión de un solo porcentaje.
+    from catalogo import Catalogo
+    from db import conectar
+    conn = conectar(ruta)
+    conn.execute("DELETE FROM preferencias WHERE clave = ?",
+                 (Catalogo._PREF_MIGRACION_PCT,))
+    conn.commit()
+
+    c2 = TestClient(crear_app(db_path=ruta))
+    filas = c2.get("/api/catalogo").json()
+
+    cfg = c2.get("/api/catalogo/config").json()
+    assert cfg["envio_import_pct"] == 26.0
+    assert cfg["envio_import_sin_gratis_pct"] == 70.0
+    fila = next(f for f in filas if f["id"] == pid)
+    assert fila["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
+
+
+def test_el_total_de_amazon_se_carga_desde_la_fila(client):
+    """El paso que más tiempo come: abrir Amazon, leer el Total, escribirlo.
+    Un solo número reemplaza tildar el envío y convertir a pesos a mano."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 1", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": 84.61}).json()
+
+    assert d["costo_envio_usd"] == pytest.approx(24.68, abs=0.01)
+    assert d["costo_manual_ars"] is None      # no hace falta pasarlo a pesos
+
+
+def test_el_total_de_amazon_le_gana_a_los_costos_en_pesos(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 2", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 500000})
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": 84.61}).json()
+
+    assert d["costo_manual_ars"] is None
+    assert d["costo_envio_usd"] == pytest.approx(24.68, abs=0.01)
+
+
+def test_escribir_el_envio_en_vez_del_total_se_rechaza(client):
+    """El error fácil de la fila: poner 24.68 en vez de 84.61."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 3", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+
+    r = client.patch(f"/api/catalogo/{pid}/costo", json={"total_amazon_usd": 24.68})
+
+    assert r.status_code == 422
+    assert "menor" in r.json()["detail"]
+
+
+def test_vaciar_todo_limpia_tambien_el_total_de_amazon(client):
+    """«Volver a estimarlo» tiene que dejar el producto como recién cargado, no
+    a medias: cortar en el primer campo dejaba los costos en pesos puestos."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 4", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 500000})
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": None, "costo_ars": None,
+                           "costo_producto_ars": None}).json()
+
+    assert d["costo_manual_ars"] is None
+    assert d["costo_producto_manual_ars"] is None
+    assert d["costo_envio_usd"] == pytest.approx(70.0, abs=0.01)   # el % otra vez
 
 
 def test_el_precio_del_producto_a_mano_se_edita_desde_el_panel(client):

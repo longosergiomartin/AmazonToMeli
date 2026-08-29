@@ -431,6 +431,11 @@ def registrar_catalogo(app: FastAPI, conn,
             # Solo los que traen basura evidente. Rearmar todos acá pisaría los
             # títulos editados a mano, y sin avisar: eso se pide aparte.
             cat.limpiar_titulos(solo_sucios=True)
+            # El porcentaje de envío viejo quedó en la casilla equivocada y los
+            # costos se estimaron con él: acá se rehace esa cuenta, antes de
+            # devolver la tabla, para que no se muestre un costo que ya se sabe
+            # mal. Es idempotente: se anota en la base cuando queda pendiente.
+            cat.migrar_pct_envio()
         return [_dict(p) for p in cat.todos()]
 
     @app.post("/api/catalogo")
@@ -910,59 +915,6 @@ def registrar_catalogo(app: FastAPI, conn,
             cli = None  # sin sesión de ML se completa lo que no necesita red
         return _en_lote(ids, lambda p: _preparar_uno(p, cli))
 
-    @app.post("/api/catalogo/lote/codigos")
-    def lote_codigos(body: dict):
-        """Busca el código de barras de los productos ya cargados y lo guarda.
-
-        Es el conversor aplicado al catálogo: sin GTIN, MercadoLibre no deja
-        publicar en varias categorías. Va de a uno y con pausa, y frena apenas
-        Amazon nos limita: lo que quedó se retoma más tarde.
-        """
-        import time
-        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
-        pausa = float((body or {}).get("pausa_seg", 1.5))
-        solo_faltantes = (body or {}).get("solo_faltantes", True)
-        cli = None
-        if store.hay_sesion() and cred.configurado:
-            try:
-                cli = _client()
-            except HTTPException:
-                pass
-
-        resultados = []
-        detenido = False
-        for i, pid in enumerate(ids):
-            p = cat.obtener(pid)
-            if not p:
-                continue
-            attrs = dict(p.ml_attributes or {})
-            if solo_faltantes and (attrs.get("GTIN") or "").strip():
-                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                                   "gtin": attrs["GTIN"], "fuente": "ya lo tenía",
-                                   "ok": True})
-                continue
-            r = _codigo_de(p.modelo or p.titulo_ml or "", p.asin, cli,
-                           p.modelo_fabricante, p.marca)
-            if r["gtin"]:
-                attrs["GTIN"] = r["gtin"]
-                # Con GTIN de verdad el motivo de GTIN vacío sobra, y mandarlos
-                # juntos es contradictorio: MercadoLibre lo rechaza.
-                attrs.pop("EMPTY_GTIN_REASON", None)
-                cat.actualizar_publicacion(pid, ml_attributes=attrs)
-            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                               "gtin": r["gtin"], "fuente": r["fuente"],
-                               "ok": bool(r["gtin"])})
-            if r["bloqueado"]:
-                detenido = True
-                break
-            if i < len(ids) - 1 and r["fuente"] not in ("tu catálogo", "ya lo tenía"):
-                time.sleep(min(pausa, 5.0))
-
-        return {"resultados": resultados, "detenido": detenido,
-                "encontrados": sum(1 for r in resultados if r["ok"]),
-                "total": len(resultados),
-                "pendientes": max(0, len(ids) - len(resultados))}
-
     # ---- actualización de precios ----------------------------------------
     #
     # El dólar se mueve y los costos quedan viejos: sin esto hay que reeditar
@@ -1025,9 +977,19 @@ def registrar_catalogo(app: FastAPI, conn,
                 "envio": _numero(body, "envio_ars", "El costo de envío",
                                  permitir_cero=True)}
 
-    def _publicados_con_item():
+    def _publicados_con_item(ids=None):
+        """Las publicaciones que se pueden repreciar, opcionalmente filtradas.
+
+        `ids` viene de los tildes de la tabla. Vacío o ausente significa "todas":
+        repreciar el catálogo entero es el caso normal cuando cambió el dólar,
+        y obligar a tildar 126 filas para eso sería peor. Pero cuando el usuario
+        tildó algo, tocar lo que no tildó es cambiarle precios en publicaciones
+        vivas sin que lo haya pedido.
+        """
+        elegidos = {int(i) for i in ids} if ids else None
         return [p for p in cat.todos()
-                if p.estado in ("publicado", "pausado") and (p.ml_item_id or "").strip()]
+                if p.estado in ("publicado", "pausado") and (p.ml_item_id or "").strip()
+                and (elegidos is None or p.id in elegidos)]
 
     @app.post("/api/catalogo/precios/simular")
     def simular_precios(body: dict):
@@ -1041,8 +1003,9 @@ def registrar_catalogo(app: FastAPI, conn,
         if (body or {}).get("refrescar_cotizacion") and not par["tc_costo"]:
             _cotizacion(refrescar=True)
 
+        seleccion = (body or {}).get("ids") or []
         filas = []
-        for p in _publicados_con_item():
+        for p in _publicados_con_item(seleccion):
             r = cat.simular(p, **par)
             actual = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
             filas.append({
@@ -1056,6 +1019,9 @@ def registrar_catalogo(app: FastAPI, conn,
             })
         c = cat.cotizacion or {}
         return {"filas": filas, "total": len(filas),
+                # Para que el panel pueda decir sobre qué está operando: no es
+                # lo mismo repreciar 3 tildadas que las 126 del catálogo.
+                "solo_seleccionadas": bool(seleccion),
                 "dolar_costo": cat.dolar_costo,
                 "tc_costo": par["tc_costo"],
                 "envio_ars": cat.envio_efectivo(par["envio"]),
@@ -1172,102 +1138,6 @@ def registrar_catalogo(app: FastAPI, conn,
             })
         return {"filas": filas, "total": len(filas),
                 "con_titulo_nuevo": sum(1 for f in filas if f["cambia_titulo"])}
-
-    # ---- vigilancia: precio y stock en Amazon de lo ya publicado -----------
-
-    @app.post("/api/catalogo/vigilancia/revisar")
-    def revisar_amazon(body: dict = None):
-        """Relee en Amazon el precio y el stock de lo que está publicado.
-
-        Es el agujero que se comió la primera venta: se publica con el precio
-        del día que se capturó el producto, y para cuando alguien compra Amazon
-        puede haber subido el precio o haberse quedado sin stock. Se vende algo
-        que ya no se puede comprar.
-
-        No cambia nada en MercadoLibre: informa. Pausar o republicar es un paso
-        aparte, porque son decisiones con consecuencias.
-        """
-        cuerpo = body or {}
-        limite = max(1, min(int(cuerpo.get("limite") or 10), 40))
-        productos = cat.a_revisar(limite)
-
-        filas = []
-        for p in productos:
-            url = p.amazon_link or f"https://www.amazon.com/dp/{p.asin}"
-            try:
-                d = importar_desde_url(url)
-            except Exception as e:  # noqa: BLE001 - un producto no frena la vuelta
-                filas.append({"id": p.id, "nombre": p.titulo_ml or p.modelo,
-                              "error": str(e), "leido": False})
-                continue
-            precio_nuevo = d.get("precio_usd")
-            disponible = d.get("disponible")
-            antes_usd, antes_costo = p.precio_usd, p.costo_total_ars
-            p = cat.marcar_revisado(p.id, precio_nuevo, disponible)
-
-            # Lo que importa no es que el precio de Amazon suba, sino si el
-            # precio YA PUBLICADO en MercadoLibre sigue dejando ganancia.
-            publicado = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
-            m = margen_real_al_precio(p.costo_total_ars, publicado, p.categoria,
-                                      cat._cfg_efectivo()) if publicado else {}
-            filas.append({
-                "id": p.id, "nombre": p.titulo_ml or p.modelo,
-                "leido": bool(d.get("ok")) or precio_nuevo is not None,
-                "bloqueado": bool(d.get("bloqueado")),
-                "error": "" if d.get("ok") else (d.get("mensaje") or ""),
-                "amazon_link": url,
-                "precio_antes_usd": antes_usd,
-                "precio_ahora_usd": precio_nuevo,
-                "disponible": disponible,
-                "costo_antes_ars": round(antes_costo, 2),
-                "costo_ahora_ars": round(p.costo_total_ars, 2),
-                "precio_publicado_ars": round(publicado, 2),
-                "margen_ahora_pct": m.get("margen_pct"),
-                "margen_ars": m.get("margen_ars"),
-            })
-
-        sin_stock = [f for f in filas if f.get("disponible") is False]
-        en_perdida = [f for f in filas
-                      if f.get("margen_ahora_pct") is not None
-                      and f["margen_ahora_pct"] < 0]
-        return {"filas": filas, "revisados": len(filas),
-                "sin_stock": len(sin_stock), "en_perdida": len(en_perdida),
-                "no_leidos": sum(1 for f in filas if not f.get("leido")),
-                # 5 créditos por producto en el plan de ScraperAPI.
-                "creditos_usados": len(filas) * 5,
-                "quedan_sin_revisar": max(
-                    0, len([p for p in cat.todos()
-                            if p.estado in ("publicado", "pausado")]) - len(filas)),
-                }
-
-    @app.post("/api/catalogo/vigilancia/pausar")
-    def pausar_sin_stock(body: dict):
-        """Pausa en MercadoLibre las publicaciones que se indiquen.
-
-        Se pausa, no se borra: cuando Amazon vuelva a tener stock se reactiva y
-        la publicación conserva su antigüedad y sus visitas.
-        """
-        ids = [int(i) for i in (body or {}).get("ids", [])][:40]
-        if not ids:
-            raise HTTPException(422, "No hay publicaciones para pausar.")
-        cli = _client()
-        resultados = []
-        for pid in ids:
-            p = cat.obtener(pid)
-            if not p or not (p.ml_item_id or "").strip():
-                continue
-            fila = {"id": pid, "nombre": p.titulo_ml or p.modelo, "ok": False,
-                    "error": ""}
-            try:
-                cli.pausar(p.ml_item_id)
-                cat.cambiar_estado(pid, "pausado")
-                fila["ok"] = True
-            except MeliAPIError as e:
-                fila["error"] = _motivo(e)
-            resultados.append(fila)
-        return {"resultados": resultados,
-                "pausadas": sum(1 for r in resultados if r["ok"]),
-                "fallas": sum(1 for r in resultados if r["error"])}
 
     @app.get("/api/catalogo/publicaciones/diagnostico")
     def diagnostico_publicaciones():
@@ -1423,47 +1293,6 @@ def registrar_catalogo(app: FastAPI, conn,
         return buscar_video(p.modelo or p.titulo_ml or "", marca=p.marca,
                             numero_set=numero)
 
-    @app.post("/api/catalogo/lote/videos")
-    def lote_videos(body: dict):
-        """Busca en YouTube el video de cada producto y lo guarda.
-
-        MercadoLibre solo acepta videos de YouTube, así que el que trae Amazon
-        no sirve para publicar: el que sirve es el oficial del fabricante.
-        Encontrar pocos es lo esperable —se exige que el canal sea el de la
-        marca— y es preferible a poner el video de otro producto.
-        """
-        if not youtube_configurado():
-            raise HTTPException(422, "Falta configurar YOUTUBE_API_KEY para "
-                                "buscar videos. Se crea gratis en la consola de "
-                                "Google Cloud (YouTube Data API v3).")
-        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
-        solo_faltantes = (body or {}).get("solo_faltantes", True)
-
-        resultados = []
-        for pid in ids:
-            p = cat.obtener(pid)
-            if not p:
-                continue
-            if solo_faltantes and (p.video_youtube or "").strip():
-                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                                   "video_id": p.video_youtube,
-                                   "canal": "ya lo tenía", "ok": True})
-                continue
-            r = _buscar_video(p)
-            if r.get("video_id"):
-                cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
-            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                               "video_id": r.get("video_id", ""),
-                               "titulo_video": r.get("titulo", ""),
-                               "canal": r.get("canal", ""),
-                               # Los de canal de confianza conviene mirarlos
-                               # antes de publicar: no son del fabricante.
-                               "oficial": r.get("oficial"),
-                               "ok": bool(r.get("video_id"))})
-        return {"resultados": resultados,
-                "encontrados": sum(1 for r in resultados if r["ok"]),
-                "total": len(resultados)}
-
     @app.post("/api/catalogo/{pid}/video")
     def buscar_video_de(pid: int):
         """Busca el video de un producto solo."""
@@ -1476,51 +1305,6 @@ def registrar_catalogo(app: FastAPI, conn,
         if r.get("video_id"):
             cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
         return {"encontrado": bool(r.get("video_id")), **r}
-
-    @app.post("/api/catalogo/codigos/cargar")
-    def cargar_codigos(body: dict):
-        """Carga códigos de barras a mano, en lote.
-
-        La salida garantizada cuando ninguna fuente automática lo tiene: se
-        pegan líneas `clave;código`, donde la clave es el ASIN o el número de
-        set. Para LEGO, Brickset deja exportar esa lista de una.
-        """
-        import re as _re
-        from gtin_lookup import validar_gtin
-
-        crudo = (body or {}).get("lineas", "")
-        lineas = crudo if isinstance(crudo, list) else str(crudo).splitlines()
-        productos = cat.todos()
-        aplicados, sin_producto, invalidos = [], [], []
-
-        for linea in lineas:
-            partes = [p.strip() for p in _re.split(r"[;,\t|]+|\s{2,}", linea.strip())
-                      if p.strip()]
-            if len(partes) < 2:
-                if linea.strip():
-                    invalidos.append(linea.strip()[:60])
-                continue
-            clave, codigo = partes[0], _re.sub(r"\D", "", partes[-1])
-            if not validar_gtin(codigo):
-                invalidos.append(f"{clave}: {partes[-1]} no es un código válido")
-                continue
-            destino = next(
-                (p for p in productos
-                 if p.asin.upper() == clave.upper()
-                 or (p.modelo_fabricante or "") == clave
-                 or numero_de_set(p.modelo or p.titulo_ml or "") == clave), None)
-            if not destino:
-                sin_producto.append(clave)
-                continue
-            attrs = dict(destino.ml_attributes or {})
-            attrs["GTIN"] = codigo
-            attrs.pop("EMPTY_GTIN_REASON", None)
-            cat.actualizar_publicacion(destino.id, ml_attributes=attrs)
-            aplicados.append({"id": destino.id, "clave": clave, "gtin": codigo,
-                              "nombre": destino.titulo_ml or destino.modelo})
-
-        return {"aplicados": aplicados, "sin_producto": sin_producto,
-                "invalidos": invalidos, "total": len(aplicados)}
 
     @app.post("/api/catalogo/verificar")
     def verificar():
@@ -1815,16 +1599,14 @@ def registrar_catalogo(app: FastAPI, conn,
 
     @app.post("/api/catalogo/lote/reactivar")
     def lote_reactivar(body: dict):
-        ids = (body or {}).get("ids") or []
-        cli = _client() if ids else None
-
-        def _uno(p):
-            if (p.ml_item_id or "").strip():
-                cli.reactivar(p.ml_item_id)
-            return _dict(cat.cambiar_estado(p.id, "publicado",
-                                            "Reactivada en lote desde el panel"))
-
-        return _en_lote(ids, _uno)
+        """Vuelve a poner varias a la venta. Con `al_sugerido`, cada una sale al
+        precio que le corresponde hoy y no al que tenía cuando se pausó."""
+        cuerpo = body or {}
+        ids = cuerpo.get("ids") or []
+        al_sugerido = bool(cuerpo.get("al_sugerido"))
+        if ids:
+            _client()          # falla temprano si no hay sesión, no de a uno
+        return _en_lote(ids, lambda p: _reactivar_uno(p, al_sugerido))
 
     @app.post("/api/catalogo/lote/borrar")
     def lote_borrar(body: dict):
@@ -2265,10 +2047,14 @@ def registrar_catalogo(app: FastAPI, conn,
 
     @app.patch("/api/catalogo/{pid}/costo")
     def costo_manual(pid: int, body: dict):
-        """Costo real en pesos, puesto a mano. Vacío vuelve a la estimación.
+        """El costo real del producto, puesto a mano. Vacío vuelve a estimarlo.
 
-        Dos formas de cargarlo según qué número se tenga:
-          - `costo_ars`: el total ya puesto acá. Se usa tal cual.
+        Tres formas de cargarlo según qué número se tenga, de mejor a peor:
+          - `total_amazon_usd`: el Total del checkout de Amazon, en dólares. No
+            estima nada —ya trae envío e impuestos— y se revalúa con el dólar de
+            cada día. Con esto cargado, la marca de envío gratis no interviene.
+          - `costo_ars`: el total ya puesto acá, en pesos. Se usa tal cual, pero
+            queda congelado a la cotización del día en que se escribió.
           - `costo_producto_ars`: lo que sale el producto, sin el envío
             internacional. Se le suma el % que corresponda según tenga o no
             envío gratis de Amazon, así el sugerido cambia con esa marca.
@@ -2277,15 +2063,20 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         vacio = (None, "", 0)
         base, total = cuerpo.get("costo_producto_ars"), cuerpo.get("costo_ars")
+        usd = cuerpo.get("total_amazon_usd")
         try:
-            # Cargar uno borra el otro: hay un solo costo por producto.
+            # Cargar uno borra los otros: hay un solo costo por producto.
+            if usd not in vacio:
+                return _dict(cat.actualizar_total_amazon(pid, usd))
             if base not in vacio:
                 return _dict(cat.actualizar_costo_producto(pid, base))
             if total not in vacio:
                 return _dict(cat.actualizar_costo_manual(pid, total))
-            # Los dos vacíos: se borra lo que se haya pedido borrar y el costo
+            # Todos vacíos: se borra lo que se haya pedido borrar y el costo
             # vuelve a estimarse entero.
             p = None
+            if "total_amazon_usd" in cuerpo:
+                p = cat.actualizar_total_amazon(pid, None)
             if "costo_producto_ars" in cuerpo:
                 p = cat.actualizar_costo_producto(pid, None)
             if "costo_ars" in cuerpo:
@@ -2293,7 +2084,8 @@ def registrar_catalogo(app: FastAPI, conn,
         except ValueError as e:
             raise HTTPException(422, str(e))
         if p is None:
-            raise HTTPException(422, "Mandá costo_ars o costo_producto_ars.")
+            raise HTTPException(422, "Mandá total_amazon_usd, costo_ars o "
+                                     "costo_producto_ars.")
         return _dict(p)
 
     def _envio_gratis_pedido(body: dict):
@@ -2345,12 +2137,43 @@ def registrar_catalogo(app: FastAPI, conn,
                 raise HTTPException(502, f"No se pudo pausar en MercadoLibre: {e}")
         return _dict(cat.cambiar_estado(pid, "pausado", "Publicación pausada"))
 
-    @app.post("/api/catalogo/{pid}/reactivar")
-    def reactivar(pid: int):
-        p = _p(pid)
+    def _reactivar_uno(p: ProductoCatalogo, al_sugerido: bool) -> ProductoCatalogo:
+        """Vuelve a poner una publicación a la venta, opcionalmente al sugerido.
+
+        Reactivar sin tocar el precio es lo que hacía perder plata: una
+        publicación pausada guarda el precio del día que se pausó, y si se pausó
+        justamente porque el costo estaba mal, reactivarla la devuelve a la
+        venta al mismo precio equivocado.
+
+        **El precio va primero.** Si se activara antes, la publicación estaría
+        comprable al precio viejo durante el tiempo que tarde el segundo pedido,
+        y ese hueco es exactamente donde entra una venta a pérdida.
+        """
+        nuevo = None
+        if al_sugerido and p.precio_sugerido_ars > 0:
+            nuevo = round(p.precio_sugerido_ars, 2)
         if p.ml_item_id and store.hay_sesion():
+            cli = _client()
+            if nuevo is not None and abs(nuevo - (p.precio_publicado_ars or 0)) >= 0.01:
+                try:
+                    cli.actualizar_precio(p.ml_item_id, nuevo)
+                except MeliAPIError as e:
+                    raise HTTPException(502, "No se pudo poner el precio nuevo, "
+                                             f"así que no se reactivó: {_motivo(e)}")
+                cat.actualizar_precio(p.id, nuevo)
             try:
-                _client().reactivar(p.ml_item_id)
+                cli.reactivar(p.ml_item_id)
             except MeliAPIError as e:
                 raise HTTPException(502, f"No se pudo reactivar en MercadoLibre: {e}")
-        return _dict(cat.cambiar_estado(pid, "publicado", "Publicación reactivada"))
+        elif nuevo is not None:
+            cat.actualizar_precio(p.id, nuevo)
+        nota = ("Reactivada al precio sugerido" if nuevo is not None
+                else "Publicación reactivada")
+        return cat.cambiar_estado(p.id, "publicado", nota)
+
+    @app.post("/api/catalogo/{pid}/reactivar")
+    def reactivar(pid: int, body: dict = None):
+        """Reactiva la publicación. Con `al_sugerido` le pone antes el precio
+        sugerido, que es el que ya tiene en cuenta el costo corregido."""
+        p = _p(pid)
+        return _dict(_reactivar_uno(p, bool((body or {}).get("al_sugerido"))))

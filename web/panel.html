@@ -257,8 +257,6 @@
 
   <div class="lote off" id="lote">
     <b id="lote-n">0 seleccionados</b>
-    <button type="button" class="sm" id="lote-codigos" title="Busca el código de barras de cada uno y lo guarda">🔎 Buscar códigos</button>
-    <button type="button" class="sm" id="lote-videos" title="Busca en YouTube el video oficial de cada producto">🎬 Buscar videos</button>
     <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
     <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
     <button type="button" class="sm" id="lote-pausar"
@@ -273,30 +271,14 @@
     <span class="msg" id="lote-msg"></span>
   </div>
 
-  <details class="card" style="margin-top:14px">
-    <summary style="margin:0">Cargar códigos de barras a mano</summary>
-    <p class="hint" style="margin:10px 0">Cuando ninguna fuente automática tiene el
-      código. Pegá una línea por producto, con el <b>ASIN o el número de set</b>,
-      después el código:</p>
-    <textarea id="cod-lineas" rows="4"
-      placeholder="75339;5702017155326&#10;B0BBHHT8LY;673419281423"></textarea>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
-      <button type="button" id="cod-cargar">Cargar códigos</button>
-      <a href="/codigos/asistido" target="_blank" rel="noopener"
-         style="font-size:.82rem;color:var(--accent);font-weight:600">
-         🔖 …o completalos leyendo Amazon desde tu navegador</a>
-      <span class="hint" id="cod-fuentes"></span>
-    </div>
-    <div class="msg" id="cod-msg"></div>
-  </details>
-
   <!-- El dólar se mueve y los costos quedan viejos. Sin esto hay que reeditar
        cada publicación a mano, una por una. -->
   <div class="card" style="margin-top:14px">
     <b>💲 Actualizar precios de lo publicado</b>
     <p class="hint" style="margin:6px 0 10px">Recalcula el costo y vuelve a fijar
       el precio en MercadoLibre. Primero se ve qué cambiaría; nada se toca hasta
-      que confirmes.</p>
+      que confirmes. <b>Si tildás filas en la tabla, se reprecian solo esas</b>;
+      sin tildar nada, todo el catálogo publicado.</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
       <div class="f" style="margin:0">
         <label>Compro a dólar</label>
@@ -379,29 +361,6 @@
   </div>
 
   <div class="card">
-    <b>🔎 Revisar precio y stock en Amazon</b>
-    <p class="hint" style="margin:6px 0 10px">Lo publicado lleva el precio del
-      día que se capturó el producto. Si Amazon subió el precio o se quedó sin
-      stock, se puede vender algo que ya no se puede comprar —que es lo que
-      pasó con la primera venta—. Esto lo relee y avisa; <b>no toca
-      MercadoLibre</b>.<br>
-      Cada producto cuesta <b>5 créditos</b> de ScraperAPI y el plan gratis trae
-      1.000 por mes, así que se revisa de a poco, empezando por los que hace
-      más que no se miran.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <label style="display:flex;align-items:center;gap:6px">Revisar
-        <input type="number" id="vg-limite" value="10" min="1" max="40"
-               style="width:70px"> productos</label>
-      <span class="hint" id="vg-costo">= 50 créditos</span>
-      <button type="button" class="sm" id="vg-revisar">Revisar en Amazon</button>
-      <button type="button" class="sm primary" id="vg-pausar"
-              style="display:none">Pausar los que no tienen stock</button>
-    </div>
-    <div class="msg" id="vg-msg"></div>
-    <div id="vg-tabla" class="hist" style="max-height:280px;overflow:auto"></div>
-  </div>
-
-  <div class="card">
     <b>✍️ Mejorar títulos y descripciones de lo publicado</b>
     <p class="hint" style="margin:6px 0 10px">Rehace el título con la estrategia
       de publicación y reescribe la descripción con la ficha y las condiciones de
@@ -448,7 +407,8 @@
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
       <th class="prod">Producto</th>
-      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis».">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis». Si cargás el Total de Amazon, esta casilla deja de intervenir.">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:right" title="El Total que te muestra el checkout de Amazon, en dólares, ya con envío e impuestos. Es el dato exacto: escribilo y el costo y el sugerido se recalculan solos, sin estimar nada.">Total Amazon<br><span class="hint">US$</span></th>
       <th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
       <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th class="acc">Acciones</th>
     </tr></thead><tbody id="tbody"></tbody></table>
@@ -722,6 +682,16 @@
                ? '<span class="hint" title="Sin revisar: se cobra como si NO '
                  +'tuviera envío gratis">?</span>' : '')
             +'</td>'+
+          // El Total del checkout, editable en la fila misma. Es el paso que
+          // más tiempo come —abrir Amazon, leer el total, volver— y hacerlo
+          // desde un diálogo por producto multiplicaba los clics. Escribir acá
+          // y salir del campo recalcula costo y sugerido sin estimar nada.
+          '<td class="num"><input type="number" step="0.01" min="0" class="totusd" '
+            +'data-id="'+p.id+'" style="width:88px;text-align:right" '
+            +'placeholder="'+(p.precio_usd?("+"+(p.precio_usd||0).toFixed(0)):"")+'" '
+            +'title="Total del checkout de Amazon en USD, con envío e impuestos" '
+            +'value="'+(p.precio_usd&&p.costo_envio_usd
+                ? (p.precio_usd+p.costo_envio_usd).toFixed(2) : "")+'"></td>'+
           // El número es el botón para editarlo: el costo a mano estaba
           // escondido en el menú "⋯" y es lo primero que hay que poder
           // corregir. Se marca si está puesto a mano, que es un dato distinto
@@ -748,6 +718,22 @@
       });
       Array.prototype.forEach.call(document.querySelectorAll(".sel"),
         function(c){ c.onchange=pintarLote; });
+      // Se guarda al salir del campo, no en cada tecla: así se puede tipear
+      // "59.93" sin que salga a guardar "5", "59", "59.9"…
+      Array.prototype.forEach.call(document.querySelectorAll("input.totusd"),
+        function(inp){
+          var previo=inp.value;
+          inp.onkeydown=function(e){ if(e.key==="Enter") this.blur(); };
+          inp.onblur=function(){
+            var v=this.value.trim();
+            if(v===previo) return;          // no se tocó: no se molesta al server
+            var campo=this; campo.disabled=true;
+            api("PATCH","/api/catalogo/"+campo.getAttribute("data-id")+"/costo",
+                {total_amazon_usd: v===""?null:parseFloat(v)})
+              .then(cargar)
+              .catch(function(e){ campo.value=previo; campo.disabled=false; err(e); });
+          };
+        });
       Array.prototype.forEach.call(document.querySelectorAll("a.costo"),
         function(a){ a.onclick=function(e){
           e.preventDefault();
@@ -820,60 +806,17 @@
     correrLote("/api/catalogo/lote/publicar","lote-publicar",
       "Vas a publicar {n} producto(s) en MercadoLibre, con el precio sugerido de cada uno.\n\n¿Confirmás?");
   };
-  // Conversor aplicado al catálogo: sin GTIN, MercadoLibre no deja publicar.
-  $("lote-codigos").onclick=function(){
-    var ids=seleccionados();
-    if(!ids.length) return;
-    var b=$("lote-codigos"); b.disabled=true;
-    $("lote-msg").textContent="Buscando códigos… va de a uno y con pausa, "
-      +"así que con muchos productos tarda un rato.";
-    api("POST","/api/catalogo/lote/codigos",{ids:ids}).then(function(d){
-      b.disabled=false;
-      var m=d.encontrados+" de "+d.total+" con código.";
-      if(d.detenido) m+=" Amazon nos limitó (bloquea a los servidores de la nube, "
-        +"no es algo que se arregle esperando mucho). Los que dependen de Amazon "
-        +"salen mejor corriendo la herramienta desde tu PC.";
-      if(d.pendientes) m+=" Quedaron "+d.pendientes+" sin procesar.";
-      var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
-      if(sin.length) m+="\nSin código: "+sin.map(function(r){
-        return r.nombre;}).join(" · ");
-      $("lote-msg").textContent=m;
-      cargar();
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
-  $("lote-videos").onclick=function(){
-    var ids=seleccionados();
-    if(!ids.length) return;
-    var b=$("lote-videos"); b.disabled=true;
-    $("lote-msg").textContent="Buscando videos en YouTube…";
-    api("POST","/api/catalogo/lote/videos",{ids:ids}).then(function(d){
-      b.disabled=false;
-      var m=d.encontrados+" de "+d.total+" con video.";
-      // Los que salieron de un canal de confianza y no del oficial conviene
-      // mirarlos antes de publicar.
-      var terceros=(d.resultados||[]).filter(function(r){
-        return r.ok && r.oficial===false;});
-      if(terceros.length) m+="\nDe canal de confianza (no oficial, revisalos): "
-        +terceros.map(function(r){return r.nombre+" → "+r.canal;}).join(" · ");
-      var sin=(d.resultados||[]).filter(function(r){return !r.ok;});
-      // Encontrar pocos es lo esperado: solo se acepta el canal de la marca.
-      if(sin.length) m+="\nSin video: "+sin.map(function(r){
-        return r.nombre;}).join(" · ");
-      $("lote-msg").textContent=m;
-      cargar();
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
   // ---- actualización de precios ---------------------------------------
   // Simular y aplicar están separados a propósito: cambiar el precio de una
   // publicación viva no se deshace con un botón.
-  var prFilas=[];
+  var prFilas=[], prSoloSel=false;
 
   function prCuerpo(){
     var num=function(id){ var v=($(id).value||"").trim(); return v===""?null:Number(v); };
+    // Si hay filas tildadas en la tabla, se reprecian solo esas. Sin tildar
+    // nada se reprecia todo, que es el caso normal cuando cambió el dólar.
     return {tc_costo:num("pr-tc-costo"), margen_pct:num("pr-margen"),
-            envio_ars:num("pr-envio"),
+            envio_ars:num("pr-envio"), ids:seleccionados(),
             refrescar_cotizacion:$("pr-refrescar").checked};
   }
 
@@ -882,8 +825,10 @@
     $("pr-msg").textContent="Calculando con la cotización de hoy…";
     $("pr-aplicar").style.display="none";
     api("POST","/api/catalogo/precios/simular",prCuerpo()).then(function(d){
-      b.disabled=false; prFilas=d.filas||[];
-      if(!prFilas.length){ $("pr-msg").textContent="No hay publicaciones para actualizar.";
+      b.disabled=false; prFilas=d.filas||[]; prSoloSel=!!d.solo_seleccionadas;
+      if(!prFilas.length){ $("pr-msg").textContent=d.solo_seleccionadas
+          ? "De lo que tildaste, ninguna está publicada en MercadoLibre."
+          : "No hay publicaciones para actualizar.";
         $("pr-tabla").innerHTML=""; return; }
       var c=d.cotizacion||{};
       // Si se puso la cotización a mano manda eso, no la del mercado.
@@ -892,7 +837,8 @@
           : "Dólar oficial "+fmt(c.oficial)+" · tarjeta "+fmt(c.tarjeta)
             +" · costo al dólar "+(d.dolar_costo||"—"))
         +" · envío "+fmt(d.envio_ars)
-        +". "+prFilas.length+" publicación/es.";
+        +". "+prFilas.length+" publicación/es"
+        +(d.solo_seleccionadas?" (solo las tildadas)":" (TODO el catálogo)")+".";
       $("pr-tabla").innerHTML=prFilas.map(function(f){
         var v=f.variacion_pct;
         var color=v==null?"var(--muted)":(v>0?"var(--good)":"var(--bad)");
@@ -906,8 +852,10 @@
 
   $("pr-aplicar").onclick=function(){
     if(!prFilas.length) return;
-    if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es EN TU CUENTA "
-      +"de MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
+    if(!confirm("Esto cambia el precio de "+prFilas.length+" publicación/es "
+      +(prSoloSel?"(las que tildaste) ":"(TODO el catálogo publicado) ")
+      +"EN TU CUENTA de MercadoLibre, ya visibles para los compradores. "
+      +"¿Confirmás?")) return;
     var b=$("pr-aplicar"); b.disabled=true;
     $("pr-frenar").style.display="";
     // De a pocos por llamada: cada publicación es un viaje a MercadoLibre y
@@ -1038,68 +986,6 @@
     api("PATCH","/api/revision",{con_proxy:this.checked})
       .then(rvPintar).catch(err);
   });
-
-  // ---- vigilancia de precio y stock en Amazon --------------------------
-  var vgSinStock=[];
-
-  $("vg-limite").addEventListener("input",function(){
-    $("vg-costo").textContent="= "+((parseInt(this.value,10)||0)*5)+" créditos";
-  });
-
-  $("vg-revisar").onclick=function(){
-    var n=parseInt($("vg-limite").value,10)||10;
-    if(!confirm("Esto consume "+(n*5)+" créditos de ScraperAPI (de 1.000 por "
-      +"mes). No cambia nada en MercadoLibre. ¿Seguimos?")) return;
-    var b=$("vg-revisar"); b.disabled=true;
-    $("vg-msg").textContent="Leyendo Amazon… va de a uno y con pausa, tarda un rato.";
-    $("vg-pausar").style.display="none";
-    api("POST","/api/catalogo/vigilancia/revisar",{limite:n}).then(function(d){
-      b.disabled=false;
-      vgSinStock=(d.filas||[]).filter(function(f){return f.disponible===false;});
-      $("vg-msg").textContent=d.revisados+" revisados ("+d.creditos_usados
-        +" créditos). "+d.sin_stock+" sin stock · "+d.en_perdida
-        +" quedaron en pérdida"
-        +(d.no_leidos?" · "+d.no_leidos+" no se pudieron leer":"")
-        +". Quedan "+d.quedan_sin_revisar+" sin revisar.";
-      $("vg-tabla").innerHTML=(d.filas||[]).map(function(f){
-        // Sin stock y en pérdida son los dos casos que hay que ver primero.
-        var alerta = f.disponible===false ? "var(--bad)"
-                   : (f.margen_ahora_pct!=null && f.margen_ahora_pct<0 ? "var(--bad)"
-                   : (f.margen_ahora_pct!=null && f.margen_ahora_pct<15 ? "var(--warn)"
-                   : "var(--good)"));
-        var estado = f.disponible===false ? "SIN STOCK en Amazon"
-                   : (f.disponible===true ? "con stock" : "no se pudo saber");
-        var precio = (f.precio_antes_usd!=null&&f.precio_ahora_usd!=null
-                      &&f.precio_antes_usd!=f.precio_ahora_usd)
-          ? " · US$"+f.precio_antes_usd+" → <b>US$"+f.precio_ahora_usd+"</b>"
-          : (f.precio_ahora_usd!=null?" · US$"+f.precio_ahora_usd:"");
-        return '<div><a href="'+esc(f.amazon_link)+'" target="_blank" '
-          +'rel="noopener">'+esc(f.nombre)+' ↗</a> '
-          +'<span style="color:'+alerta+'">'+estado+'</span>'+precio
-          +(f.margen_ahora_pct!=null
-             ? ' <span class="hint">margen ahora '+f.margen_ahora_pct+'%</span>' : '')
-          +(f.error?' <span class="hint">('+esc(f.error)+')</span>':'')
-          +'</div>';
-      }).join("");
-      if(vgSinStock.length) $("vg-pausar").style.display="";
-      cargar();
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
-  $("vg-pausar").onclick=function(){
-    if(!vgSinStock.length) return;
-    if(!confirm("Pausar "+vgSinStock.length+" publicación/es que no tienen stock "
-      +"en Amazon.\n\nSe pausan, no se borran: cuando vuelva el stock se "
-      +"reactivan y conservan su antigüedad y sus visitas. ¿Confirmás?")) return;
-    var b=$("vg-pausar"); b.disabled=true;
-    api("POST","/api/catalogo/vigilancia/pausar",
-        {ids:vgSinStock.map(function(f){return f.id;})}).then(function(d){
-      b.disabled=false; $("vg-pausar").style.display="none";
-      $("vg-msg").textContent=d.pausadas+" pausada/s en MercadoLibre."
-        +(d.fallas?" "+d.fallas+" no se pudieron pausar.":"");
-      cargar();
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
 
   $("tx-diagnostico").onclick=function(){
     var b=$("tx-diagnostico"); b.disabled=true;
@@ -1315,10 +1201,17 @@
   $("lote-reactivar-pub").onclick=function(){
     var ids=seleccionados();
     if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
-    if(!confirm("Volver a poner a la venta "+ids.length+" publicación/es. "
+    // Cada una guarda el precio del día que se pausó, que puede ser el precio
+    // mal calculado que motivó la pausa. En lote siempre salen al precio de
+    // hoy: acá no se ve producto por producto qué se está aceptando, así que la
+    // única opción segura es la correcta. Volver al precio viejo se puede de a
+    // uno, desde el menú de la fila.
+    if(!confirm("Volver a poner a la venta "+ids.length+" publicación/es, cada "
+      +"una al precio que le corresponde HOY (el sugerido).\n\n"
       +"Asegurate de poder cumplirlas. ¿Confirmás?")) return;
     $("lote-msg").textContent="Reactivando…";
-    api("POST","/api/catalogo/lote/reactivar",{ids:ids}).then(function(d){
+    api("POST","/api/catalogo/lote/reactivar",
+        {ids:ids,al_sugerido:true}).then(function(d){
       $("lote-msg").textContent=resumenLote(d,"reactivada/s");
       cargar();
     }).catch(err);
@@ -1431,54 +1324,20 @@
   });
   function cargarAgente(){ api("GET","/api/agente").then(pintarAgente).catch(function(){}); }
 
-  // Carga manual de códigos: la salida garantizada cuando ninguna fuente los tiene.
-  $("cod-cargar").onclick=function(){
-    var v=($("cod-lineas").value||"").trim();
-    if(!v){ $("cod-msg").textContent="Pegá al menos una línea."; return; }
-    api("POST","/api/catalogo/codigos/cargar",{lineas:v}).then(function(d){
-      var m=d.total+" código(s) cargado(s).";
-      if(d.sin_producto.length) m+=" Sin producto en el catálogo: "+d.sin_producto.join(", ")+".";
-      if(d.invalidos.length) m+=" Inválidos: "+d.invalidos.join(" · ")+".";
-      $("cod-msg").textContent=m;
-      if(d.total) $("cod-lineas").value="";
-      cargar();
-    }).catch(err);
-  };
-
+  // Qué claves de entorno están puestas. Se muestra arriba, a la vista: es lo
+  // único que el usuario acaba de configurar y quiere confirmar que tomó.
   function cargarFuentes(){
     api("GET","/api/codigos/fuentes").then(function(f){
-      var partes=[];
-      partes.push("MercadoLibre "+(f.mercadolibre?"✓":"✕"));
-      partes.push("UPCitemdb ✓");
-      partes.push("tu navegador ✓");
-      // Con proxy la lectura de Amazon funciona desde el servidor; sin él, solo
-      // corriendo la herramienta desde tu PC.
-      if(f.proxy_amazon) partes.push("Amazon por proxy ✓");
-      if(f.brickset) partes.push("Brickset ✓");
-      $("cod-fuentes").textContent="Fuentes: "+partes.join(" · ");
-
-      // Arriba, a la vista, solo lo que depende de una clave: es lo único que
-      // el usuario acaba de configurar y quiere confirmar.
       var claves=[
         {on:f.proxy_amazon, si:"🟢 Amazon por proxy",
-         no:"⚪ Amazon directo (sin SCRAPER_API_KEY: la carga en lote se frena "
-            +"desde el servidor)"},
+         no:"⚪ Amazon directo (sin SCRAPER_API_KEY el agente de revisión solo "
+            +"puede leer desde tu navegador)"},
         {on:f.youtube, si:"🟢 Videos de YouTube",
          no:"⚪ Videos de YouTube apagados (falta YOUTUBE_API_KEY)"}];
       $("extras").innerHTML=claves.map(function(c){
         return '<span style="margin-right:12px;color:'
           +(c.on?"var(--good)":"var(--muted)")+'">'+esc(c.on?c.si:c.no)+'</span>';
       }).join("");
-
-      // El botón de videos no sirve sin la clave: mejor decirlo antes de que
-      // lo aprieten, no después.
-      var bv=$("lote-videos");
-      if(bv && !f.youtube){
-        bv.disabled=true;
-        bv.title="Falta configurar YOUTUBE_API_KEY (se crea gratis en la "
-          +"consola de Google Cloud, YouTube Data API v3).";
-        bv.textContent="🎬 Buscar videos (falta la clave)";
-      }
     }).catch(function(){});
   }
 
@@ -1539,8 +1398,25 @@
     if(p.estado==="pausado"){
       var re=document.createElement("button");
       re.className="sm"; re.textContent="▶ Reactivar";
-      re.title="Vuelve a ponerla a la venta";
-      re.onclick=function(){ op(p.id,"reactivar"); };
+      // Una publicación pausada guarda el precio del día que se pausó. Si se
+      // pausó porque el costo estaba mal, reactivarla tal cual la devuelve a la
+      // venta al mismo precio equivocado: hay que preguntarlo, no asumirlo.
+      var viejo=p.precio_publicado_ars||0, sug=p.precio_sugerido_ars||0;
+      var desfasada=sug>0 && Math.abs(sug-viejo)>=1;
+      re.title=desfasada
+        ? "Está pausada a "+fmt(viejo)+" y hoy le corresponde "+fmt(sug)
+        : "Vuelve a ponerla a la venta";
+      re.onclick=function(){
+        if(!desfasada){ op(p.id,"reactivar"); return; }
+        if(!confirm("Quedó pausada en "+fmt(viejo)+" y hoy le corresponde "
+          +fmt(sug)+" (margen "+(p.margen_pct||0).toFixed(0)+"%).\n\n"
+          +"Se reactiva a "+fmt(sug)+". El precio nuevo se manda primero, así "
+          +"nunca queda comprable al viejo.\n\n"
+          +"Para volver al precio que tenía, usá «Reactivar al precio viejo» "
+          +"en el menú ⋯.")) return;
+        api("POST","/api/catalogo/"+p.id+"/reactivar",{al_sugerido:true})
+          .then(cargar).catch(err);
+      };
       c.appendChild(re);
     }
 
@@ -1549,6 +1425,15 @@
     var body=document.createElement("div"); body.className="menu-body"; d.appendChild(body);
     function b(txt,fn){var el=document.createElement("button");el.className="sm";el.textContent=txt;
       el.onclick=function(){d.removeAttribute("open");fn();};body.appendChild(el);}
+    // La salida de emergencia del botón ▶ Reactivar, que siempre sale al
+    // sugerido: acá se puede volver al precio que la publicación ya tenía.
+    if(p.estado==="pausado" && desfasada){
+      b("Reactivar al precio viejo ("+fmt(viejo)+")",function(){
+        if(!confirm("Vuelve a la venta a "+fmt(viejo)+", el precio que tenía "
+          +"cuando se pausó. Hoy le corresponde "+fmt(sug)+".\n\n¿Confirmás?")) return;
+        op(p.id,"reactivar");
+      });
+    }
     b("Precio",function(){var v=prompt("Nuevo precio de venta (ARS):",Math.round(p.precio_publicado_ars||p.precio_sugerido_ars));
       if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
     b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);
@@ -1813,7 +1698,15 @@
         +'así que al precio del producto se le suma <b>'+pct+'%</b> de envío + '
         +'importación. Cambiando esa marca en la tabla, el costo y el sugerido '
         +'se recalculan solos.</p>'
-      +'<div class="f"><label>Precio del producto en pesos <span class="hint">(sin el envío)</span></label>'
+      +'<div class="f"><label>✅ Total de Amazon en dólares <span class="hint">(lo que dice el checkout, con envío e impuestos)</span></label>'
+        +'<input id="co-usd" type="number" step="0.01" value="'
+        +(p.precio_usd&&p.costo_envio_usd?(p.precio_usd+p.costo_envio_usd).toFixed(2):"")+'">'
+        +'<span class="hint">El mejor de los tres: no estima nada y se revalúa '
+        +'con el dólar de cada día. Con esto cargado, la marca de envío gratis y '
+        +'los porcentajes dejan de intervenir'
+        +(p.precio_usd?'. El producto solo sale US$'+p.precio_usd.toFixed(2):'')
+        +'.</span></div>'
+      +'<div class="f"><label>o · Precio del producto en pesos <span class="hint">(sin el envío)</span></label>'
         +'<input id="co-base" type="number" step="1" value="'
         +(p.costo_producto_manual_ars?Math.round(p.costo_producto_manual_ars):"")+'">'
         +'<span class="hint" id="co-base-msg">Se le suma el '+pct+'% de envío + importación.</span></div>'
@@ -1826,11 +1719,13 @@
         +(p.costo_manual_ars?" (total a mano)"
           :(p.costo_producto_manual_ars?" (producto a mano + "+pct+"%)"
                                        :" (estimado entero)"))+'.</p>';
-    // Los dos campos son excluyentes: escribir en uno vacía el otro, así no
+    // Los tres campos son excluyentes: escribir en uno vacía los otros, así no
     // queda la duda de cuál mandó.
-    function excluir(a,b){ $(a).addEventListener("input",function(){
-      if(this.value.trim()!=="") $(b).value=""; }); }
-    excluir("co-base","co-total"); excluir("co-total","co-base");
+    var campos=["co-usd","co-base","co-total"];
+    campos.forEach(function(a){ $(a).addEventListener("input",function(){
+      if(this.value.trim()==="") return;
+      campos.forEach(function(b){ if(b!==a) $(b).value=""; });
+    }); });
     $("co-base").addEventListener("input",function(){
       var v=parseFloat(this.value);
       $("co-base-msg").textContent=(isFinite(v)&&v>0)
@@ -1843,14 +1738,17 @@
         .then(function(){ $("dlg").close(); cargar(); }).catch(err);
     }
     addBtn(f,"Volver a estimarlo",function(){
-      guardar({costo_ars:null,costo_producto_ars:null});
+      guardar({costo_ars:null,costo_producto_ars:null,total_amazon_usd:null});
     },"sm");
     addBtn(f,"Cancelar",function(){ $("dlg").close(); },"sm");
     addBtn(f,"Guardar",function(){
-      var base=$("co-base").value.trim(), total=$("co-total").value.trim();
-      if(total!=="") guardar({costo_ars:parseFloat(total)});
+      var usd=$("co-usd").value.trim(), base=$("co-base").value.trim(),
+          total=$("co-total").value.trim();
+      // El Total de Amazon primero: es el único que no estima nada.
+      if(usd!=="") guardar({total_amazon_usd:parseFloat(usd)});
+      else if(total!=="") guardar({costo_ars:parseFloat(total)});
       else if(base!=="") guardar({costo_producto_ars:parseFloat(base)});
-      else guardar({costo_ars:null,costo_producto_ars:null});
+      else guardar({costo_ars:null,costo_producto_ars:null,total_amazon_usd:null});
     },"sm primary");
     $("dlg").showModal();
   }

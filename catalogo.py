@@ -146,47 +146,77 @@ class Catalogo:
         # Preferencias leídas: se llenan al primer uso y las invalida su setter.
         self._cache_pref: dict[str, Optional[str]] = {}
         self._crear_tablas()
-        try:
-            self.migrar_pct_envio()
-        except Exception:  # noqa: BLE001 - una migración no puede tumbar el arranque
-            pass
 
-    # Marca de que el porcentaje único viejo ya se repartió entre los dos nuevos.
+    # ---- el porcentaje único viejo, repartido entre los dos nuevos ---------
+    #
+    # Antes había un solo porcentaje de envío + importación para todo el
+    # catálogo. Quien lo calibró lo calibró contra lo que compraba de verdad
+    # —productos sin envío gratis, que son la mayoría—, así que ese número es el
+    # de "sin envío gratis". Al partirlo en dos, sin embargo, quedó en la
+    # casilla de "con envío gratis", que es la que heredó el nombre viejo de la
+    # clave: tildar un producto lo encarecía en vez de abaratarlo.
+    #
+    # La reparación va en dos partes, y ninguna corre al arrancar: la app tiene
+    # que levantar aunque la base esté dormida, así que acá no se toca la base
+    # hasta que llega un pedido.
     _PREF_MIGRACION_PCT = "envio_dos_pct_migrado"
+    _PREF_REESTIMAR_PCT = "envio_dos_pct_reestimar"
 
-    def migrar_pct_envio(self) -> bool:
-        """Reparte el porcentaje único de envío viejo entre los dos nuevos.
+    def _cerrar_migracion_pct(self) -> None:
+        """Da la migración por hecha sin mover nada.
 
-        Antes había un solo porcentaje de envío + importación para todo el
-        catálogo. Quien lo calibró lo calibró contra lo que compraba de verdad
-        —productos sin envío gratis, que son la mayoría—, así que ese número es
-        el de "sin envío gratis". Al partirlo en dos, sin embargo, quedó en la
-        casilla de "con envío gratis", que es la que heredó el nombre viejo de
-        la clave: tildar un producto lo encarecía en vez de abaratarlo.
+        Lo usan los setters de los dos porcentajes: quien escribe por ahí está
+        escribiendo en el mundo nuevo, así que no queda nada heredado que
+        repartir. Sin esto, el valor recién escrito parecería el viejo y la
+        migración lo mudaría de casilla apenas alguien lo leyera.
+        """
+        if self._pref(self._PREF_MIGRACION_PCT, "") != "1":
+            self._set_pref(self._PREF_MIGRACION_PCT, "1")
 
-        Se mueve a la casilla que preserva el costo de todos los productos que
-        ya estaban cargados (nacen sin marcar, o sea "sin envío gratis") y la de
-        "con envío gratis" vuelve al valor de fábrica.
+    def _asegurar_pct_migrado(self) -> None:
+        """Mueve el porcentaje viejo a la casilla que le corresponde.
 
-        Corre una sola vez y no puede fallar hacia adelante: si nunca se
-        configuró nada, o si ya se usó la casilla nueva, no toca nada.
+        Solo preferencias: tres consultas y ninguna fila del catálogo. Va en los
+        getters de los dos porcentajes para que nadie llegue a leer el valor en
+        el lugar equivocado, y por eso tiene que ser barato y no recursivo.
+
+        El valor viejo se muda a "sin envío gratis", que es la casilla que
+        preserva el costo de todo lo que ya estaba cargado (nace sin marcar, o
+        sea sin envío gratis), y "con envío gratis" vuelve al de fábrica.
         """
         if self._pref(self._PREF_MIGRACION_PCT, "") == "1":
-            return False
+            return
         viejo = self._pref("envio_import_pct", "")
         ya_hay_nuevo = self._pref("envio_import_sin_gratis_pct", "")
-        # La marca se deja antes de mover nada: reestimar vuelve a leer estos
-        # porcentajes y sin la marca puesta se llamaría a sí mismo.
+        # La marca se deja antes de mover nada: los getters vuelven a entrar acá
+        # y sin la marca puesta esto se llamaría a sí mismo.
         self._set_pref(self._PREF_MIGRACION_PCT, "1")
         if not viejo or ya_hay_nuevo:
-            return False
+            return
         self._set_pref("envio_import_sin_gratis_pct", viejo)
         self._set_pref("envio_import_pct", "")
-        # Los productos ya cargados tienen el envío estimado con el porcentaje
-        # que estaba en la casilla equivocada: hay que rehacer esa cuenta con el
-        # que ahora le toca a cada uno. Los dos porcentajes que pudieron haberse
-        # aplicado antes son el viejo y el de fábrica sin envío gratis; lo que
-        # no coincida con ninguno lo cargó una persona y no se toca.
+        # Los productos quedaron con el envío estimado al porcentaje equivocado,
+        # pero rehacer esa cuenta toca todo el catálogo: se anota como pendiente
+        # y lo hace `migrar_pct_envio()`. Se anota en la base y no en memoria
+        # para que sobreviva a un reinicio entre una cosa y la otra.
+        self._set_pref(self._PREF_REESTIMAR_PCT, viejo)
+
+    def migrar_pct_envio(self) -> bool:
+        """Rehace la estimación de envío que quedó al porcentaje equivocado.
+
+        Es la parte cara de la reparación —recorre el catálogo— así que la
+        dispara un pedido concreto, no el arranque. Devuelve True la vez que
+        efectivamente reestima.
+
+        Los dos porcentajes que pudieron haberse aplicado antes son el viejo y
+        el de fábrica sin envío gratis; lo que no coincida con ninguno lo cargó
+        una persona desde un checkout real y no se toca.
+        """
+        self._asegurar_pct_migrado()
+        viejo = self._pref(self._PREF_REESTIMAR_PCT, "")
+        if not viejo:
+            return False
+        self._set_pref(self._PREF_REESTIMAR_PCT, "")
         self.reestimar_envios(
             pct_anterior=(float(viejo), self.cfg.envio_import_sin_gratis_pct))
         return True
@@ -366,6 +396,7 @@ class Catalogo:
         enterarse. Es el número más importante de toda la cuenta, así que tiene
         que poder ajustarse contra un checkout de verdad.
         """
+        self._asegurar_pct_migrado()
         try:
             v = float(self._pref("envio_import_pct", "") or 0)
         except (TypeError, ValueError):
@@ -380,6 +411,10 @@ class Catalogo:
             raise ValueError("El porcentaje tiene que ser un número.")
         if v < 0 or v > 3:
             raise ValueError("El porcentaje va entre 0 y 3 (0% a 300%).")
+        # Escribir por acá es escribir en el mundo de dos porcentajes: ya no hay
+        # un valor viejo ambiguo que repartir, y sin esto la migración
+        # confundiría este número con uno heredado y lo movería de casilla.
+        self._cerrar_migracion_pct()
         self._set_pref("envio_import_pct", str(v))
 
     @property
@@ -392,6 +427,7 @@ class Catalogo:
         producto sin envío gratis es publicar perdiendo plata sin enterarse:
         por eso son dos números separados y no uno solo promediado.
         """
+        self._asegurar_pct_migrado()
         try:
             v = float(self._pref("envio_import_sin_gratis_pct", "") or 0)
         except (TypeError, ValueError):
@@ -406,6 +442,7 @@ class Catalogo:
             raise ValueError("El porcentaje tiene que ser un número.")
         if v < 0 or v > 3:
             raise ValueError("El porcentaje va entre 0 y 3 (0% a 300%).")
+        self._cerrar_migracion_pct()
         self._set_pref("envio_import_sin_gratis_pct", str(v))
 
     def pct_envio(self, p: ProductoCatalogo) -> float:
@@ -925,6 +962,58 @@ class Catalogo:
             cambiados += 1
         self.conn.commit()
         return cambiados
+
+    def actualizar_total_amazon(self, pid: int,
+                                total_usd: Optional[float]) -> ProductoCatalogo:
+        """El Total que Amazon informa en el checkout, en dólares.
+
+        Es el mejor dato que existe y el único que no hay que estimar: ya trae
+        adentro el envío internacional y los cargos de importación, cobre
+        Amazon lo que cobre. Con este número **la marca de envío gratis y los
+        dos porcentajes dejan de intervenir**: no hay nada que estimar.
+
+        Tampoco hay que pasarlo a pesos a mano: el tipo de cambio ya lo tiene
+        la herramienta, y convertirlo afuera congela la cotización del día en
+        que se escribió.
+
+        Guardarlo implica que el régimen es `landed`: Amazon ya dijo cuánto sale
+        puesto acá, así que estimar aduana encima sería contarla dos veces.
+        `None` o 0 lo saca y el envío vuelve a estimarse por porcentaje.
+        """
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        if total_usd in (None, "", 0):
+            anterior, p.costo_envio_usd = p.costo_envio_usd, 0.0
+            self._calcular(p)          # vuelve a estimarlo con el % que toque
+            self._guardar(p)
+            self._log(p.id, "envio", "costo_envio_usd", anterior, p.costo_envio_usd)
+            return p
+        try:
+            total = float(total_usd)
+        except (TypeError, ValueError):
+            raise ValueError("El total tiene que ser un número.")
+        if total <= 0:
+            raise ValueError("El total tiene que ser mayor que cero.")
+        if not p.precio_usd:
+            raise ValueError("Falta el precio de Amazon del producto: sin él no "
+                             "se puede separar el envío del total.")
+        if total < p.precio_usd:
+            raise ValueError(f"El total (US${total:.2f}) no puede ser menor que "
+                             f"el precio del producto (US${p.precio_usd:.2f}). "
+                             f"Es el Total del checkout, no el envío solo.")
+        anterior = p.costo_envio_usd
+        p.costo_envio_usd = round(total - p.precio_usd, 2)
+        p.regimen = "landed"
+        # Una sola verdad: un costo en pesos puesto a mano taparía este número,
+        # y este es mejor porque se revalúa con el dólar de cada día.
+        p.costo_manual_ars = None
+        p.costo_producto_manual_ars = None
+        self._calcular(p)
+        self._guardar(p)
+        self._log(p.id, "envio", "costo_envio_usd", anterior, p.costo_envio_usd,
+                  nota=f"Total de Amazon US${total:.2f}")
+        return p
 
     def marcar_envio_gratis(self, pid: int,
                             valor: Optional[bool]) -> ProductoCatalogo:
