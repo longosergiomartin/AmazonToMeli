@@ -399,7 +399,9 @@ def test_el_error_del_titulo_se_explica_en_castellano():
                              "cause": []})])
     with pytest.raises(MeliAPIError) as e:
         c.actualizar_titulo("MLA1", "Set LEGO 21181")
-    assert "catálogo" in str(e.value) and "republicarla" in str(e.value)
+    msg = str(e.value)
+    assert "catálogo" in msg                     # la lectura, en castellano
+    assert "Item is a catalog_listing" in msg    # y el crudo de ML, siempre
 
 
 def test_un_titulo_que_ml_acepta_pero_no_aplica_no_cuenta_como_exito():
@@ -456,3 +458,15 @@ def test_el_limite_de_ritmo_no_reintenta_para_siempre(monkeypatch):
     with pytest.raises(MeliAPIError):
         c.actualizar_titulo("MLA1", "Set LEGO 21181")
     assert len(ses.llamadas) == len(ESPERAS_429) + 1
+
+
+def test_el_motivo_nunca_tapa_lo_que_dijo_mercadolibre():
+    """Poner una lectura mía EN LUGAR del texto de ML dejó 115 rechazos sin
+    nada con qué diagnosticar. La interpretación va junto al crudo."""
+    c, ses = _client([(400, {"message": "The field family name is invalid",
+                             "cause": []})])
+    with pytest.raises(MeliAPIError) as e:
+        c.actualizar_titulo("MLA1", "Set LEGO 21181")
+    msg = str(e.value)
+    assert "republicarla" in msg                       # la lectura
+    assert "The field family name is invalid" in msg   # y el crudo

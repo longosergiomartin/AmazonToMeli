@@ -147,7 +147,14 @@ class ColaImportacion:
             return {"hecho": False, "detener": True, "motivo": "vacia", **self.estado()}
 
         item_id, url, asin = fila["id"], fila["url"], fila["asin"]
-        datos = importador(url)
+        f = self.cat.filtro
+        # Desde qué país se lee: con "ar" Amazon contesta si el producto llega
+        # a Argentina, que es lo que no se puede saber leyendo desde EE.UU.
+        try:
+            datos = importador(url, pais=f.get("pais_lectura", "us"))
+        except TypeError:
+            # Importadores viejos (y los de los tests) no reciben el país.
+            datos = importador(url)
 
         if datos.get("bloqueado"):
             # Frenamos: el ítem queda para retomar más tarde, no se pierde.
@@ -163,12 +170,13 @@ class ColaImportacion:
                     "asin": asin, "mensaje": datos.get("mensaje", ""), **self.estado()}
 
         # Filtro con los datos reales de la ficha: acá se decide de verdad.
-        f = self.cat.filtro
         ok, motivo = acepta(datos.get("modelo", ""), datos.get("marca", ""),
                             datos.get("precio_usd"),
                             marca=f["marca"],
                             descartar_accesorios=f["descartar_accesorios"],
-                            precio_min=f["precio_min_usd"])
+                            precio_min=f["precio_min_usd"],
+                            envia_al_exterior=datos.get("envia_al_exterior"),
+                            exigir_envio=f.get("exigir_envio", True))
         if not ok:
             self._marcar(item_id, DESCARTADO, motivo)
             return {"hecho": False, "detener": False, "motivo": "descartado",

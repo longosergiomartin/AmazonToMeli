@@ -75,3 +75,12 @@ def test_el_aplicar_precios_muestra_que_sigue_vivo():
     assert "setInterval" in aplicar, \
         "el aplicar no refresca el cartel: no se ve si sigue vivo"
     assert "pr-frenar" in aplicar, "el aplicar no se puede frenar"
+
+
+def test_la_tabla_muestra_como_comprar_en_amazon():
+    """Cuando se vende algo hay que ir a comprarlo a Amazon. El link estaba
+    guardado pero no se mostraba en ninguna parte del panel: con la primera
+    venta hubo que buscar el producto a mano."""
+    js = _js()
+    assert "amazon.com/dp/" in js or "amazon_link" in js, \
+        "no hay forma de llegar al producto de Amazon desde el listado"

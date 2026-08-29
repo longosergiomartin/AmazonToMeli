@@ -34,25 +34,28 @@ class MeliAPIError(RuntimeError):
 
 
 def _motivo_titulo(e: "MeliAPIError") -> str:
-    """Por qué MercadoLibre no dejó cambiar el título, en castellano.
+    """Por qué MercadoLibre no dejó cambiar el título.
 
-    Los códigos que devuelve no dicen qué hacer. Estos tres son los que
-    aparecen de verdad al editar publicaciones vivas, y cada uno tiene una
-    salida distinta: uno se espera, otro no se puede y el tercero obliga a
-    republicar.
+    La interpretación va **junto** al texto de MercadoLibre, nunca en su lugar.
+    Reemplazarlo ya costó una vuelta entera: los 115 rechazos llegaron con un
+    mensaje mío que tapaba el de ML, y sin ese texto no había con qué
+    diagnosticar. Una lectura mía puede estar equivocada; el crudo, no.
     """
-    texto = f"{describir_error(e.cuerpo)} {e}".lower()
+    crudo = describir_error(e.cuerpo) or str(e)
+    texto = f"{crudo} {e}".lower()
     if "too_many_requests" in texto or e.status == 429:
-        return ("MercadoLibre está limitando los pedidos (too_many_requests). "
-                "Se reintenta más lento; volvé a correrlo en un rato.")
-    if "catalog" in texto:
-        return ("Es una publicación de catálogo: el título lo pone MercadoLibre "
-                "y no se puede cambiar. Habría que republicarla como propia.")
-    if "family_name" in texto or "family name" in texto:
-        return ("MercadoLibre no deja editar el título de esta publicación "
-                "(quedó atada a una familia de productos al crearse). Para "
-                "cambiarlo hay que republicarla.")
-    return describir_error(e.cuerpo) or str(e)
+        lectura = ("MercadoLibre está limitando los pedidos. Se reintenta más "
+                   "lento; volvé a correrlo en un rato.")
+    elif "catalog" in texto:
+        lectura = ("Parece una publicación de catálogo: ahí el título lo pone "
+                   "MercadoLibre.")
+    elif "family_name" in texto or "family name" in texto:
+        lectura = ("La publicación se creó con «family_name» y MercadoLibre no "
+                   "acepta editar ese campo después. Para cambiar el título "
+                   "habría que republicarla.")
+    else:
+        return crudo
+    return f"{lectura} [MercadoLibre dice: {crudo}]"
 
 
 def describir_error(cuerpo) -> str:

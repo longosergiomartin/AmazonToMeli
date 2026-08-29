@@ -94,6 +94,7 @@ class ProductoCatalogo:
     videos: list = field(default_factory=list)
     # El que sí va a la publicación: id de un video de YouTube.
     video_youtube: str = ""
+    revisado_en: str = ""              # última revisión de precio/stock en Amazon
     # --- calculados / estado (los llena el servicio) ---
     id: Optional[int] = None
     costo_total_ars: float = 0.0
@@ -310,6 +311,13 @@ class Catalogo:
             "marca": self._pref("filtro_marca", ""),
             "descartar_accesorios": self._pref("filtro_accesorios", "1") == "1",
             "precio_min_usd": float(self._pref("filtro_precio_min", "25") or 0),
+            # Descartar lo que Amazon dice explícitamente que no manda al
+            # exterior. Solo eso: lo que no se pudo determinar entra igual.
+            "exigir_envio": self._pref("filtro_envio", "1") == "1",
+            # Desde qué país se lee la página de Amazon. Con "ar" Amazon
+            # contesta si el producto llega acá; con "us" muestra la entrega en
+            # EE.UU. y casi nunca lo dice.
+            "pais_lectura": self._pref("filtro_pais", "us"),
         }
 
     @filtro.setter
@@ -325,6 +333,13 @@ class Catalogo:
             except (TypeError, ValueError):
                 raise ValueError("El precio mínimo tiene que ser un número.")
             self._set_pref("filtro_precio_min", str(minimo))
+        if "exigir_envio" in valores:
+            self._set_pref("filtro_envio", "1" if valores["exigir_envio"] else "0")
+        if "pais_lectura" in valores:
+            pais = (valores["pais_lectura"] or "us").strip().lower()[:2]
+            if pais not in ("us", "ar"):
+                raise ValueError("El país de lectura tiene que ser 'us' o 'ar'.")
+            self._set_pref("filtro_pais", pais)
 
     def recalcular_todos(self) -> None:
         """Recalcula costo/precio/margen de todo el catálogo (por ejemplo tras
@@ -467,7 +482,12 @@ class Catalogo:
                               ("dias_preparacion", "INTEGER DEFAULT 25"),
                               ("descripcion", "TEXT"),
                               ("videos", "TEXT"),
-                              ("video_youtube", "TEXT")):
+                              ("video_youtube", "TEXT"),
+                              # Cuándo se miró por última vez el precio y el
+                              # stock en Amazon. Sirve para ir rotando: revisar
+                              # todo el catálogo de una gasta casi el mes
+                              # entero de créditos de ScraperAPI.
+                              ("revisado_en", "TEXT")):
             if columna not in cols:
                 conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
 
@@ -575,6 +595,48 @@ class Catalogo:
                 "margen_pct": round(real["margen_pct"], 1),
                 "margen_ars": round(real["margen_ars"], 2)}
 
+    def a_revisar(self, limite: int = 10) -> list[ProductoCatalogo]:
+        """Las publicaciones que hace más tiempo que no se miran en Amazon.
+
+        Revisar el catálogo entero de una no se puede: cada producto son 5
+        créditos de ScraperAPI y el plan gratis trae 1.000 por mes, así que 126
+        productos son dos tercios del mes en una sola pasada. Se rota: primero
+        las que nunca se revisaron, después las más viejas.
+        """
+        vivos = [p for p in self.todos()
+                 if p.estado in ("publicado", "pausado")
+                 and (p.amazon_link or p.asin)]
+        vivos.sort(key=lambda p: p.revisado_en or "")
+        return vivos[:max(0, int(limite))]
+
+    def marcar_revisado(self, pid: int, precio_usd: Optional[float] = None,
+                        disponible: Optional[bool] = None) -> ProductoCatalogo:
+        """Guarda lo que se vio en Amazon y recalcula costo, precio y margen.
+
+        `disponible=None` significa que no se pudo determinar: no se toca la
+        disponibilidad guardada. Marcar como agotado algo que solo no se pudo
+        leer sacaría de venta un producto que sí está.
+        """
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        p.revisado_en = _ahora()
+        if precio_usd is not None and precio_usd > 0 and precio_usd != p.precio_usd:
+            anterior = p.precio_usd
+            p.precio_usd = float(precio_usd)
+            # El envío se había estimado como % del precio viejo: se recalcula,
+            # salvo que el usuario haya cargado el total real del checkout.
+            self._log(p.id, "precio_amazon", "precio_usd", anterior, p.precio_usd)
+        if disponible is not None:
+            nueva = "in_stock" if disponible else "out_of_stock"
+            if nueva != p.disponibilidad:
+                self._log(p.id, "stock_amazon", "disponibilidad",
+                          p.disponibilidad, nueva)
+                p.disponibilidad = nueva
+        self._calcular(p)
+        self._guardar(p)
+        return p
+
     def envio_efectivo(self, envio: Optional[float] = None) -> float:
         """Cuánto se está descontando por envío gratis: lo pedido, lo guardado a
         mano o lo de la configuración, en ese orden."""
@@ -613,7 +675,7 @@ class Catalogo:
                "titulo_ml", "descripcion",
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
-               "ml_permalink", "video_youtube"]
+               "ml_permalink", "video_youtube", "revisado_en"]
 
     def _fila_a_producto(self, row) -> ProductoCatalogo:
         d = dict(row)
@@ -624,6 +686,7 @@ class Catalogo:
         # y el campo está declarado como texto: sin esto entra un None donde el
         # resto del código espera un str.
         d["video_youtube"] = d.get("video_youtube") or ""
+        d["revisado_en"] = d.get("revisado_en") or ""
         d.pop("creado", None); d.pop("actualizado", None)
         return ProductoCatalogo(ml_attributes=attrs, pictures=pics, videos=vids,
                                 **{k: d[k] for k in d})

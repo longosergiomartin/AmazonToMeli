@@ -175,6 +175,22 @@
         <input type="checkbox" id="f-accesorios" style="width:auto">
         Descartar accesorios y merchandising (luces, vitrinas, fundas, remeras…)
       </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:500">
+        <input type="checkbox" id="f-envio" style="width:auto">
+        Descartar lo que Amazon dice que no envía al exterior
+      </label>
+      <div class="f" style="margin-top:6px">
+        <label>Leer la página de Amazon desde</label>
+        <select id="f-pais" style="max-width:320px">
+          <option value="us">Estados Unidos (como siempre)</option>
+          <option value="ar">Argentina — para saber si el producto llega acá</option>
+        </select>
+        <span class="hint">Desde EE.UU. Amazon muestra la entrega dentro de EE.UU.
+          y casi nunca dice si manda a Argentina, así que el filtro de arriba
+          casi no descarta nada. Leyendo desde Argentina sí lo dice. Cuesta lo
+          mismo, pero cambia la página que devuelve: probalo con dos o tres
+          productos antes de encolar una tanda grande.</span>
+      </div>
       <button type="button" class="sm" id="f-guardar" style="margin-top:10px">Guardar filtro</button>
       <span class="msg" id="f-msg"></span>
     </details>
@@ -306,6 +322,29 @@
   </div>
 
   <div class="card">
+    <b>🔎 Revisar precio y stock en Amazon</b>
+    <p class="hint" style="margin:6px 0 10px">Lo publicado lleva el precio del
+      día que se capturó el producto. Si Amazon subió el precio o se quedó sin
+      stock, se puede vender algo que ya no se puede comprar —que es lo que
+      pasó con la primera venta—. Esto lo relee y avisa; <b>no toca
+      MercadoLibre</b>.<br>
+      Cada producto cuesta <b>5 créditos</b> de ScraperAPI y el plan gratis trae
+      1.000 por mes, así que se revisa de a poco, empezando por los que hace
+      más que no se miran.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;align-items:center;gap:6px">Revisar
+        <input type="number" id="vg-limite" value="10" min="1" max="40"
+               style="width:70px"> productos</label>
+      <span class="hint" id="vg-costo">= 50 créditos</span>
+      <button type="button" class="sm" id="vg-revisar">Revisar en Amazon</button>
+      <button type="button" class="sm primary" id="vg-pausar"
+              style="display:none">Pausar los que no tienen stock</button>
+    </div>
+    <div class="msg" id="vg-msg"></div>
+    <div id="vg-tabla" class="hist" style="max-height:280px;overflow:auto"></div>
+  </div>
+
+  <div class="card">
     <b>✍️ Mejorar títulos y descripciones de lo publicado</b>
     <p class="hint" style="margin:6px 0 10px">Rehace el título con la estrategia
       de publicación y reescribe la descripción con la ficha y las condiciones de
@@ -319,6 +358,8 @@
         <input type="checkbox" id="tx-descripcion" checked> Descripción</label>
       <button type="button" class="sm" id="tx-diagnostico"
               title="Consulta a MercadoLibre, sin cambiar nada">🩺 Por qué falla el título</button>
+      <button type="button" class="sm" id="tx-probar"
+              title="Intenta el cambio en UNA sola publicación y muestra la respuesta cruda de MercadoLibre">🧪 Probar en una</button>
       <button type="button" class="sm" id="tx-simular">Ver qué cambiaría</button>
       <button type="button" class="sm primary" id="tx-aplicar"
               style="display:none">Aplicar en MercadoLibre</button>
@@ -503,12 +544,16 @@
       $("f-marca").value=f.marca||"";
       $("f-precio").value=f.precio_min_usd;
       $("f-accesorios").checked=!!f.descartar_accesorios;
+      $("f-envio").checked=!!f.exigir_envio;
+      $("f-pais").value=f.pais_lectura||"us";
     }).catch(function(){});
   }
   $("f-guardar").onclick=function(){
     api("PATCH","/api/filtro",{marca:($("f-marca").value||"").trim(),
         precio_min_usd:parseFloat($("f-precio").value)||0,
-        descartar_accesorios:$("f-accesorios").checked}).then(function(f){
+        descartar_accesorios:$("f-accesorios").checked,
+        exigir_envio:$("f-envio").checked,
+        pais_lectura:$("f-pais").value}).then(function(f){
       $("f-msg").textContent = f.marca
         ? "Guardado: solo "+f.marca+"."
         : "Guardado: entra cualquier marca.";
@@ -591,7 +636,16 @@
         var tr=document.createElement("tr");
         var flag=p.margen_insuficiente?' <span class="warnflag" title="Margen por debajo del umbral">⚠ bajo</span>':'';
         tr.innerHTML='<td class="chk"><input type="checkbox" class="sel" value="'+p.id+'"></td>'+
-          '<td class="prod">'+esc(p.modelo||p.asin||"(sin nombre)")+'<div class="sub">'+esc(p.marca||"(sin marca)")+'</div></td>'+
+          // El link a Amazon es lo que hace falta para comprar el producto
+          // cuando se vende: sin él hay que buscarlo a mano en Amazon.
+          '<td class="prod">'+esc(p.modelo||p.asin||"(sin nombre)")
+            +'<div class="sub">'+esc(p.marca||"(sin marca)")
+            +(p.amazon_link||p.asin
+               ? ' · <a href="'+esc(p.amazon_link
+                   || "https://www.amazon.com/dp/"+p.asin)
+                 +'" target="_blank" rel="noopener">comprar en Amazon ↗</a>'
+               : '')
+            +'</div></td>'+
           '<td class="num">'+fmt(p.costo_total_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
@@ -820,14 +874,81 @@
   // ---- mejorar títulos y descripciones de lo ya publicado ---------------
   var txFilas=[];
 
+  // ---- vigilancia de precio y stock en Amazon --------------------------
+  var vgSinStock=[];
+
+  $("vg-limite").addEventListener("input",function(){
+    $("vg-costo").textContent="= "+((parseInt(this.value,10)||0)*5)+" créditos";
+  });
+
+  $("vg-revisar").onclick=function(){
+    var n=parseInt($("vg-limite").value,10)||10;
+    if(!confirm("Esto consume "+(n*5)+" créditos de ScraperAPI (de 1.000 por "
+      +"mes). No cambia nada en MercadoLibre. ¿Seguimos?")) return;
+    var b=$("vg-revisar"); b.disabled=true;
+    $("vg-msg").textContent="Leyendo Amazon… va de a uno y con pausa, tarda un rato.";
+    $("vg-pausar").style.display="none";
+    api("POST","/api/catalogo/vigilancia/revisar",{limite:n}).then(function(d){
+      b.disabled=false;
+      vgSinStock=(d.filas||[]).filter(function(f){return f.disponible===false;});
+      $("vg-msg").textContent=d.revisados+" revisados ("+d.creditos_usados
+        +" créditos). "+d.sin_stock+" sin stock · "+d.en_perdida
+        +" quedaron en pérdida"
+        +(d.no_leidos?" · "+d.no_leidos+" no se pudieron leer":"")
+        +". Quedan "+d.quedan_sin_revisar+" sin revisar.";
+      $("vg-tabla").innerHTML=(d.filas||[]).map(function(f){
+        // Sin stock y en pérdida son los dos casos que hay que ver primero.
+        var alerta = f.disponible===false ? "var(--bad)"
+                   : (f.margen_ahora_pct!=null && f.margen_ahora_pct<0 ? "var(--bad)"
+                   : (f.margen_ahora_pct!=null && f.margen_ahora_pct<15 ? "var(--warn)"
+                   : "var(--good)"));
+        var estado = f.disponible===false ? "SIN STOCK en Amazon"
+                   : (f.disponible===true ? "con stock" : "no se pudo saber");
+        var precio = (f.precio_antes_usd!=null&&f.precio_ahora_usd!=null
+                      &&f.precio_antes_usd!=f.precio_ahora_usd)
+          ? " · US$"+f.precio_antes_usd+" → <b>US$"+f.precio_ahora_usd+"</b>"
+          : (f.precio_ahora_usd!=null?" · US$"+f.precio_ahora_usd:"");
+        return '<div><a href="'+esc(f.amazon_link)+'" target="_blank" '
+          +'rel="noopener">'+esc(f.nombre)+' ↗</a> '
+          +'<span style="color:'+alerta+'">'+estado+'</span>'+precio
+          +(f.margen_ahora_pct!=null
+             ? ' <span class="hint">margen ahora '+f.margen_ahora_pct+'%</span>' : '')
+          +(f.error?' <span class="hint">('+esc(f.error)+')</span>':'')
+          +'</div>';
+      }).join("");
+      if(vgSinStock.length) $("vg-pausar").style.display="";
+      cargar();
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  $("vg-pausar").onclick=function(){
+    if(!vgSinStock.length) return;
+    if(!confirm("Pausar "+vgSinStock.length+" publicación/es que no tienen stock "
+      +"en Amazon.\n\nSe pausan, no se borran: cuando vuelva el stock se "
+      +"reactivan y conservan su antigüedad y sus visitas. ¿Confirmás?")) return;
+    var b=$("vg-pausar"); b.disabled=true;
+    api("POST","/api/catalogo/vigilancia/pausar",
+        {ids:vgSinStock.map(function(f){return f.id;})}).then(function(d){
+      b.disabled=false; $("vg-pausar").style.display="none";
+      $("vg-msg").textContent=d.pausadas+" pausada/s en MercadoLibre."
+        +(d.fallas?" "+d.fallas+" no se pudieron pausar.":"");
+      cargar();
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
   $("tx-diagnostico").onclick=function(){
     var b=$("tx-diagnostico"); b.disabled=true;
     $("tx-msg").textContent="Consultando MercadoLibre… (solo lee, no cambia nada)";
     api("GET","/api/catalogo/publicaciones/diagnostico").then(function(d){
-      b.disabled=false; var r=d.resumen||{};
-      $("tx-msg").textContent="De "+d.total+": "+(r.editable||0)
-        +" se les puede cambiar el título · "+(r.catalogo||0)+" son de catálogo · "
-        +(r.familia||0)+" están atadas a una familia"
+      b.disabled=false; var r=d.resumen||{}, s=d.salud||{};
+      // La salud va primero: una publicación pausada o sin stock se ve pero no
+      // se puede comprar, y eso explica visitas con cero ventas.
+      $("tx-msg").textContent=
+        "De "+d.total+": "+(s.activas||0)+" activas · "+(s.pausadas||0)
+        +" PAUSADAS · "+(s.sin_stock||0)+" sin stock"
+        +((s.otro_estado||0)?" · "+s.otro_estado+" en otro estado":"")
+        +".\nTítulo: "+(r.editable||0)+" editables · "+(r.catalogo||0)
+        +" de catálogo · "+(r.familia||0)+" con «family_name»"
         +((r.no_leido||0)?" · "+r.no_leido+" no se pudieron leer":"")+".";
       $("tx-tabla").innerHTML=(d.filas||[]).map(function(f){
         var color=f.clave==="editable"?"var(--good)":"var(--warn)";
@@ -836,6 +957,30 @@
           +(f.family_name?' <span class="hint">family_name: '+esc(f.family_name)+'</span>':'')
           +'</div>';
       }).join("");
+    }).catch(function(e){ b.disabled=false; err(e); });
+  };
+
+  $("tx-probar").onclick=function(){
+    // Se prueba sobre la primera que cambiaría de título. Hay que simular
+    // antes: sin eso no se sabe cuál tiene sentido probar.
+    var cand=txFilas.filter(function(f){return f.cambia_titulo;})[0];
+    if(!cand){ $("tx-msg").textContent="Primero apretá «Ver qué cambiaría»."; return; }
+    if(!confirm("Esto intenta cambiar el título de UNA publicación:\n\n"
+      +cand.titulo_actual+"\n→ "+cand.titulo_nuevo+"\n\nSi MercadoLibre lo "
+      +"rechaza no cambia nada. ¿Probamos?")) return;
+    var b=$("tx-probar"); b.disabled=true;
+    $("tx-msg").textContent="Probando en una publicación…";
+    api("POST","/api/catalogo/"+cand.id+"/probar-titulo",{}).then(function(d){
+      b.disabled=false;
+      $("tx-msg").textContent=d.ok
+        ? "✅ Salió. El título quedó: "+d.titulo_probado
+          +". Entonces sí se pueden cambiar: probá «Aplicar»."
+        : "❌ MercadoLibre lo rechazó. "+d.error;
+      // El cuerpo crudo se muestra siempre: es el dato para diagnosticar.
+      $("tx-tabla").innerHTML='<div><b>'+esc(cand.titulo_actual)+'</b><br>→ '
+        +esc(d.titulo_probado)+'</div>'
+        +(d.crudo?'<pre style="white-space:pre-wrap;font-size:.72rem">'
+          +esc(JSON.stringify(d.crudo,null,2))+'</pre>':'');
     }).catch(function(e){ b.disabled=false; err(e); });
   };
 

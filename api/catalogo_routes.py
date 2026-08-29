@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from arbitraje.config import Config, CONFIG_DEFAULT, CONDICIONES_FISCALES
 from arbitraje.cotizacion import obtener_cotizaciones, invalidar_cache
+from arbitraje.pricing import margen_real_al_precio
 from amazon_import import importar_desde_url, scraperapi_configurada
 from catalogo import Catalogo, ProductoCatalogo, DOLARES_COSTO
 from importador import ColaImportacion
@@ -1139,6 +1140,102 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"filas": filas, "total": len(filas),
                 "con_titulo_nuevo": sum(1 for f in filas if f["cambia_titulo"])}
 
+    # ---- vigilancia: precio y stock en Amazon de lo ya publicado -----------
+
+    @app.post("/api/catalogo/vigilancia/revisar")
+    def revisar_amazon(body: dict = None):
+        """Relee en Amazon el precio y el stock de lo que está publicado.
+
+        Es el agujero que se comió la primera venta: se publica con el precio
+        del día que se capturó el producto, y para cuando alguien compra Amazon
+        puede haber subido el precio o haberse quedado sin stock. Se vende algo
+        que ya no se puede comprar.
+
+        No cambia nada en MercadoLibre: informa. Pausar o republicar es un paso
+        aparte, porque son decisiones con consecuencias.
+        """
+        cuerpo = body or {}
+        limite = max(1, min(int(cuerpo.get("limite") or 10), 40))
+        productos = cat.a_revisar(limite)
+
+        filas = []
+        for p in productos:
+            url = p.amazon_link or f"https://www.amazon.com/dp/{p.asin}"
+            try:
+                d = importar_desde_url(url)
+            except Exception as e:  # noqa: BLE001 - un producto no frena la vuelta
+                filas.append({"id": p.id, "nombre": p.titulo_ml or p.modelo,
+                              "error": str(e), "leido": False})
+                continue
+            precio_nuevo = d.get("precio_usd")
+            disponible = d.get("disponible")
+            antes_usd, antes_costo = p.precio_usd, p.costo_total_ars
+            p = cat.marcar_revisado(p.id, precio_nuevo, disponible)
+
+            # Lo que importa no es que el precio de Amazon suba, sino si el
+            # precio YA PUBLICADO en MercadoLibre sigue dejando ganancia.
+            publicado = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
+            m = margen_real_al_precio(p.costo_total_ars, publicado, p.categoria,
+                                      cat._cfg_efectivo()) if publicado else {}
+            filas.append({
+                "id": p.id, "nombre": p.titulo_ml or p.modelo,
+                "leido": bool(d.get("ok")) or precio_nuevo is not None,
+                "bloqueado": bool(d.get("bloqueado")),
+                "error": "" if d.get("ok") else (d.get("mensaje") or ""),
+                "amazon_link": url,
+                "precio_antes_usd": antes_usd,
+                "precio_ahora_usd": precio_nuevo,
+                "disponible": disponible,
+                "costo_antes_ars": round(antes_costo, 2),
+                "costo_ahora_ars": round(p.costo_total_ars, 2),
+                "precio_publicado_ars": round(publicado, 2),
+                "margen_ahora_pct": m.get("margen_pct"),
+                "margen_ars": m.get("margen_ars"),
+            })
+
+        sin_stock = [f for f in filas if f.get("disponible") is False]
+        en_perdida = [f for f in filas
+                      if f.get("margen_ahora_pct") is not None
+                      and f["margen_ahora_pct"] < 0]
+        return {"filas": filas, "revisados": len(filas),
+                "sin_stock": len(sin_stock), "en_perdida": len(en_perdida),
+                "no_leidos": sum(1 for f in filas if not f.get("leido")),
+                # 5 créditos por producto en el plan de ScraperAPI.
+                "creditos_usados": len(filas) * 5,
+                "quedan_sin_revisar": max(
+                    0, len([p for p in cat.todos()
+                            if p.estado in ("publicado", "pausado")]) - len(filas)),
+                }
+
+    @app.post("/api/catalogo/vigilancia/pausar")
+    def pausar_sin_stock(body: dict):
+        """Pausa en MercadoLibre las publicaciones que se indiquen.
+
+        Se pausa, no se borra: cuando Amazon vuelva a tener stock se reactiva y
+        la publicación conserva su antigüedad y sus visitas.
+        """
+        ids = [int(i) for i in (body or {}).get("ids", [])][:40]
+        if not ids:
+            raise HTTPException(422, "No hay publicaciones para pausar.")
+        cli = _client()
+        resultados = []
+        for pid in ids:
+            p = cat.obtener(pid)
+            if not p or not (p.ml_item_id or "").strip():
+                continue
+            fila = {"id": pid, "nombre": p.titulo_ml or p.modelo, "ok": False,
+                    "error": ""}
+            try:
+                cli.pausar(p.ml_item_id)
+                cat.cambiar_estado(pid, "pausado")
+                fila["ok"] = True
+            except MeliAPIError as e:
+                fila["error"] = _motivo(e)
+            resultados.append(fila)
+        return {"resultados": resultados,
+                "pausadas": sum(1 for r in resultados if r["ok"]),
+                "fallas": sum(1 for r in resultados if r["error"])}
+
     @app.get("/api/catalogo/publicaciones/diagnostico")
     def diagnostico_publicaciones():
         """Por qué se puede o no cambiar el título de cada publicación.
@@ -1154,16 +1251,35 @@ def registrar_catalogo(app: FastAPI, conn,
 
         filas, resumen = [], {"catalogo": 0, "familia": 0, "editable": 0,
                               "no_leido": 0}
+        # Una publicación pausada o sin stock se puede seguir viendo, pero no se
+        # puede comprar: junta visitas y hasta intenciones de compra, y ninguna
+        # termina en venta. Es la primera explicación a mirar cuando el reporte
+        # de MercadoLibre muestra visitas y cero ventas.
+        salud = {"activas": 0, "pausadas": 0, "otro_estado": 0, "sin_stock": 0}
         for p in publicados:
             it = items.get(p.ml_item_id)
+            if it is not None:
+                estado = (it.get("status") or "").lower()
+                if estado == "active":
+                    salud["activas"] += 1
+                elif estado == "paused":
+                    salud["pausadas"] += 1
+                else:
+                    salud["otro_estado"] += 1
+                if not int(it.get("available_quantity") or 0):
+                    salud["sin_stock"] += 1
             if it is None:
                 motivo, clave = "no se pudo leer en MercadoLibre", "no_leido"
             elif it.get("catalog_listing"):
                 motivo, clave = ("publicación de catálogo: el título lo pone "
                                  "MercadoLibre", "catalogo")
             elif (it.get("family_name") or "").strip():
-                motivo, clave = ("atada a una familia de productos: ML no deja "
-                                 "editarle el título", "familia")
+                # Se describe lo que se ve, no un veredicto. Que tenga
+                # `family_name` es un hecho; que por eso ML no deje cambiar el
+                # título es una lectura, y para afirmarla hay que probarla:
+                # está el botón de prueba sobre una publicación.
+                motivo, clave = ("se creó con «family_name» (probá el cambio en "
+                                 "una para confirmar si ML lo permite)", "familia")
             else:
                 motivo, clave = "se le puede cambiar el título", "editable"
             resumen[clave] += 1
@@ -1174,10 +1290,41 @@ def registrar_catalogo(app: FastAPI, conn,
                 "family_name": (it or {}).get("family_name") or "",
                 "catalog_listing": bool((it or {}).get("catalog_listing")),
                 "estado_ml": (it or {}).get("status") or "",
+                "stock": (it or {}).get("available_quantity"),
                 "vendidos": (it or {}).get("sold_quantity"),
                 "motivo": motivo, "clave": clave,
             })
-        return {"filas": filas, "total": len(filas), "resumen": resumen}
+        return {"filas": filas, "total": len(filas), "resumen": resumen,
+                "salud": salud}
+
+    @app.post("/api/catalogo/{pid}/probar-titulo")
+    def probar_titulo(pid: int):
+        """Intenta cambiar el título de UNA publicación y devuelve el crudo.
+
+        Es la única forma de saber si MercadoLibre lo permite: leer el ítem dice
+        cómo se creó, no qué acepta al editarlo. Sobre una sola publicación el
+        costo es un pedido y el riesgo es nulo —si sale, el título queda mejor;
+        si no sale, no cambia nada—, en vez de descubrirlo sobre las 126.
+        """
+        p = _p(pid)
+        if not (p.ml_item_id or "").strip():
+            raise HTTPException(409, "Este producto no está publicado.")
+        cli = _client()
+        nuevo = cat.titulo_armado(p)
+        salida = {"id": pid, "ml_item_id": p.ml_item_id,
+                  "titulo_actual": p.titulo_ml or "", "titulo_probado": nuevo}
+        try:
+            cli.actualizar_titulo(p.ml_item_id, nuevo)
+        except MeliAPIError as e:
+            salida.update(ok=False, error=_motivo(e),
+                          # El cuerpo tal cual lo manda ML: es el dato con el
+                          # que se diagnostica, y ninguna lectura mía lo
+                          # reemplaza.
+                          crudo=getattr(e, "cuerpo", None), status=e.status)
+            return salida
+        cat.actualizar_publicacion(pid, titulo_ml=nuevo)
+        salida.update(ok=True, error="", crudo=None, status=200)
+        return salida
 
     @app.post("/api/catalogo/publicaciones/aplicar")
     def aplicar_publicaciones(body: dict):
