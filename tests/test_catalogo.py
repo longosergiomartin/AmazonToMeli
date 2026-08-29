@@ -36,12 +36,32 @@ def test_alta_calcula_costo_y_precio_sugerido(cat):
     assert p.margen_pct == pytest.approx(35.0, abs=1.0)
 
 
-def test_envio_import_se_estima_como_26pct_si_no_se_carga(cat):
-    # Sin costo de envío cargado: se estima 26% del precio de Amazon.
-    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=0.0, regimen="landed"))
+def test_envio_import_se_estima_como_26pct_si_hay_envio_gratis(cat):
+    # Con envío internacional gratis de Amazon solo se pagan los cargos de
+    # importación: 26% del precio.
+    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=0.0,
+                          regimen="landed", envio_gratis_amazon=True))
     assert p.costo_envio_usd == pytest.approx(126.0 * 0.26, abs=0.01)
     tc = cat.cfg.tc_compra()
     assert p.costo_total_ars == pytest.approx((126.0 * 1.26) * tc, abs=1)
+
+
+def test_sin_envio_gratis_se_estima_70pct(cat):
+    """Sin la promoción de Amazon hay que pagar el flete a Argentina, y el
+    total se va a ~70% del precio. Aplicarle el 26% es publicar perdiendo."""
+    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=0.0,
+                          regimen="landed", envio_gratis_amazon=False))
+    assert p.costo_envio_usd == pytest.approx(126.0 * 0.70, abs=0.01)
+
+
+def test_sin_marcar_se_cobra_como_si_no_tuviera_envio_gratis(cat):
+    """Tres estados, y el desconocido cae del lado caro a propósito: hasta que
+    alguien mire el checkout no hay motivo para suponer que Amazon regala el
+    envío, y equivocarse para abajo es vender por debajo del costo."""
+    p = cat.agregar(_prod(precio_usd=126.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    assert p.envio_gratis_amazon is None
+    assert p.costo_envio_usd == pytest.approx(126.0 * 0.70, abs=0.01)
 
 
 def test_envio_import_cargado_a_mano_tiene_prioridad(cat):
@@ -516,7 +536,7 @@ def test_compro_a_dolar_1600_y_el_margen_es_el_que_queda_limpio(cat):
     p = cat.agregar(ProductoCatalogo(
         asin="B0SW000001", marca="LEGO", modelo="LEGO Star Wars 75192",
         titulo_ml="LEGO Star Wars 75192", precio_usd=100.0, regimen="landed",
-        margen_deseado=0.30, stock=1))
+        margen_deseado=0.30, stock=1, envio_gratis_amazon=True))
     p = cat.obtener(p.id)
 
     # 100 USD de Amazon + 26% de envío e impuestos = 126 USD puestos acá.
@@ -549,7 +569,7 @@ def test_el_dolar_a_mano_gana_sobre_la_cotizacion_en_vivo(cat):
     """Es el número que escribió el usuario, no una estimación."""
     p = cat.agregar(ProductoCatalogo(
         asin="B0SW000003", marca="LEGO", modelo="Set", titulo_ml="Set",
-        precio_usd=100.0, regimen="landed", stock=1))
+        precio_usd=100.0, regimen="landed", stock=1, envio_gratis_amazon=True))
     p = cat.obtener(p.id)
 
     assert cat.simular(p, tc_costo=1600)["costo_ars"] == 126.0 * 1600
@@ -666,10 +686,10 @@ def test_la_cache_no_le_pega_el_default_de_una_clave_a_otra_lectura(cat):
 # ---- envío + importación: el número más importante de la cuenta ----------
 
 def test_el_envio_se_suma_al_costo(cat):
-    """El 26% de envío+importación sí entra en el costo. Verificado porque se
-    sospechó que el costo salía del precio de Amazon pelado."""
+    """El envío+importación sí entra en el costo. Verificado porque se sospechó
+    que el costo salía del precio de Amazon pelado."""
     p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
-                          regimen="landed"))
+                          regimen="landed", envio_gratis_amazon=True))
     assert p.costo_envio_usd == pytest.approx(26.0, abs=0.01)
     tc = cat._cfg_efectivo().tc_compra()
     assert p.costo_total_ars == pytest.approx(126.0 * tc, abs=1)
@@ -679,7 +699,7 @@ def test_cambiar_el_porcentaje_reestima_lo_que_estaba_estimado(cat):
     """Sin esto el porcentaje nuevo no serviría: `costo_envio_usd` se guarda, y
     los productos ya cargados se quedarían con la estimación vieja."""
     p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
-                          regimen="landed"))
+                          regimen="landed", envio_gratis_amazon=True))
     assert p.costo_envio_usd == pytest.approx(26.0, abs=0.01)
     costo_antes = p.costo_total_ars
 
@@ -713,7 +733,7 @@ def test_un_porcentaje_disparatado_se_rechaza(cat):
 def test_el_porcentaje_configurado_manda_sobre_el_de_fabrica(cat):
     cat.envio_import_pct = 0.55
     p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
-                          regimen="landed"))
+                          regimen="landed", envio_gratis_amazon=True))
     assert p.costo_envio_usd == pytest.approx(55.0, abs=0.01)
 
 
@@ -781,6 +801,105 @@ def test_el_costo_a_mano_manda_tambien_al_simular_precios(cat):
 
     r = cat.simular(cat.obtener(p.id), tc_costo=1600)
     assert r["costo_ars"] == 275000
+
+
+def test_marcar_envio_gratis_baja_el_costo_y_el_sugerido(cat):
+    """Es el punto de toda la marca: el mismo producto sale mucho menos si
+    Amazon paga el flete, y el precio al que hay que venderlo baja con él."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed", margen_deseado=0.30))
+    caro, sugerido_caro = p.costo_total_ars, p.precio_sugerido_ars
+
+    p2 = cat.marcar_envio_gratis(p.id, True)
+
+    assert p2.envio_gratis_amazon is True
+    assert p2.costo_envio_usd == pytest.approx(26.0, abs=0.01)
+    assert p2.costo_total_ars < caro
+    assert p2.precio_sugerido_ars < sugerido_caro
+
+
+def test_destildar_el_envio_gratis_vuelve_a_encarecer(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed", envio_gratis_amazon=True))
+    barato = p.costo_total_ars
+
+    p2 = cat.marcar_envio_gratis(p.id, False)
+
+    assert p2.envio_gratis_amazon is False
+    assert p2.costo_envio_usd == pytest.approx(70.0, abs=0.01)
+    assert p2.costo_total_ars > barato
+
+
+def test_marcar_el_envio_no_pisa_el_total_real_del_checkout(cat):
+    """Si alguien cargó el Total de verdad, cambiar la marca no puede
+    reemplazarlo por una estimación: sería perder la única medición real."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=41.75,
+                          regimen="landed"))
+
+    p2 = cat.marcar_envio_gratis(p.id, True)
+
+    assert p2.envio_gratis_amazon is True
+    assert p2.costo_envio_usd == 41.75
+
+
+def test_el_margen_deseado_se_respeta_con_y_sin_envio_gratis(cat):
+    """El costo cambia, el margen no: el precio sugerido tiene que dejar el
+    mismo 30% limpio en los dos casos."""
+    from arbitraje.pricing import margen_real_al_precio
+    cfg = cat._cfg_efectivo()
+    for gratis in (True, False):
+        p = cat.agregar(_prod(asin=f"B0EG00000{int(gratis)}", precio_usd=100.0,
+                              costo_envio_usd=0.0, regimen="landed",
+                              margen_deseado=0.30, envio_gratis_amazon=gratis))
+        m = margen_real_al_precio(p.costo_total_ars, p.precio_sugerido_ars,
+                                  p.categoria, cfg)
+        assert m["margen_pct"] == pytest.approx(30.0, abs=0.5)
+
+
+def test_la_marca_de_envio_sobrevive_al_guardado(cat):
+    """Va a la base como 0/1/NULL y tiene que volver como True/False/None:
+    confundir 'no lo miré' con 'no tiene envío gratis' esconde el trabajo
+    pendiente."""
+    a = cat.agregar(_prod(asin="B0EG000010", envio_gratis_amazon=True))
+    b = cat.agregar(_prod(asin="B0EG000011", envio_gratis_amazon=False))
+    c = cat.agregar(_prod(asin="B0EG000012"))
+
+    assert cat.obtener(a.id).envio_gratis_amazon is True
+    assert cat.obtener(b.id).envio_gratis_amazon is False
+    assert cat.obtener(c.id).envio_gratis_amazon is None
+
+
+def test_cambiar_el_pct_sin_envio_gratis_no_toca_a_los_que_si_lo_tienen(cat):
+    """Son dos números independientes: mover uno no puede arrastrar al otro."""
+    con = cat.agregar(_prod(asin="B0EG000020", precio_usd=100.0,
+                            costo_envio_usd=0.0, regimen="landed",
+                            envio_gratis_amazon=True))
+    sin = cat.agregar(_prod(asin="B0EG000021", precio_usd=100.0,
+                            costo_envio_usd=0.0, regimen="landed",
+                            envio_gratis_amazon=False))
+
+    cat.envio_import_sin_gratis_pct = 0.90
+    assert cat.reestimar_envios(pct_anterior=(0.26, 0.70)) == 1
+
+    assert cat.obtener(con.id).costo_envio_usd == pytest.approx(26.0, abs=0.01)
+    assert cat.obtener(sin.id).costo_envio_usd == pytest.approx(90.0, abs=0.01)
+
+
+def test_un_pct_sin_envio_gratis_disparatado_se_rechaza(cat):
+    with pytest.raises(ValueError):
+        cat.envio_import_sin_gratis_pct = 5.0
+    with pytest.raises(ValueError):
+        cat.envio_import_sin_gratis_pct = -1
+
+
+def test_la_marca_de_envio_queda_en_el_historial(cat):
+    """Es un dato que cambia el costo: tiene que poder rastrearse quién y
+    cuándo lo cambió."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed"))
+    cat.marcar_envio_gratis(p.id, True)
+
+    campos = [h["campo"] for h in cat.historial(p.id)]
+    assert "envio_gratis_amazon" in campos
 
 
 def test_un_costo_a_mano_invalido_se_rechaza(cat):

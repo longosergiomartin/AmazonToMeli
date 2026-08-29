@@ -263,6 +263,10 @@
             title="Saca de venta las seleccionadas, sin borrarlas">⏸ Pausar</button>
     <button type="button" class="sm" id="lote-reactivar-pub"
             title="Vuelve a poner a la venta las seleccionadas">▶ Reactivar</button>
+    <button type="button" class="sm" id="lote-envio-si"
+            title="Marca las seleccionadas como «Amazon las manda gratis»">📦 Con envío gratis</button>
+    <button type="button" class="sm" id="lote-envio-no"
+            title="Marca las seleccionadas como «hay que pagar el envío»">✈ Sin envío gratis</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
     <span class="msg" id="lote-msg"></span>
   </div>
@@ -305,11 +309,18 @@
         <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
       </div>
       <div class="f" style="margin:0">
-        <label>Envío + importación (%)</label>
+        <label>Envío + imp. CON envío gratis (%)</label>
         <input type="number" id="pr-envio-pct" min="0" max="300" step="1"
                style="width:150px">
-        <span class="hint">Sobre el precio de Amazon. Es el número más
-          importante de la cuenta.</span>
+        <span class="hint">Para los productos tildados 📦. Sobre el precio de
+          Amazon.</span>
+      </div>
+      <div class="f" style="margin:0">
+        <label>Envío + imp. SIN envío gratis (%)</label>
+        <input type="number" id="pr-envio-pct-sin" min="0" max="300" step="1"
+               style="width:150px">
+        <span class="hint">Para el resto ✈. Es el caso más común y el número
+          más importante de la cuenta.</span>
       </div>
       <div class="f" style="margin:0">
         <label>Ganancia mínima ($)</label>
@@ -431,7 +442,9 @@
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
-      <th class="prod">Producto</th><th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
+      <th class="prod">Producto</th>
+      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis».">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
       <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th class="acc">Acciones</th>
     </tr></thead><tbody id="tbody"></tbody></table>
     <div class="empty" id="empty">Todavía no registraste productos.</div>
@@ -689,6 +702,17 @@
                  +'" target="_blank" rel="noopener">comprar en Amazon ↗</a>'
                : '')
             +'</div></td>'+
+          // Tildar/destildar cambia el % de envío + importación con el que se
+          // costea el producto, que es lo que más mueve el precio sugerido.
+          // Sin tildar todavía se muestra un "?" : paga como si no tuviera
+          // envío gratis, pero es un dato que nadie miró.
+          '<td style="text-align:center"><input type="checkbox" class="eg" '
+            +'data-id="'+p.id+'"'+(p.envio_gratis_amazon?" checked":"")
+            +' title="Amazon lo manda gratis a Argentina">'
+            +(p.envio_gratis_amazon===null||p.envio_gratis_amazon===undefined
+               ? '<span class="hint" title="Sin revisar: se cobra como si NO '
+                 +'tuviera envío gratis">?</span>' : '')
+            +'</td>'+
           // Se marca el costo puesto a mano: es un dato distinto de una
           // estimación y conviene verlo de un vistazo.
           '<td class="num">'+fmt(p.costo_total_ars)
@@ -708,6 +732,14 @@
       });
       Array.prototype.forEach.call(document.querySelectorAll(".sel"),
         function(c){ c.onchange=pintarLote; });
+      Array.prototype.forEach.call(document.querySelectorAll(".eg"),
+        function(c){ c.onchange=function(){
+          var chk=this;
+          chk.disabled=true;
+          api("PATCH","/api/catalogo/"+chk.getAttribute("data-id")+"/envio-gratis",
+              {envio_gratis:chk.checked}).then(cargar)
+            .catch(function(e){ chk.checked=!chk.checked; chk.disabled=false; err(e); });
+        }; });
       $("chk-todos").checked=false; pintarLote();
     });
   }
@@ -1164,18 +1196,28 @@
     tanda();
   };
 
-  $("pr-envio-pct").addEventListener("change",function(){
-    var v=parseFloat(this.value)||0;
-    if(!confirm("Vas a fijar el envío + importación en "+v+"% del precio de "
-      +"Amazon.\n\nSe vuelve a estimar el costo de TODOS los productos que lo "
-      +"tenían estimado. Los que tienen el Total real del checkout cargado a "
-      +"mano no se tocan. ¿Confirmás?")) { cargarConfigPublicacion(); return; }
-    api("POST","/api/catalogo/config",{envio_import_pct:v}).then(function(c){
-      $("pr-msg").textContent="Envío + importación: "+c.envio_import_pct
-        +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
-      cargar();
-    }).catch(err);
-  });
+  // Los dos porcentajes de envío se guardan igual; solo cambia a qué mitad del
+  // catálogo le pega cada uno.
+  function guardarPctEnvio(campo, clave, cuales){
+    $(campo).addEventListener("change",function(){
+      var v=parseFloat(this.value)||0, cuerpo={};
+      if(!confirm("Vas a fijar el envío + importación de "+cuales+" en "+v+"% "
+        +"del precio de Amazon.\n\nSe vuelve a estimar el costo de esos "
+        +"productos. Los que tienen el Total real del checkout cargado a mano, "
+        +"o el costo en pesos puesto a mano, no se tocan. ¿Confirmás?"))
+        { cargarConfigPublicacion(); return; }
+      cuerpo[clave]=v;
+      api("POST","/api/catalogo/config",cuerpo).then(function(c){
+        $("pr-msg").textContent="Envío + importación de "+cuales+": "+v
+          +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
+        cargar();
+      }).catch(err);
+    });
+  }
+  guardarPctEnvio("pr-envio-pct","envio_import_pct",
+                  "los que tienen envío gratis 📦");
+  guardarPctEnvio("pr-envio-pct-sin","envio_import_sin_gratis_pct",
+                  "los que NO tienen envío gratis ✈");
 
   $("pr-piso").addEventListener("change",function(){
     // El piso cambia el precio sugerido de todo el catálogo, así que se guarda
@@ -1259,6 +1301,40 @@
       cargar();
     }).catch(err);
   };
+
+  // Marcar el envío en lote: es lo que hace falta para ordenar un catálogo
+  // entero que se cargó antes de que la marca existiera.
+  function marcarEnvioLote(valor, texto){
+    return function(){
+      var ids=seleccionados();
+      if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
+      if(!confirm("Marcar "+ids.length+" producto/s como "+texto+".\n\nSe "
+        +"recalcula el costo y el precio sugerido de cada uno. No se toca "
+        +"ningún precio publicado. ¿Confirmás?")) return;
+      // El endpoint procesa de a 25: el catálogo entero se marca en tandas.
+      var pend=ids.slice(), hechas=0, fallas=[];
+      (function tanda(){
+        if(!pend.length){
+          $("lote-msg").textContent=hechas+" marcada/s"
+            +(fallas.length?" · fallaron: "+fallas.join(", "):"");
+          cargar(); return;
+        }
+        var lote=pend.splice(0,25);
+        $("lote-msg").textContent="Marcando… "+hechas+"/"+ids.length;
+        api("POST","/api/catalogo/lote/envio-gratis",
+            {ids:lote,envio_gratis:valor}).then(function(d){
+          (d.resultados||[]).forEach(function(r){
+            if(r.ok) hechas++; else fallas.push(r.nombre+" ("+r.error+")"); });
+          tanda();
+        }).catch(function(e){
+          $("lote-msg").textContent="Se cortó con "+hechas+" marcada/s.";
+          cargar(); err(e);
+        });
+      })();
+    };
+  }
+  $("lote-envio-si").onclick=marcarEnvioLote(true,"CON envío gratis de Amazon");
+  $("lote-envio-no").onclick=marcarEnvioLote(false,"SIN envío gratis de Amazon");
 
   $("lote-borrar").onclick=function(){
     var ids=seleccionados();
@@ -1750,6 +1826,7 @@
       $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
       $("pr-piso").value=c.ganancia_minima||"";
       $("pr-envio-pct").value=c.envio_import_pct||"";
+      $("pr-envio-pct-sin").value=c.envio_import_sin_gratis_pct||"";
     }).catch(function(){});
   }
 

@@ -211,6 +211,8 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"tipo_producto": cat.tipo_producto,
                 "ganancia_minima": cat.ganancia_minima,
                 "envio_import_pct": round(cat.envio_import_pct * 100, 1),
+                "envio_import_sin_gratis_pct": round(
+                    cat.envio_import_sin_gratis_pct * 100, 1),
                 "texto_compra": cat.texto_compra,
                 "texto_compra_default": COMPRA_DEFAULT,
                 "publicar_en_catalogo": cat.publicar_en_catalogo}
@@ -220,16 +222,26 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         if "tipo_producto" in cuerpo:
             cat.tipo_producto = cuerpo.get("tipo_producto") or ""
-        if "envio_import_pct" in cuerpo:
-            anterior = cat.envio_import_pct
+        # Los dos porcentajes de envío se tocan igual y reestiman una sola vez:
+        # si vinieran los dos en el mismo pedido, reestimar por cada uno haría
+        # que el segundo barrido tomara como "cargado a mano" lo que acababa de
+        # escribir el primero.
+        pcts_antes = cat.pcts_envio()
+        toco_envio = False
+        for clave, atributo in (("envio_import_pct", "envio_import_pct"),
+                                ("envio_import_sin_gratis_pct",
+                                 "envio_import_sin_gratis_pct")):
+            if clave not in cuerpo:
+                continue
             try:
-                cat.envio_import_pct = float(
-                    cuerpo.get("envio_import_pct") or 0) / 100.0
+                setattr(cat, atributo, float(cuerpo.get(clave) or 0) / 100.0)
             except (TypeError, ValueError) as e:
                 raise HTTPException(422, str(e))
+            toco_envio = True
+        if toco_envio:
             # Sin reestimar, el porcentaje nuevo no movería a los productos que
             # ya tienen el envío guardado, que son todos los del catálogo.
-            cat.reestimar_envios(pct_anterior=anterior)
+            cat.reestimar_envios(pct_anterior=pcts_antes)
         if "ganancia_minima" in cuerpo:
             try:
                 cat.ganancia_minima = cuerpo.get("ganancia_minima")
@@ -2258,6 +2270,45 @@ def registrar_catalogo(app: FastAPI, conn,
                 pid, (body or {}).get("costo_ars")))
         except ValueError as e:
             raise HTTPException(422, str(e))
+
+    def _envio_gratis_pedido(body: dict):
+        """Los tres estados que acepta la marca de envío gratis.
+
+        Vacío/None es "no lo miré", que no es lo mismo que "no tiene envío
+        gratis" aunque para la cuenta pesen igual: uno pide que alguien lo mire.
+        """
+        v = (body or {}).get("envio_gratis")
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            if v.lower() in ("true", "1", "si", "sí"):
+                return True
+            if v.lower() in ("false", "0", "no"):
+                return False
+            raise HTTPException(422, "envio_gratis tiene que ser true, false o vacío.")
+        return bool(v)
+
+    @app.patch("/api/catalogo/{pid}/envio-gratis")
+    def envio_gratis(pid: int, body: dict):
+        """Si Amazon manda este producto gratis a Argentina.
+
+        Es el dato que más mueve el costo: con envío gratis se estima ~26% del
+        precio de Amazon, sin envío gratis ~70%. Cambiarlo vuelve a estimar el
+        envío de ese producto y recalcula su precio sugerido.
+        """
+        _p(pid)
+        try:
+            return _dict(cat.marcar_envio_gratis(
+                pid, _envio_gratis_pedido(body)))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
+    @app.post("/api/catalogo/lote/envio-gratis")
+    def lote_envio_gratis(body: dict):
+        """La misma marca sobre varios productos de una."""
+        ids = (body or {}).get("ids") or []
+        valor = _envio_gratis_pedido(body)
+        return _en_lote(ids, lambda p: cat.marcar_envio_gratis(p.id, valor))
 
     @app.post("/api/catalogo/{pid}/pausar")
     def pausar(pid: int):

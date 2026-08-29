@@ -144,10 +144,16 @@ class Config:
     # bolsillo al momento de comprar. VERIFICAR alícuota vigente.
     recargo_tarjeta_pct: float = 0.30
     # Envío internacional + cargos de importación de Amazon, como % del precio
-    # publicado del producto. Estimación verificada contra checkouts reales
-    # (~26% cuando el envío entra en la promo de envío gratis). Se usa para
-    # precargar el costo de envío; podés pisarlo con el Total real del checkout.
+    # publicado del producto. Son DOS números distintos porque Amazon cobra dos
+    # cosas distintas, y confundirlos es vender por debajo del costo:
+    #   - `envio_import_pct` (~26%): el producto entra en la promoción de envío
+    #     internacional gratis, así que solo se pagan los cargos de importación.
+    #   - `envio_import_sin_gratis_pct` (~70%): el producto NO entra, y encima
+    #     del producto se paga el flete a Argentina. Es el caso más común.
+    # Cuál se aplica lo decide `envio_gratis_amazon` en cada producto. Ambos son
+    # estimaciones: se pisan con el Total real del checkout.
     envio_import_pct: float = 0.26
+    envio_import_sin_gratis_pct: float = 0.70
     umbral_margen_bueno_pct: float = 30.0  # a partir de acá lo marcamos como oportunidad
     # Piso de margen para no cruzar el tope de la percepción de IVA. Si el
     # precio que da el margen deseado se pasa del tope, conviene publicar justo
@@ -186,6 +192,7 @@ class Config:
         top = {k: v for k, v in data.items()
                if k in {"tipo_cambio_oficial", "recargo_tarjeta_pct",
                         "umbral_margen_bueno_pct", "envio_import_pct",
+                        "envio_import_sin_gratis_pct",
                         "margen_piso_pct", "ganancia_minima_ars"}}
         return replace(base, courier=courier, general=general, meli=meli, **top)
 

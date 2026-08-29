@@ -2558,6 +2558,7 @@ def test_cambiar_el_envio_por_ciento_reestima_todo_el_catalogo(tmp_path, monkeyp
     c = TestClient(crear_app(db_path=str(tmp_path / "envpct.db")))
     pid = _alta(c, marca="LEGO", modelo="LEGO Set", precio_usd=100.0,
                 costo_envio_usd=0, regimen="landed").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/envio-gratis", json={"envio_gratis": True})
     antes = c.get(f"/api/catalogo/{pid}").json()
     assert antes["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
 
@@ -2569,16 +2570,104 @@ def test_cambiar_el_envio_por_ciento_reestima_todo_el_catalogo(tmp_path, monkeyp
     assert despues["costo_total_ars"] > antes["costo_total_ars"]
 
 
+def test_marcar_envio_gratis_desde_el_panel_recalcula_el_sugerido(client):
+    """Tildar «envío gratis» es lo que separa un costo del 26% de uno del 70%:
+    tiene que moverse el costo y con él el precio al que hay que vender."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Envio 1", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    antes = client.get(f"/api/catalogo/{pid}").json()
+    assert antes["envio_gratis_amazon"] is None
+    assert antes["costo_envio_usd"] == pytest.approx(70.0, abs=0.01)
+
+    d = client.patch(f"/api/catalogo/{pid}/envio-gratis",
+                     json={"envio_gratis": True}).json()
+
+    assert d["envio_gratis_amazon"] is True
+    assert d["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
+    assert d["costo_total_ars"] < antes["costo_total_ars"]
+    assert d["precio_sugerido_ars"] < antes["precio_sugerido_ars"]
+
+
+def test_destildar_envio_gratis_desde_el_panel(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Envio 2", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/envio-gratis", json={"envio_gratis": True})
+
+    d = client.patch(f"/api/catalogo/{pid}/envio-gratis",
+                     json={"envio_gratis": False}).json()
+
+    assert d["envio_gratis_amazon"] is False
+    assert d["costo_envio_usd"] == pytest.approx(70.0, abs=0.01)
+
+
+def test_vaciar_la_marca_de_envio_la_deja_sin_revisar(client):
+    """Vacío no es «no tiene envío gratis»: es «nadie lo miró». Paga igual,
+    pero el panel lo marca con un «?» para saber qué falta revisar."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Envio 3", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/envio-gratis", json={"envio_gratis": True})
+
+    d = client.patch(f"/api/catalogo/{pid}/envio-gratis",
+                     json={"envio_gratis": None}).json()
+
+    assert d["envio_gratis_amazon"] is None
+    assert d["costo_envio_usd"] == pytest.approx(70.0, abs=0.01)
+
+
+def test_marcar_el_envio_en_lote(client):
+    """Ordenar un catálogo entero de a un producto no es viable."""
+    ids = [_alta(client, marca="LEGO", modelo=f"LEGO Lote Envio {i}",
+                 precio_usd=100.0, costo_envio_usd=0,
+                 regimen="landed").json()["id"] for i in range(3)]
+
+    d = client.post("/api/catalogo/lote/envio-gratis",
+                    json={"ids": ids, "envio_gratis": True}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    for pid in ids:
+        assert client.get(f"/api/catalogo/{pid}").json()["envio_gratis_amazon"] is True
+
+
+def test_los_dos_porcentajes_de_envio_se_configuran_por_separado(client):
+    r = client.post("/api/catalogo/config",
+                    json={"envio_import_pct": 30,
+                          "envio_import_sin_gratis_pct": 80}).json()
+    assert r["envio_import_pct"] == 30.0
+    assert r["envio_import_sin_gratis_pct"] == 80.0
+
+
+def test_cambiar_el_pct_sin_gratis_reestima_solo_a_los_que_no_lo_tienen(tmp_path):
+    c = TestClient(crear_app(db_path=str(tmp_path / "envpct2.db")))
+    con = _alta(c, marca="LEGO", modelo="LEGO Con", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    sin = _alta(c, marca="LEGO", modelo="LEGO Sin", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    c.patch(f"/api/catalogo/{con}/envio-gratis", json={"envio_gratis": True})
+
+    c.post("/api/catalogo/config", json={"envio_import_sin_gratis_pct": 95})
+
+    assert c.get(f"/api/catalogo/{con}").json()["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
+    assert c.get(f"/api/catalogo/{sin}").json()["costo_envio_usd"] == pytest.approx(95.0, abs=0.01)
+
+
+def test_una_marca_de_envio_invalida_se_rechaza(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Envio 4").json()["id"]
+    r = client.patch(f"/api/catalogo/{pid}/envio-gratis",
+                     json={"envio_gratis": "puede ser"})
+    assert r.status_code == 422
+
+
 def test_el_costo_a_mano_se_edita_desde_el_panel(client):
     pid = _alta(client, marca="LEGO", modelo="LEGO Set", precio_usd=100.0,
                 costo_envio_usd=0, regimen="landed").json()["id"]
     antes = client.get(f"/api/catalogo/{pid}").json()
+    caro = round(antes["costo_total_ars"] * 2, 2)
 
-    r = client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 250000})
+    r = client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": caro})
 
     assert r.status_code == 200
     d = r.json()
-    assert d["costo_total_ars"] == 250000
+    assert d["costo_total_ars"] == caro
     assert d["precio_sugerido_ars"] > antes["precio_sugerido_ars"]
 
 
