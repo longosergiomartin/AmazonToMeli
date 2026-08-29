@@ -41,16 +41,27 @@ def precio_sugerido(costo_ars: float, margen_deseado: float,
     El envío va sumado al objetivo porque es un monto fijo en pesos: no escala
     con el precio, así que no puede entrar en `k`.
 
+    Además del porcentaje hay un **piso en pesos** (`ganancia_minima_ars`). Los
+    imprevistos de importar —que el precio suba entre que se publica y que se
+    vende, que se agote y haya que conseguirlo más caro, un reclamo, una
+    devolución— cuestan un monto fijo, no un porcentaje del producto. Un 30%
+    sobre un set barato no alcanza para bancar ninguno de esos. Se toma el
+    objetivo más exigente de los dos.
+
     La percepción de IVA es un escalón: recién se paga por encima del tope de
     ARCA. Eso parte la ecuación en dos y abre un hueco —el precio que da el
     margen deseado puede caer justo arriba del tope, donde pagar la percepción
     obliga a subir otro ~9%—. Cuando pasa eso conviene publicar pegado abajo del
     tope y resignar unos puntos de margen, que es lo que hace esta función
-    mientras el margen no baje de `cfg.margen_piso_pct`.
+    mientras el margen no baje de `cfg.margen_piso_pct` **ni del piso en pesos**:
+    ese piso existe justamente para no quedar sin colchón.
     """
     m = cfg.meli
     envio = m.envio_gratis_ars
-    objetivo_neto = costo_ars * (1 + margen_deseado)
+    piso = max(0.0, float(cfg.ganancia_minima_ars or 0.0))
+    # El objetivo es lo que tiene que quedar limpio: el mayor entre el margen
+    # porcentual y el piso en pesos.
+    objetivo_neto = costo_ars + max(costo_ars * margen_deseado, piso)
     tope = m.percepcion_iva_desde_ars
 
     p = (objetivo_neto + envio) / _k(cfg, categoria, con_percepcion=False)
@@ -62,7 +73,8 @@ def precio_sugerido(costo_ars: float, margen_deseado: float,
     pegado = round(tope - 0.01, 2)
     if costo_ars > 0:
         neto_pegado = margen_real_al_precio(costo_ars, pegado, categoria, cfg)
-        if neto_pegado["margen_pct"] >= cfg.margen_piso_pct * 100:
+        if (neto_pegado["margen_pct"] >= cfg.margen_piso_pct * 100
+                and neto_pegado["margen_ars"] >= piso):
             return pegado
     return round((objetivo_neto + envio) / _k(cfg, categoria, con_percepcion=True), 2)
 

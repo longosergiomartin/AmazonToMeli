@@ -90,3 +90,61 @@ def test_el_envio_se_suma_al_objetivo_y_no_se_diluye_en_el_porcentaje():
         assert d["envio"] == cfg.meli.envio_gratis_ars
         assert margen_real_al_precio(costo, p, "lego", cfg)["margen_pct"] == \
             pytest.approx(30.0, abs=0.1)
+
+
+# --- piso de ganancia en pesos -------------------------------------------
+
+def _con_piso(pesos):
+    from dataclasses import replace
+    return replace(Config(), ganancia_minima_ars=pesos)
+
+
+def test_el_piso_en_pesos_manda_cuando_el_porcentaje_no_alcanza():
+    """Los imprevistos de importar cuestan un monto fijo, no un porcentaje: un
+    30% sobre un set barato no banca que el precio suba antes de comprarlo."""
+    cfg = _con_piso(100000.0)
+    costo = 120000.0
+    p = precio_sugerido(costo, 0.30, "lego", cfg)
+    m = margen_real_al_precio(costo, p, "lego", cfg)
+    assert m["margen_ars"] == pytest.approx(100000, abs=50)
+    # El 30% habría dejado 36.000: el piso lo levanta.
+    assert m["margen_ars"] > costo * 0.30
+
+
+def test_si_el_porcentaje_ya_supera_el_piso_manda_el_porcentaje():
+    """El piso es un mínimo, no un techo: en un set caro el 30% deja más."""
+    cfg = _con_piso(100000.0)
+    costo = 500000.0
+    p = precio_sugerido(costo, 0.30, "lego", cfg)
+    m = margen_real_al_precio(costo, p, "lego", cfg)
+    assert m["margen_ars"] > 100000
+    assert m["margen_pct"] == pytest.approx(30.0, abs=0.2)
+
+
+def test_sin_piso_configurado_nada_cambia():
+    """Por defecto el piso es 0: el comportamiento de siempre."""
+    cfg = Config()
+    costo = 120000.0
+    assert precio_sugerido(costo, 0.30, "lego", cfg) == \
+        precio_sugerido(costo, 0.30, "lego", _con_piso(0.0))
+
+
+def test_el_piso_tambien_vale_al_borde_del_tope_de_percepcion():
+    """Quedarse pegado abajo del tope resigna margen. Si eso deja menos que el
+    piso, el piso gana: existe justamente para no quedar sin colchón."""
+    from dataclasses import replace
+    cfg = _con_piso(200000.0)
+    tope = cfg.meli.percepcion_iva_desde_ars
+    # Un costo donde el precio deseado cae apenas arriba del tope.
+    costo = 450000.0
+    p = precio_sugerido(costo, 0.30, "lego", cfg)
+    m = margen_real_al_precio(costo, p, "lego", cfg)
+    assert m["margen_ars"] >= 200000 - 50, "se quedó abajo del tope sin el colchón"
+
+
+def test_el_piso_sube_el_precio_pero_no_rompe_el_limite_del_calculo():
+    cfg = _con_piso(100000.0)
+    for costo in (30000.0, 120000.0, 400000.0, 900000.0):
+        p = precio_sugerido(costo, 0.30, "lego", cfg)
+        m = margen_real_al_precio(costo, p, "lego", cfg)
+        assert m["margen_ars"] >= 100000 - 50, f"costo {costo} quedó bajo el piso"
