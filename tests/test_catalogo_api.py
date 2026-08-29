@@ -2263,3 +2263,98 @@ def test_una_activa_con_stock_no_se_cuenta_como_problema(tmp_path, monkeypatch):
     c, cli, pid = _publicado_con_titulo_crudo(tmp_path, monkeypatch, "salud2.db", cli)
     s = c.get("/api/catalogo/publicaciones/diagnostico").json()["salud"]
     assert s == {"activas": 1, "pausadas": 0, "otro_estado": 0, "sin_stock": 0}
+
+
+# ---- vigilancia de precio y stock en Amazon ------------------------------
+
+def _publicado_para_vigilar(tmp_path, monkeypatch, nombre, respuesta):
+    """Un publicado real, con la lectura de Amazon interceptada."""
+    import api.catalogo_routes as rutas
+    cli = _cli_lote([])
+    cli.publicar = lambda item: {"id": "MLA100", "permalink": "http://ml/x",
+                                 "status": "active"}
+    cli.atributos_obligatorios = lambda cid: []
+    cli.pausar = lambda item_id: {"id": item_id, "status": "paused"}
+    _con_ml(monkeypatch, cli)
+    # Nunca se sale a la red: la respuesta de Amazon se programa acá.
+    monkeypatch.setattr(rutas, "importar_desde_url", lambda url, **k: dict(respuesta))
+
+    c = TestClient(crear_app(db_path=str(tmp_path / nombre)))
+    pid = _alta(c, marca="LEGO", modelo="LEGO Ideas Mineral Collection 21362",
+                titulo_ml="Set LEGO Ideas Mineral Collection 21362",
+                precio_usd=31.69, regimen="landed",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    assert c.post(f"/api/catalogo/{pid}/publicar", json={}).status_code == 200
+    return c, cli, pid
+
+
+def test_revisar_avisa_cuando_amazon_subio_el_precio(tmp_path, monkeypatch):
+    """El caso real: se publicó con Amazon a US$31,69 y para cuando alguien
+    compró estaba a US$53. La venta quedó en pérdida."""
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "vg1.db",
+        {"ok": True, "precio_usd": 53.00, "disponible": True, "mensaje": ""})
+
+    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
+    f = d["filas"][0]
+
+    assert f["precio_antes_usd"] == 31.69 and f["precio_ahora_usd"] == 53.00
+    assert f["costo_ahora_ars"] > f["costo_antes_ars"]
+    assert d["creditos_usados"] == 5
+    # El precio publicado no se toca: informar no es cambiar.
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == \
+        f["precio_publicado_ars"]
+
+
+def test_revisar_detecta_lo_que_se_quedo_sin_stock(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "vg2.db",
+        {"ok": True, "precio_usd": 59.99, "disponible": False, "mensaje": ""})
+
+    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
+
+    assert d["sin_stock"] == 1
+    assert d["filas"][0]["disponible"] is False
+    # Y no lo pausa solo: eso es un paso aparte, con confirmación.
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_revisar_no_pausa_lo_que_no_pudo_leer(tmp_path, monkeypatch):
+    """Amazon bloquea seguido. Tomar un bloqueo por "sin stock" sacaría de
+    venta productos que sí están disponibles."""
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "vg3.db",
+        {"ok": False, "precio_usd": None, "disponible": None,
+         "bloqueado": True, "mensaje": "Amazon nos bloqueó"})
+
+    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 5}).json()
+
+    assert d["sin_stock"] == 0 and d["no_leidos"] == 1
+    assert d["filas"][0]["bloqueado"] is True
+    assert c.get(f"/api/catalogo/{pid}").json()["disponibilidad"] == "in_stock"
+
+
+def test_pausar_manda_la_pausa_a_mercadolibre(tmp_path, monkeypatch):
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "vg4.db",
+        {"ok": True, "precio_usd": 59.99, "disponible": False, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/catalogo/vigilancia/pausar", json={"ids": [pid]}).json()
+
+    assert d["pausadas"] == 1 and pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_el_limite_de_revision_esta_acotado(tmp_path, monkeypatch):
+    """Cada producto son 5 créditos de un plan de 1.000 por mes: un límite
+    suelto vacía la cuenta en una llamada."""
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "vg5.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+
+    d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 9999}).json()
+    assert d["revisados"] <= 40

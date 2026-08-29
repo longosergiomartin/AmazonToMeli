@@ -64,6 +64,42 @@ def _parse_precio(texto: str) -> Optional[float]:
         return None
 
 
+# Lo que Amazon escribe cuando el producto no se puede comprar. Hay que
+# mirarlo en el bloque de disponibilidad y no en toda la página: "out of stock"
+# aparece también en las reseñas y en los productos recomendados del costado.
+_SIN_STOCK = (
+    r"currently unavailable", r"actualmente no disponible",
+    r"temporarily out of stock", r"temporalmente sin stock",
+    r"out of stock", r"sin existencias", r"no disponible por el momento",
+)
+
+
+def _parse_disponible(texto: str) -> Optional[bool]:
+    """Si el producto se puede comprar hoy. `None` = no se pudo determinar.
+
+    Distinguir "no hay stock" de "no lo pude leer" es lo que decide si se pausa
+    una publicación: pausar por no haber podido leer la página sería sacar de
+    venta un producto que sí está disponible.
+    """
+    bloque = _buscar([
+        r'id="availability"[^>]*>(.{0,400}?)</div>',
+        r'id="outOfStock"[^>]*>(.{0,400}?)</div>',
+        r'id="exports_desktop_outOfStock[^"]*"[^>]*>(.{0,400}?)</div>',
+    ], texto)
+    if bloque is not None:
+        limpio = re.sub(r"<[^>]+>", " ", bloque).lower()
+        if any(re.search(p, limpio) for p in _SIN_STOCK):
+            return False
+        if re.search(r"in stock|en stock|disponible", limpio):
+            return True
+    # Sin bloque de disponibilidad, el botón de comprar es la señal.
+    if re.search(r'id="(add-to-cart-button|buy-now-button)"', texto, re.I):
+        return True
+    if re.search(r'id="outOfStock"', texto, re.I):
+        return False
+    return None
+
+
 def _texto(fragmento: str) -> str:
     txt = re.sub(r"<[^>]+>", " ", fragmento)
     return re.sub(r"\s+", " ", _html.unescape(txt)).strip()
@@ -220,7 +256,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     url = (url or "").strip()
     datos = {"asin": extraer_asin(url), "amazon_link": url, "ok": False,
              "marca": "", "modelo": "", "modelo_fabricante": "", "detalles": {},
-             "precio_usd": None, "peso_kg": None,
+             "precio_usd": None, "peso_kg": None, "disponible": None,
              "descripcion": "", "imagenes": [], "mensaje": "",
              # `status` y `bloqueado` permiten a la cola de importación
              # distinguir "no pude leer la página" de "Amazon me está
@@ -286,6 +322,7 @@ def importar_desde_url(url: str, timeout: int = 12) -> dict:
     datos["marca"] = (limpiar_marca(_de_detalles(detalles, _ETIQUETAS_MARCA))
                       or limpiar_marca(marca or ""))
     datos["precio_usd"] = _parse_precio(texto)
+    datos["disponible"] = _parse_disponible(texto)
     datos["peso_kg"] = _parse_peso_kg(texto)
     datos["descripcion"] = _parse_descripcion(texto)
     datos["imagenes"] = _parse_imagenes(texto)
