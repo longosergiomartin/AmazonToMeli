@@ -989,6 +989,112 @@ def test_cambiar_el_pct_sin_envio_gratis_no_toca_a_los_que_si_lo_tienen(cat):
     assert cat.obtener(sin.id).costo_envio_usd == pytest.approx(90.0, abs=0.01)
 
 
+def _sin_migrar(c):
+    """Deja la base como estaba antes de que existieran los dos porcentajes."""
+    c.conn.execute("DELETE FROM preferencias WHERE clave = ?",
+                   (Catalogo._PREF_MIGRACION_PCT,))
+    c.conn.commit()
+    c._cache_pref.clear()
+
+
+def test_el_porcentaje_unico_viejo_pasa_a_ser_el_de_sin_envio_gratis(tmp_path):
+    """El que configuró el porcentaje único lo calibró contra lo que compraba
+    —productos sin envío gratis—, así que ese es su lugar. Dejarlo en la casilla
+    de "con envío gratis" hacía que tildar un producto lo encareciera."""
+    ruta = str(tmp_path / "mig.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.70
+    _sin_migrar(c)
+
+    c2 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c2.envio_import_sin_gratis_pct == pytest.approx(0.70)
+    assert c2.envio_import_pct == pytest.approx(0.26)   # vuelve al de fábrica
+
+
+def test_la_migracion_no_le_cambia_el_costo_a_lo_que_ya_estaba(tmp_path):
+    """Todo lo cargado nace sin marcar, o sea "sin envío gratis": moverlo a esa
+    casilla es justamente lo que deja el costo donde estaba."""
+    ruta = str(tmp_path / "mig2.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.70
+    p = c.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                        regimen="landed"))
+    antes = p.costo_total_ars
+    _sin_migrar(c)
+
+    c2 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c2.obtener(p.id).costo_total_ars == pytest.approx(antes, abs=1)
+
+
+def test_la_migracion_recalcula_lo_que_ya_estaba_tildado(tmp_path):
+    """El producto que se tildó antes de la migración quedó estimado al
+    porcentaje equivocado: hay que rehacerle la cuenta."""
+    ruta = str(tmp_path / "mig3.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.70
+    p = c.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                        regimen="landed"))
+    c.marcar_envio_gratis(p.id, True)
+    assert c.obtener(p.id).costo_envio_usd == pytest.approx(70.0, abs=0.01)
+    _sin_migrar(c)
+
+    c2 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c2.obtener(p.id).costo_envio_usd == pytest.approx(26.0, abs=0.01)
+
+
+def test_la_migracion_no_pisa_el_total_real_del_checkout(tmp_path):
+    ruta = str(tmp_path / "mig4.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.70
+    p = c.agregar(_prod(precio_usd=100.0, costo_envio_usd=43.17, regimen="landed"))
+    _sin_migrar(c)
+
+    c2 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c2.obtener(p.id).costo_envio_usd == 43.17
+
+
+def test_la_migracion_corre_una_sola_vez(tmp_path):
+    """Si volviera a correr, se llevaría puesto lo que el usuario configuró
+    después en la casilla de "con envío gratis"."""
+    ruta = str(tmp_path / "mig5.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.70
+    _sin_migrar(c)
+    Catalogo(conectar(ruta), cfg=Config())
+
+    c3 = Catalogo(conectar(ruta), cfg=Config())
+    c3.envio_import_pct = 0.31          # el usuario mide su caso con envío gratis
+    c4 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c4.envio_import_pct == pytest.approx(0.31)
+    assert c4.envio_import_sin_gratis_pct == pytest.approx(0.70)
+
+
+def test_sin_nada_configurado_la_migracion_no_toca_nada(tmp_path):
+    """Una instalación nueva no tiene un porcentaje viejo que repartir."""
+    c = Catalogo(conectar(str(tmp_path / "mig6.db")), cfg=Config())
+
+    assert c.envio_import_pct == pytest.approx(0.26)
+    assert c.envio_import_sin_gratis_pct == pytest.approx(0.70)
+
+
+def test_la_migracion_respeta_la_casilla_nueva_si_ya_se_uso(tmp_path):
+    ruta = str(tmp_path / "mig7.db")
+    c = Catalogo(conectar(ruta), cfg=Config())
+    c.envio_import_pct = 0.30
+    c.envio_import_sin_gratis_pct = 0.85
+    _sin_migrar(c)
+
+    c2 = Catalogo(conectar(ruta), cfg=Config())
+
+    assert c2.envio_import_pct == pytest.approx(0.30)
+    assert c2.envio_import_sin_gratis_pct == pytest.approx(0.85)
+
+
 def test_un_pct_sin_envio_gratis_disparatado_se_rechaza(cat):
     with pytest.raises(ValueError):
         cat.envio_import_sin_gratis_pct = 5.0

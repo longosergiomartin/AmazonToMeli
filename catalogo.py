@@ -146,6 +146,50 @@ class Catalogo:
         # Preferencias leídas: se llenan al primer uso y las invalida su setter.
         self._cache_pref: dict[str, Optional[str]] = {}
         self._crear_tablas()
+        try:
+            self.migrar_pct_envio()
+        except Exception:  # noqa: BLE001 - una migración no puede tumbar el arranque
+            pass
+
+    # Marca de que el porcentaje único viejo ya se repartió entre los dos nuevos.
+    _PREF_MIGRACION_PCT = "envio_dos_pct_migrado"
+
+    def migrar_pct_envio(self) -> bool:
+        """Reparte el porcentaje único de envío viejo entre los dos nuevos.
+
+        Antes había un solo porcentaje de envío + importación para todo el
+        catálogo. Quien lo calibró lo calibró contra lo que compraba de verdad
+        —productos sin envío gratis, que son la mayoría—, así que ese número es
+        el de "sin envío gratis". Al partirlo en dos, sin embargo, quedó en la
+        casilla de "con envío gratis", que es la que heredó el nombre viejo de
+        la clave: tildar un producto lo encarecía en vez de abaratarlo.
+
+        Se mueve a la casilla que preserva el costo de todos los productos que
+        ya estaban cargados (nacen sin marcar, o sea "sin envío gratis") y la de
+        "con envío gratis" vuelve al valor de fábrica.
+
+        Corre una sola vez y no puede fallar hacia adelante: si nunca se
+        configuró nada, o si ya se usó la casilla nueva, no toca nada.
+        """
+        if self._pref(self._PREF_MIGRACION_PCT, "") == "1":
+            return False
+        viejo = self._pref("envio_import_pct", "")
+        ya_hay_nuevo = self._pref("envio_import_sin_gratis_pct", "")
+        # La marca se deja antes de mover nada: reestimar vuelve a leer estos
+        # porcentajes y sin la marca puesta se llamaría a sí mismo.
+        self._set_pref(self._PREF_MIGRACION_PCT, "1")
+        if not viejo or ya_hay_nuevo:
+            return False
+        self._set_pref("envio_import_sin_gratis_pct", viejo)
+        self._set_pref("envio_import_pct", "")
+        # Los productos ya cargados tienen el envío estimado con el porcentaje
+        # que estaba en la casilla equivocada: hay que rehacer esa cuenta con el
+        # que ahora le toca a cada uno. Los dos porcentajes que pudieron haberse
+        # aplicado antes son el viejo y el de fábrica sin envío gratis; lo que
+        # no coincida con ninguno lo cargó una persona y no se toca.
+        self.reestimar_envios(
+            pct_anterior=(float(viejo), self.cfg.envio_import_sin_gratis_pct))
+        return True
 
     def _cfg_efectivo(self, tc: Optional[float] = None,
                       envio: Optional[float] = None) -> Config:
