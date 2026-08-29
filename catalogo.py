@@ -289,6 +289,21 @@ class Catalogo:
         self._set_pref("ganancia_minima", str(v))
 
     @property
+    def revisar_con_proxy(self) -> bool:
+        """Si la revisión de precio y stock pasa por ScraperAPI.
+
+        Apagado por defecto: cada página son 5 créditos de los 1.000 del mes y
+        esta tarea recorre el catálogo entero. Directo, desde un servidor,
+        Amazon casi siempre rechaza; el camino que sí anda sin gastar créditos
+        es leer desde el navegador del usuario.
+        """
+        return self._pref("revisar_con_proxy", "0") == "1"
+
+    @revisar_con_proxy.setter
+    def revisar_con_proxy(self, valor) -> None:
+        self._set_pref("revisar_con_proxy", "1" if valor else "0")
+
+    @property
     def tipo_producto(self) -> str:
         """Palabra con la que arranca el título ("Set", "Kit", "Muñeco"…).
 

@@ -28,14 +28,20 @@ def configurada() -> bool:
 
 
 def bajar(url: str, timeout: int = 12, params: dict | None = None,
-          headers: dict | None = None, country: str = "us"):
+          headers: dict | None = None, country: str = "us",
+          usar_proxy: bool = True):
     """Devuelve `(respuesta, por_proxy)`.
 
     `por_proxy` sirve para explicar los errores donde corresponde: un 403 del
     proxy es quedarse sin créditos, no que Amazon nos haya bloqueado, y se
     arreglan de forma distinta.
+
+    `usar_proxy=False` fuerza la lectura directa aunque haya clave configurada.
+    Sirve para las tareas que no valen créditos: cada página son 5 de los 1.000
+    del mes. Desde un servidor la directa casi siempre la rechaza Amazon, pero
+    desde una PC hogareña anda.
     """
-    clave = os.getenv("SCRAPER_API_KEY", "").strip()
+    clave = os.getenv("SCRAPER_API_KEY", "").strip() if usar_proxy else ""
     if not clave:
         return requests.get(url, timeout=timeout, params=params,
                             headers=headers or {"User-Agent": _UA}), False

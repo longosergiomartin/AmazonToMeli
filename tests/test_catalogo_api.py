@@ -2394,3 +2394,110 @@ def test_el_piso_llega_al_precio_de_un_producto_nuevo(tmp_path, monkeypatch):
               regimen="landed", margen_deseado=0.30).json()
     # 40 USD puestos son un costo bajo: el 30% no llega a 100.000, manda el piso.
     assert p["precio_sugerido_ars"] > p["costo_total_ars"] + 100000
+
+
+# ---- botón rápido de pausar / reactivar ----------------------------------
+
+def test_pausar_en_lote_manda_la_pausa_a_mercadolibre(tmp_path, monkeypatch):
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/catalogo/lote/pausar", json={"ids": [pid]}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_reactivar_en_lote_vuelve_a_ponerla_a_la_venta(tmp_path, monkeypatch):
+    reactivados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: {"status": "paused"}
+    cli.reactivar = lambda item_id: reactivados.append(item_id) or {"status": "active"}
+    c.post("/api/catalogo/lote/pausar", json={"ids": [pid]})
+
+    d = c.post("/api/catalogo/lote/reactivar", json={"ids": [pid]}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert reactivados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_el_error_de_uno_no_frena_el_lote(tmp_path, monkeypatch):
+    """Un producto que MercadoLibre rechaza no puede dejar sin pausar al resto,
+    ni pasar en silencio."""
+    from mercadolibre.client import MeliAPIError
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    otro = _alta(c, asin="B0OTRO00099", marca="LEGO", titulo_ml="Otro",
+                 ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{otro}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{otro}/aprobar")
+    c.post(f"/api/catalogo/{otro}/publicar", json={})
+
+    llamadas = []
+
+    def _pausar(item_id):
+        llamadas.append(item_id)
+        if len(llamadas) == 1:
+            raise MeliAPIError("no se puede", status=400, cuerpo={})
+        return {"status": "paused"}
+
+    cli.pausar = _pausar
+    d = c.post("/api/catalogo/lote/pausar", json={"ids": [pid, otro]}).json()
+
+    assert len(llamadas) == 2, "el error del primero frenó al segundo"
+    assert sum(1 for r in d["resultados"] if r["ok"]) == 1
+    assert sum(1 for r in d["resultados"] if not r["ok"]) == 1
+
+
+def test_el_agente_de_revision_tiene_su_propio_estado(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+
+    e = c.get("/api/revision").json()
+    assert e["por_revisar"] == 1 and e["revisados"] == 0
+    # Por defecto NO usa ScraperAPI: recorre el catálogo entero y son 5
+    # créditos por producto.
+    assert e["con_proxy"] is False
+
+    r = c.post("/api/revision/tick", json={}).json()
+    assert r["accion"] in ("revisar", "margen_bajo")
+    assert c.get("/api/revision").json()["revisados"] == 1
+
+
+def test_el_navegador_puede_reportar_lo_que_leyo(tmp_path, monkeypatch):
+    """El camino que no gasta créditos: la ficha la lee la PC del usuario."""
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/revision/reportar", json={"productos": [
+        {"id": pid, "precio_usd": 53.0, "disponible": False}]}).json()
+
+    assert d["revisados"] == 1 and d["pausadas"] == 1
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_usd"] == 53.0
+
+
+def test_lo_que_el_navegador_no_pudo_leer_no_se_toca(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    antes = c.get(f"/api/catalogo/{pid}").json()["precio_usd"]
+
+    d = c.post("/api/revision/reportar", json={"productos": [
+        {"id": pid, "precio_usd": None, "disponible": None}]}).json()
+
+    assert d["revisados"] == 0 and d["no_leidos"] == 1
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_usd"] == antes
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
