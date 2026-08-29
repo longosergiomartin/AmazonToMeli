@@ -963,6 +963,58 @@ class Catalogo:
         self.conn.commit()
         return cambiados
 
+    def actualizar_total_amazon(self, pid: int,
+                                total_usd: Optional[float]) -> ProductoCatalogo:
+        """El Total que Amazon informa en el checkout, en dólares.
+
+        Es el mejor dato que existe y el único que no hay que estimar: ya trae
+        adentro el envío internacional y los cargos de importación, cobre
+        Amazon lo que cobre. Con este número **la marca de envío gratis y los
+        dos porcentajes dejan de intervenir**: no hay nada que estimar.
+
+        Tampoco hay que pasarlo a pesos a mano: el tipo de cambio ya lo tiene
+        la herramienta, y convertirlo afuera congela la cotización del día en
+        que se escribió.
+
+        Guardarlo implica que el régimen es `landed`: Amazon ya dijo cuánto sale
+        puesto acá, así que estimar aduana encima sería contarla dos veces.
+        `None` o 0 lo saca y el envío vuelve a estimarse por porcentaje.
+        """
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        if total_usd in (None, "", 0):
+            anterior, p.costo_envio_usd = p.costo_envio_usd, 0.0
+            self._calcular(p)          # vuelve a estimarlo con el % que toque
+            self._guardar(p)
+            self._log(p.id, "envio", "costo_envio_usd", anterior, p.costo_envio_usd)
+            return p
+        try:
+            total = float(total_usd)
+        except (TypeError, ValueError):
+            raise ValueError("El total tiene que ser un número.")
+        if total <= 0:
+            raise ValueError("El total tiene que ser mayor que cero.")
+        if not p.precio_usd:
+            raise ValueError("Falta el precio de Amazon del producto: sin él no "
+                             "se puede separar el envío del total.")
+        if total < p.precio_usd:
+            raise ValueError(f"El total (US${total:.2f}) no puede ser menor que "
+                             f"el precio del producto (US${p.precio_usd:.2f}). "
+                             f"Es el Total del checkout, no el envío solo.")
+        anterior = p.costo_envio_usd
+        p.costo_envio_usd = round(total - p.precio_usd, 2)
+        p.regimen = "landed"
+        # Una sola verdad: un costo en pesos puesto a mano taparía este número,
+        # y este es mejor porque se revalúa con el dólar de cada día.
+        p.costo_manual_ars = None
+        p.costo_producto_manual_ars = None
+        self._calcular(p)
+        self._guardar(p)
+        self._log(p.id, "envio", "costo_envio_usd", anterior, p.costo_envio_usd,
+                  nota=f"Total de Amazon US${total:.2f}")
+        return p
+
     def marcar_envio_gratis(self, pid: int,
                             valor: Optional[bool]) -> ProductoCatalogo:
         """Marca si Amazon manda este producto gratis a Argentina y recalcula.

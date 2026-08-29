@@ -2641,6 +2641,58 @@ def test_listar_repara_el_porcentaje_de_envio_heredado(tmp_path):
     assert fila["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
 
 
+def test_el_total_de_amazon_se_carga_desde_la_fila(client):
+    """El paso que más tiempo come: abrir Amazon, leer el Total, escribirlo.
+    Un solo número reemplaza tildar el envío y convertir a pesos a mano."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 1", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": 84.61}).json()
+
+    assert d["costo_envio_usd"] == pytest.approx(24.68, abs=0.01)
+    assert d["costo_manual_ars"] is None      # no hace falta pasarlo a pesos
+
+
+def test_el_total_de_amazon_le_gana_a_los_costos_en_pesos(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 2", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 500000})
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": 84.61}).json()
+
+    assert d["costo_manual_ars"] is None
+    assert d["costo_envio_usd"] == pytest.approx(24.68, abs=0.01)
+
+
+def test_escribir_el_envio_en_vez_del_total_se_rechaza(client):
+    """El error fácil de la fila: poner 24.68 en vez de 84.61."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 3", precio_usd=59.93,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+
+    r = client.patch(f"/api/catalogo/{pid}/costo", json={"total_amazon_usd": 24.68})
+
+    assert r.status_code == 422
+    assert "menor" in r.json()["detail"]
+
+
+def test_vaciar_todo_limpia_tambien_el_total_de_amazon(client):
+    """«Volver a estimarlo» tiene que dejar el producto como recién cargado, no
+    a medias: cortar en el primer campo dejaba los costos en pesos puestos."""
+    pid = _alta(client, marca="LEGO", modelo="LEGO Total 4", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 500000})
+
+    d = client.patch(f"/api/catalogo/{pid}/costo",
+                     json={"total_amazon_usd": None, "costo_ars": None,
+                           "costo_producto_ars": None}).json()
+
+    assert d["costo_manual_ars"] is None
+    assert d["costo_producto_manual_ars"] is None
+    assert d["costo_envio_usd"] == pytest.approx(70.0, abs=0.01)   # el % otra vez
+
+
 def test_el_precio_del_producto_a_mano_se_edita_desde_el_panel(client):
     """El número que se conoce suele ser lo que sale el producto, no lo que
     sale traerlo: la herramienta le suma el envío que corresponda."""

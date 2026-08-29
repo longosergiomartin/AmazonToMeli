@@ -2047,10 +2047,14 @@ def registrar_catalogo(app: FastAPI, conn,
 
     @app.patch("/api/catalogo/{pid}/costo")
     def costo_manual(pid: int, body: dict):
-        """Costo real en pesos, puesto a mano. Vacío vuelve a la estimación.
+        """El costo real del producto, puesto a mano. Vacío vuelve a estimarlo.
 
-        Dos formas de cargarlo según qué número se tenga:
-          - `costo_ars`: el total ya puesto acá. Se usa tal cual.
+        Tres formas de cargarlo según qué número se tenga, de mejor a peor:
+          - `total_amazon_usd`: el Total del checkout de Amazon, en dólares. No
+            estima nada —ya trae envío e impuestos— y se revalúa con el dólar de
+            cada día. Con esto cargado, la marca de envío gratis no interviene.
+          - `costo_ars`: el total ya puesto acá, en pesos. Se usa tal cual, pero
+            queda congelado a la cotización del día en que se escribió.
           - `costo_producto_ars`: lo que sale el producto, sin el envío
             internacional. Se le suma el % que corresponda según tenga o no
             envío gratis de Amazon, así el sugerido cambia con esa marca.
@@ -2059,15 +2063,20 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         vacio = (None, "", 0)
         base, total = cuerpo.get("costo_producto_ars"), cuerpo.get("costo_ars")
+        usd = cuerpo.get("total_amazon_usd")
         try:
-            # Cargar uno borra el otro: hay un solo costo por producto.
+            # Cargar uno borra los otros: hay un solo costo por producto.
+            if usd not in vacio:
+                return _dict(cat.actualizar_total_amazon(pid, usd))
             if base not in vacio:
                 return _dict(cat.actualizar_costo_producto(pid, base))
             if total not in vacio:
                 return _dict(cat.actualizar_costo_manual(pid, total))
-            # Los dos vacíos: se borra lo que se haya pedido borrar y el costo
+            # Todos vacíos: se borra lo que se haya pedido borrar y el costo
             # vuelve a estimarse entero.
             p = None
+            if "total_amazon_usd" in cuerpo:
+                p = cat.actualizar_total_amazon(pid, None)
             if "costo_producto_ars" in cuerpo:
                 p = cat.actualizar_costo_producto(pid, None)
             if "costo_ars" in cuerpo:
@@ -2075,7 +2084,8 @@ def registrar_catalogo(app: FastAPI, conn,
         except ValueError as e:
             raise HTTPException(422, str(e))
         if p is None:
-            raise HTTPException(422, "Mandá costo_ars o costo_producto_ars.")
+            raise HTTPException(422, "Mandá total_amazon_usd, costo_ars o "
+                                     "costo_producto_ars.")
         return _dict(p)
 
     def _envio_gratis_pedido(body: dict):

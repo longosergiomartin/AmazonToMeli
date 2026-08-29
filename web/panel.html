@@ -407,7 +407,8 @@
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
       <th class="prod">Producto</th>
-      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis».">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis». Si cargás el Total de Amazon, esta casilla deja de intervenir.">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:right" title="El Total que te muestra el checkout de Amazon, en dólares, ya con envío e impuestos. Es el dato exacto: escribilo y el costo y el sugerido se recalculan solos, sin estimar nada.">Total Amazon<br><span class="hint">US$</span></th>
       <th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
       <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th class="acc">Acciones</th>
     </tr></thead><tbody id="tbody"></tbody></table>
@@ -681,6 +682,16 @@
                ? '<span class="hint" title="Sin revisar: se cobra como si NO '
                  +'tuviera envío gratis">?</span>' : '')
             +'</td>'+
+          // El Total del checkout, editable en la fila misma. Es el paso que
+          // más tiempo come —abrir Amazon, leer el total, volver— y hacerlo
+          // desde un diálogo por producto multiplicaba los clics. Escribir acá
+          // y salir del campo recalcula costo y sugerido sin estimar nada.
+          '<td class="num"><input type="number" step="0.01" min="0" class="totusd" '
+            +'data-id="'+p.id+'" style="width:88px;text-align:right" '
+            +'placeholder="'+(p.precio_usd?("+"+(p.precio_usd||0).toFixed(0)):"")+'" '
+            +'title="Total del checkout de Amazon en USD, con envío e impuestos" '
+            +'value="'+(p.precio_usd&&p.costo_envio_usd
+                ? (p.precio_usd+p.costo_envio_usd).toFixed(2) : "")+'"></td>'+
           // El número es el botón para editarlo: el costo a mano estaba
           // escondido en el menú "⋯" y es lo primero que hay que poder
           // corregir. Se marca si está puesto a mano, que es un dato distinto
@@ -707,6 +718,22 @@
       });
       Array.prototype.forEach.call(document.querySelectorAll(".sel"),
         function(c){ c.onchange=pintarLote; });
+      // Se guarda al salir del campo, no en cada tecla: así se puede tipear
+      // "59.93" sin que salga a guardar "5", "59", "59.9"…
+      Array.prototype.forEach.call(document.querySelectorAll("input.totusd"),
+        function(inp){
+          var previo=inp.value;
+          inp.onkeydown=function(e){ if(e.key==="Enter") this.blur(); };
+          inp.onblur=function(){
+            var v=this.value.trim();
+            if(v===previo) return;          // no se tocó: no se molesta al server
+            var campo=this; campo.disabled=true;
+            api("PATCH","/api/catalogo/"+campo.getAttribute("data-id")+"/costo",
+                {total_amazon_usd: v===""?null:parseFloat(v)})
+              .then(cargar)
+              .catch(function(e){ campo.value=previo; campo.disabled=false; err(e); });
+          };
+        });
       Array.prototype.forEach.call(document.querySelectorAll("a.costo"),
         function(a){ a.onclick=function(e){
           e.preventDefault();
@@ -1671,7 +1698,15 @@
         +'así que al precio del producto se le suma <b>'+pct+'%</b> de envío + '
         +'importación. Cambiando esa marca en la tabla, el costo y el sugerido '
         +'se recalculan solos.</p>'
-      +'<div class="f"><label>Precio del producto en pesos <span class="hint">(sin el envío)</span></label>'
+      +'<div class="f"><label>✅ Total de Amazon en dólares <span class="hint">(lo que dice el checkout, con envío e impuestos)</span></label>'
+        +'<input id="co-usd" type="number" step="0.01" value="'
+        +(p.precio_usd&&p.costo_envio_usd?(p.precio_usd+p.costo_envio_usd).toFixed(2):"")+'">'
+        +'<span class="hint">El mejor de los tres: no estima nada y se revalúa '
+        +'con el dólar de cada día. Con esto cargado, la marca de envío gratis y '
+        +'los porcentajes dejan de intervenir'
+        +(p.precio_usd?'. El producto solo sale US$'+p.precio_usd.toFixed(2):'')
+        +'.</span></div>'
+      +'<div class="f"><label>o · Precio del producto en pesos <span class="hint">(sin el envío)</span></label>'
         +'<input id="co-base" type="number" step="1" value="'
         +(p.costo_producto_manual_ars?Math.round(p.costo_producto_manual_ars):"")+'">'
         +'<span class="hint" id="co-base-msg">Se le suma el '+pct+'% de envío + importación.</span></div>'
@@ -1684,11 +1719,13 @@
         +(p.costo_manual_ars?" (total a mano)"
           :(p.costo_producto_manual_ars?" (producto a mano + "+pct+"%)"
                                        :" (estimado entero)"))+'.</p>';
-    // Los dos campos son excluyentes: escribir en uno vacía el otro, así no
+    // Los tres campos son excluyentes: escribir en uno vacía los otros, así no
     // queda la duda de cuál mandó.
-    function excluir(a,b){ $(a).addEventListener("input",function(){
-      if(this.value.trim()!=="") $(b).value=""; }); }
-    excluir("co-base","co-total"); excluir("co-total","co-base");
+    var campos=["co-usd","co-base","co-total"];
+    campos.forEach(function(a){ $(a).addEventListener("input",function(){
+      if(this.value.trim()==="") return;
+      campos.forEach(function(b){ if(b!==a) $(b).value=""; });
+    }); });
     $("co-base").addEventListener("input",function(){
       var v=parseFloat(this.value);
       $("co-base-msg").textContent=(isFinite(v)&&v>0)
@@ -1701,14 +1738,17 @@
         .then(function(){ $("dlg").close(); cargar(); }).catch(err);
     }
     addBtn(f,"Volver a estimarlo",function(){
-      guardar({costo_ars:null,costo_producto_ars:null});
+      guardar({costo_ars:null,costo_producto_ars:null,total_amazon_usd:null});
     },"sm");
     addBtn(f,"Cancelar",function(){ $("dlg").close(); },"sm");
     addBtn(f,"Guardar",function(){
-      var base=$("co-base").value.trim(), total=$("co-total").value.trim();
-      if(total!=="") guardar({costo_ars:parseFloat(total)});
+      var usd=$("co-usd").value.trim(), base=$("co-base").value.trim(),
+          total=$("co-total").value.trim();
+      // El Total de Amazon primero: es el único que no estima nada.
+      if(usd!=="") guardar({total_amazon_usd:parseFloat(usd)});
+      else if(total!=="") guardar({costo_ars:parseFloat(total)});
       else if(base!=="") guardar({costo_producto_ars:parseFloat(base)});
-      else guardar({costo_ars:null,costo_producto_ars:null});
+      else guardar({costo_ars:null,costo_producto_ars:null,total_amazon_usd:null});
     },"sm primary");
     $("dlg").showModal();
   }
