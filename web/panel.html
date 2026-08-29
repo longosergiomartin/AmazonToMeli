@@ -1174,10 +1174,17 @@
   $("lote-reactivar-pub").onclick=function(){
     var ids=seleccionados();
     if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
-    if(!confirm("Volver a poner a la venta "+ids.length+" publicación/es. "
+    // Cada una guarda el precio del día que se pausó, que puede ser el precio
+    // mal calculado que motivó la pausa. En lote siempre salen al precio de
+    // hoy: acá no se ve producto por producto qué se está aceptando, así que la
+    // única opción segura es la correcta. Volver al precio viejo se puede de a
+    // uno, desde el menú de la fila.
+    if(!confirm("Volver a poner a la venta "+ids.length+" publicación/es, cada "
+      +"una al precio que le corresponde HOY (el sugerido).\n\n"
       +"Asegurate de poder cumplirlas. ¿Confirmás?")) return;
     $("lote-msg").textContent="Reactivando…";
-    api("POST","/api/catalogo/lote/reactivar",{ids:ids}).then(function(d){
+    api("POST","/api/catalogo/lote/reactivar",
+        {ids:ids,al_sugerido:true}).then(function(d){
       $("lote-msg").textContent=resumenLote(d,"reactivada/s");
       cargar();
     }).catch(err);
@@ -1364,8 +1371,25 @@
     if(p.estado==="pausado"){
       var re=document.createElement("button");
       re.className="sm"; re.textContent="▶ Reactivar";
-      re.title="Vuelve a ponerla a la venta";
-      re.onclick=function(){ op(p.id,"reactivar"); };
+      // Una publicación pausada guarda el precio del día que se pausó. Si se
+      // pausó porque el costo estaba mal, reactivarla tal cual la devuelve a la
+      // venta al mismo precio equivocado: hay que preguntarlo, no asumirlo.
+      var viejo=p.precio_publicado_ars||0, sug=p.precio_sugerido_ars||0;
+      var desfasada=sug>0 && Math.abs(sug-viejo)>=1;
+      re.title=desfasada
+        ? "Está pausada a "+fmt(viejo)+" y hoy le corresponde "+fmt(sug)
+        : "Vuelve a ponerla a la venta";
+      re.onclick=function(){
+        if(!desfasada){ op(p.id,"reactivar"); return; }
+        if(!confirm("Quedó pausada en "+fmt(viejo)+" y hoy le corresponde "
+          +fmt(sug)+" (margen "+(p.margen_pct||0).toFixed(0)+"%).\n\n"
+          +"Se reactiva a "+fmt(sug)+". El precio nuevo se manda primero, así "
+          +"nunca queda comprable al viejo.\n\n"
+          +"Para volver al precio que tenía, usá «Reactivar al precio viejo» "
+          +"en el menú ⋯.")) return;
+        api("POST","/api/catalogo/"+p.id+"/reactivar",{al_sugerido:true})
+          .then(cargar).catch(err);
+      };
       c.appendChild(re);
     }
 
@@ -1374,6 +1398,15 @@
     var body=document.createElement("div"); body.className="menu-body"; d.appendChild(body);
     function b(txt,fn){var el=document.createElement("button");el.className="sm";el.textContent=txt;
       el.onclick=function(){d.removeAttribute("open");fn();};body.appendChild(el);}
+    // La salida de emergencia del botón ▶ Reactivar, que siempre sale al
+    // sugerido: acá se puede volver al precio que la publicación ya tenía.
+    if(p.estado==="pausado" && desfasada){
+      b("Reactivar al precio viejo ("+fmt(viejo)+")",function(){
+        if(!confirm("Vuelve a la venta a "+fmt(viejo)+", el precio que tenía "
+          +"cuando se pausó. Hoy le corresponde "+fmt(sug)+".\n\n¿Confirmás?")) return;
+        op(p.id,"reactivar");
+      });
+    }
     b("Precio",function(){var v=prompt("Nuevo precio de venta (ARS):",Math.round(p.precio_publicado_ars||p.precio_sugerido_ars));
       if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
     b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);

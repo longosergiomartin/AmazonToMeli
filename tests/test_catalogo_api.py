@@ -2223,6 +2223,89 @@ def _publicado_para_vigilar(tmp_path, monkeypatch, nombre, respuesta):
     return c, cli, pid
 
 
+def _pausada_con_precio_viejo(tmp_path, monkeypatch, nombre):
+    """Una publicación pausada cuyo sugerido subió después de pausarla.
+
+    Es el caso real: se pausa por costo mal calculado, se corrige el costo, y
+    la publicación sigue guardando el precio con el que se pausó.
+    """
+    pasos = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, nombre,
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.reactivar = lambda item_id: pasos.append(("reactivar", item_id)) or {"status": "active"}
+    cli.actualizar_precio = lambda item_id, precio: pasos.append(("precio", precio)) or {}
+    c.post(f"/api/catalogo/{pid}/pausar")
+    # El costo real resulta ser mucho mayor: el sugerido se va bien arriba del
+    # precio con el que quedó pausada.
+    c.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 900000})
+    return c, pid, pasos, cli
+
+
+def test_reactivar_al_sugerido_manda_el_precio_nuevo(tmp_path, monkeypatch):
+    """El agujero que hacía perder plata: reactivar devolvía la publicación a la
+    venta al precio con el que se había pausado, que era el mal calculado."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react1.db")
+    sug = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
+
+    d = c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True}).json()
+
+    assert d["estado"] == "publicado"
+    assert d["precio_publicado_ars"] == sug
+    assert ("precio", sug) in pasos
+
+
+def test_reactivar_al_sugerido_pone_el_precio_antes_de_activar(tmp_path, monkeypatch):
+    """Si se activara primero, la publicación quedaría comprable al precio viejo
+    hasta que llegue el segundo pedido. Ese hueco es una venta a pérdida."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react2.db")
+
+    c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True})
+
+    assert [x[0] for x in pasos] == ["precio", "reactivar"]
+
+
+def test_reactivar_sin_pedirlo_deja_el_precio_como_estaba(tmp_path, monkeypatch):
+    """La salida de emergencia sigue existiendo: reactivar al precio viejo es
+    una decisión válida, pero explícita."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react3.db")
+    viejo = c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"]
+
+    d = c.post(f"/api/catalogo/{pid}/reactivar", json={}).json()
+
+    assert d["precio_publicado_ars"] == viejo
+    assert [x[0] for x in pasos] == ["reactivar"]
+
+
+def test_si_falla_el_precio_no_se_reactiva(tmp_path, monkeypatch):
+    """Reactivar igual la dejaría a la venta al precio viejo, que es justo lo
+    que se estaba tratando de evitar."""
+    from mercadolibre.client import MeliAPIError
+    c, pid, pasos, cli = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react4.db")
+    cli.actualizar_precio = lambda *a, **k: (_ for _ in ()).throw(
+        MeliAPIError("precio rechazado"))
+
+    r = c.post(f"/api/catalogo/{pid}/reactivar", json={"al_sugerido": True})
+
+    assert r.status_code == 502
+    assert "reactiv" in r.json()["detail"].lower()
+    assert ("reactivar", "MLA100") not in pasos
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_reactivar_en_lote_al_sugerido(tmp_path, monkeypatch):
+    """En lote no se ve producto por producto qué se acepta, así que salen
+    todas al precio que les corresponde hoy."""
+    c, pid, pasos, _ = _pausada_con_precio_viejo(tmp_path, monkeypatch, "react5.db")
+    sug = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
+
+    d = c.post("/api/catalogo/lote/reactivar",
+               json={"ids": [pid], "al_sugerido": True}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_publicado_ars"] == sug
+
+
 def test_la_ganancia_minima_se_guarda_y_recalcula_el_catalogo(tmp_path, monkeypatch):
     """El piso cambia el precio sugerido de todos los productos, no solo de los
     nuevos: si no se recalcula, la tabla muestra precios que ya no rigen."""

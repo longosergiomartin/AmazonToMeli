@@ -1599,16 +1599,14 @@ def registrar_catalogo(app: FastAPI, conn,
 
     @app.post("/api/catalogo/lote/reactivar")
     def lote_reactivar(body: dict):
-        ids = (body or {}).get("ids") or []
-        cli = _client() if ids else None
-
-        def _uno(p):
-            if (p.ml_item_id or "").strip():
-                cli.reactivar(p.ml_item_id)
-            return _dict(cat.cambiar_estado(p.id, "publicado",
-                                            "Reactivada en lote desde el panel"))
-
-        return _en_lote(ids, _uno)
+        """Vuelve a poner varias a la venta. Con `al_sugerido`, cada una sale al
+        precio que le corresponde hoy y no al que tenía cuando se pausó."""
+        cuerpo = body or {}
+        ids = cuerpo.get("ids") or []
+        al_sugerido = bool(cuerpo.get("al_sugerido"))
+        if ids:
+            _client()          # falla temprano si no hay sesión, no de a uno
+        return _en_lote(ids, lambda p: _reactivar_uno(p, al_sugerido))
 
     @app.post("/api/catalogo/lote/borrar")
     def lote_borrar(body: dict):
@@ -2129,12 +2127,43 @@ def registrar_catalogo(app: FastAPI, conn,
                 raise HTTPException(502, f"No se pudo pausar en MercadoLibre: {e}")
         return _dict(cat.cambiar_estado(pid, "pausado", "Publicación pausada"))
 
-    @app.post("/api/catalogo/{pid}/reactivar")
-    def reactivar(pid: int):
-        p = _p(pid)
+    def _reactivar_uno(p: ProductoCatalogo, al_sugerido: bool) -> ProductoCatalogo:
+        """Vuelve a poner una publicación a la venta, opcionalmente al sugerido.
+
+        Reactivar sin tocar el precio es lo que hacía perder plata: una
+        publicación pausada guarda el precio del día que se pausó, y si se pausó
+        justamente porque el costo estaba mal, reactivarla la devuelve a la
+        venta al mismo precio equivocado.
+
+        **El precio va primero.** Si se activara antes, la publicación estaría
+        comprable al precio viejo durante el tiempo que tarde el segundo pedido,
+        y ese hueco es exactamente donde entra una venta a pérdida.
+        """
+        nuevo = None
+        if al_sugerido and p.precio_sugerido_ars > 0:
+            nuevo = round(p.precio_sugerido_ars, 2)
         if p.ml_item_id and store.hay_sesion():
+            cli = _client()
+            if nuevo is not None and abs(nuevo - (p.precio_publicado_ars or 0)) >= 0.01:
+                try:
+                    cli.actualizar_precio(p.ml_item_id, nuevo)
+                except MeliAPIError as e:
+                    raise HTTPException(502, "No se pudo poner el precio nuevo, "
+                                             f"así que no se reactivó: {_motivo(e)}")
+                cat.actualizar_precio(p.id, nuevo)
             try:
-                _client().reactivar(p.ml_item_id)
+                cli.reactivar(p.ml_item_id)
             except MeliAPIError as e:
                 raise HTTPException(502, f"No se pudo reactivar en MercadoLibre: {e}")
-        return _dict(cat.cambiar_estado(pid, "publicado", "Publicación reactivada"))
+        elif nuevo is not None:
+            cat.actualizar_precio(p.id, nuevo)
+        nota = ("Reactivada al precio sugerido" if nuevo is not None
+                else "Publicación reactivada")
+        return cat.cambiar_estado(p.id, "publicado", nota)
+
+    @app.post("/api/catalogo/{pid}/reactivar")
+    def reactivar(pid: int, body: dict = None):
+        """Reactiva la publicación. Con `al_sugerido` le pone antes el precio
+        sugerido, que es el que ya tiene en cuenta el costo corregido."""
+        p = _p(pid)
+        return _dict(_reactivar_uno(p, bool((body or {}).get("al_sugerido"))))
