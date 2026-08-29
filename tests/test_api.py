@@ -84,3 +84,12 @@ def test_producto_inexistente_404(client):
 def test_capture_site_invalido_400(client):
     r = client.get("/capture", params={"site": "ebay", "asin": "X"})
     assert r.status_code == 400
+
+
+def test_la_pagina_de_revision_desde_el_navegador_carga(client):
+    """Es el camino que sí funciona sin gastar créditos. Si la página no
+    renderiza, el usuario se queda sin la única forma de revisar el catálogo."""
+    r = client.get("/revisar")
+    assert r.status_code == 200
+    assert "Revisar precio y stock" in r.text
+    assert "javascript:(function()" in r.text, "no se armó el botón"
