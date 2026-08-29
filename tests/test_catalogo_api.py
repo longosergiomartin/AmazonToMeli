@@ -2567,3 +2567,33 @@ def test_cambiar_el_envio_por_ciento_reestima_todo_el_catalogo(tmp_path, monkeyp
     despues = c.get(f"/api/catalogo/{pid}").json()
     assert despues["costo_envio_usd"] == pytest.approx(60.0, abs=0.01)
     assert despues["costo_total_ars"] > antes["costo_total_ars"]
+
+
+def test_el_costo_a_mano_se_edita_desde_el_panel(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Set", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    antes = client.get(f"/api/catalogo/{pid}").json()
+
+    r = client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 250000})
+
+    assert r.status_code == 200
+    d = r.json()
+    assert d["costo_total_ars"] == 250000
+    assert d["precio_sugerido_ars"] > antes["precio_sugerido_ars"]
+
+
+def test_vaciar_el_costo_vuelve_a_la_estimacion(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Set 2", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    estimado = client.get(f"/api/catalogo/{pid}").json()["costo_total_ars"]
+    client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": 999999})
+
+    d = client.patch(f"/api/catalogo/{pid}/costo", json={"costo_ars": None}).json()
+
+    assert d["costo_total_ars"] == pytest.approx(estimado, abs=1)
+
+
+def test_un_costo_negativo_se_rechaza(client):
+    pid = _alta(client, marca="LEGO", modelo="LEGO Set 3").json()["id"]
+    assert client.patch(f"/api/catalogo/{pid}/costo",
+                        json={"costo_ars": -5}).status_code == 422
