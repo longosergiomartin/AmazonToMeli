@@ -915,59 +915,6 @@ def registrar_catalogo(app: FastAPI, conn,
             cli = None  # sin sesión de ML se completa lo que no necesita red
         return _en_lote(ids, lambda p: _preparar_uno(p, cli))
 
-    @app.post("/api/catalogo/lote/codigos")
-    def lote_codigos(body: dict):
-        """Busca el código de barras de los productos ya cargados y lo guarda.
-
-        Es el conversor aplicado al catálogo: sin GTIN, MercadoLibre no deja
-        publicar en varias categorías. Va de a uno y con pausa, y frena apenas
-        Amazon nos limita: lo que quedó se retoma más tarde.
-        """
-        import time
-        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
-        pausa = float((body or {}).get("pausa_seg", 1.5))
-        solo_faltantes = (body or {}).get("solo_faltantes", True)
-        cli = None
-        if store.hay_sesion() and cred.configurado:
-            try:
-                cli = _client()
-            except HTTPException:
-                pass
-
-        resultados = []
-        detenido = False
-        for i, pid in enumerate(ids):
-            p = cat.obtener(pid)
-            if not p:
-                continue
-            attrs = dict(p.ml_attributes or {})
-            if solo_faltantes and (attrs.get("GTIN") or "").strip():
-                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                                   "gtin": attrs["GTIN"], "fuente": "ya lo tenía",
-                                   "ok": True})
-                continue
-            r = _codigo_de(p.modelo or p.titulo_ml or "", p.asin, cli,
-                           p.modelo_fabricante, p.marca)
-            if r["gtin"]:
-                attrs["GTIN"] = r["gtin"]
-                # Con GTIN de verdad el motivo de GTIN vacío sobra, y mandarlos
-                # juntos es contradictorio: MercadoLibre lo rechaza.
-                attrs.pop("EMPTY_GTIN_REASON", None)
-                cat.actualizar_publicacion(pid, ml_attributes=attrs)
-            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                               "gtin": r["gtin"], "fuente": r["fuente"],
-                               "ok": bool(r["gtin"])})
-            if r["bloqueado"]:
-                detenido = True
-                break
-            if i < len(ids) - 1 and r["fuente"] not in ("tu catálogo", "ya lo tenía"):
-                time.sleep(min(pausa, 5.0))
-
-        return {"resultados": resultados, "detenido": detenido,
-                "encontrados": sum(1 for r in resultados if r["ok"]),
-                "total": len(resultados),
-                "pendientes": max(0, len(ids) - len(resultados))}
-
     # ---- actualización de precios ----------------------------------------
     #
     # El dólar se mueve y los costos quedan viejos: sin esto hay que reeditar
@@ -1192,102 +1139,6 @@ def registrar_catalogo(app: FastAPI, conn,
         return {"filas": filas, "total": len(filas),
                 "con_titulo_nuevo": sum(1 for f in filas if f["cambia_titulo"])}
 
-    # ---- vigilancia: precio y stock en Amazon de lo ya publicado -----------
-
-    @app.post("/api/catalogo/vigilancia/revisar")
-    def revisar_amazon(body: dict = None):
-        """Relee en Amazon el precio y el stock de lo que está publicado.
-
-        Es el agujero que se comió la primera venta: se publica con el precio
-        del día que se capturó el producto, y para cuando alguien compra Amazon
-        puede haber subido el precio o haberse quedado sin stock. Se vende algo
-        que ya no se puede comprar.
-
-        No cambia nada en MercadoLibre: informa. Pausar o republicar es un paso
-        aparte, porque son decisiones con consecuencias.
-        """
-        cuerpo = body or {}
-        limite = max(1, min(int(cuerpo.get("limite") or 10), 40))
-        productos = cat.a_revisar(limite)
-
-        filas = []
-        for p in productos:
-            url = p.amazon_link or f"https://www.amazon.com/dp/{p.asin}"
-            try:
-                d = importar_desde_url(url)
-            except Exception as e:  # noqa: BLE001 - un producto no frena la vuelta
-                filas.append({"id": p.id, "nombre": p.titulo_ml or p.modelo,
-                              "error": str(e), "leido": False})
-                continue
-            precio_nuevo = d.get("precio_usd")
-            disponible = d.get("disponible")
-            antes_usd, antes_costo = p.precio_usd, p.costo_total_ars
-            p = cat.marcar_revisado(p.id, precio_nuevo, disponible)
-
-            # Lo que importa no es que el precio de Amazon suba, sino si el
-            # precio YA PUBLICADO en MercadoLibre sigue dejando ganancia.
-            publicado = p.precio_publicado_ars or p.precio_sugerido_ars or 0.0
-            m = margen_real_al_precio(p.costo_total_ars, publicado, p.categoria,
-                                      cat._cfg_efectivo()) if publicado else {}
-            filas.append({
-                "id": p.id, "nombre": p.titulo_ml or p.modelo,
-                "leido": bool(d.get("ok")) or precio_nuevo is not None,
-                "bloqueado": bool(d.get("bloqueado")),
-                "error": "" if d.get("ok") else (d.get("mensaje") or ""),
-                "amazon_link": url,
-                "precio_antes_usd": antes_usd,
-                "precio_ahora_usd": precio_nuevo,
-                "disponible": disponible,
-                "costo_antes_ars": round(antes_costo, 2),
-                "costo_ahora_ars": round(p.costo_total_ars, 2),
-                "precio_publicado_ars": round(publicado, 2),
-                "margen_ahora_pct": m.get("margen_pct"),
-                "margen_ars": m.get("margen_ars"),
-            })
-
-        sin_stock = [f for f in filas if f.get("disponible") is False]
-        en_perdida = [f for f in filas
-                      if f.get("margen_ahora_pct") is not None
-                      and f["margen_ahora_pct"] < 0]
-        return {"filas": filas, "revisados": len(filas),
-                "sin_stock": len(sin_stock), "en_perdida": len(en_perdida),
-                "no_leidos": sum(1 for f in filas if not f.get("leido")),
-                # 5 créditos por producto en el plan de ScraperAPI.
-                "creditos_usados": len(filas) * 5,
-                "quedan_sin_revisar": max(
-                    0, len([p for p in cat.todos()
-                            if p.estado in ("publicado", "pausado")]) - len(filas)),
-                }
-
-    @app.post("/api/catalogo/vigilancia/pausar")
-    def pausar_sin_stock(body: dict):
-        """Pausa en MercadoLibre las publicaciones que se indiquen.
-
-        Se pausa, no se borra: cuando Amazon vuelva a tener stock se reactiva y
-        la publicación conserva su antigüedad y sus visitas.
-        """
-        ids = [int(i) for i in (body or {}).get("ids", [])][:40]
-        if not ids:
-            raise HTTPException(422, "No hay publicaciones para pausar.")
-        cli = _client()
-        resultados = []
-        for pid in ids:
-            p = cat.obtener(pid)
-            if not p or not (p.ml_item_id or "").strip():
-                continue
-            fila = {"id": pid, "nombre": p.titulo_ml or p.modelo, "ok": False,
-                    "error": ""}
-            try:
-                cli.pausar(p.ml_item_id)
-                cat.cambiar_estado(pid, "pausado")
-                fila["ok"] = True
-            except MeliAPIError as e:
-                fila["error"] = _motivo(e)
-            resultados.append(fila)
-        return {"resultados": resultados,
-                "pausadas": sum(1 for r in resultados if r["ok"]),
-                "fallas": sum(1 for r in resultados if r["error"])}
-
     @app.get("/api/catalogo/publicaciones/diagnostico")
     def diagnostico_publicaciones():
         """Por qué se puede o no cambiar el título de cada publicación.
@@ -1442,47 +1293,6 @@ def registrar_catalogo(app: FastAPI, conn,
         return buscar_video(p.modelo or p.titulo_ml or "", marca=p.marca,
                             numero_set=numero)
 
-    @app.post("/api/catalogo/lote/videos")
-    def lote_videos(body: dict):
-        """Busca en YouTube el video de cada producto y lo guarda.
-
-        MercadoLibre solo acepta videos de YouTube, así que el que trae Amazon
-        no sirve para publicar: el que sirve es el oficial del fabricante.
-        Encontrar pocos es lo esperable —se exige que el canal sea el de la
-        marca— y es preferible a poner el video de otro producto.
-        """
-        if not youtube_configurado():
-            raise HTTPException(422, "Falta configurar YOUTUBE_API_KEY para "
-                                "buscar videos. Se crea gratis en la consola de "
-                                "Google Cloud (YouTube Data API v3).")
-        ids = [int(i) for i in (body or {}).get("ids", [])][:50]
-        solo_faltantes = (body or {}).get("solo_faltantes", True)
-
-        resultados = []
-        for pid in ids:
-            p = cat.obtener(pid)
-            if not p:
-                continue
-            if solo_faltantes and (p.video_youtube or "").strip():
-                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                                   "video_id": p.video_youtube,
-                                   "canal": "ya lo tenía", "ok": True})
-                continue
-            r = _buscar_video(p)
-            if r.get("video_id"):
-                cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
-            resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
-                               "video_id": r.get("video_id", ""),
-                               "titulo_video": r.get("titulo", ""),
-                               "canal": r.get("canal", ""),
-                               # Los de canal de confianza conviene mirarlos
-                               # antes de publicar: no son del fabricante.
-                               "oficial": r.get("oficial"),
-                               "ok": bool(r.get("video_id"))})
-        return {"resultados": resultados,
-                "encontrados": sum(1 for r in resultados if r["ok"]),
-                "total": len(resultados)}
-
     @app.post("/api/catalogo/{pid}/video")
     def buscar_video_de(pid: int):
         """Busca el video de un producto solo."""
@@ -1495,51 +1305,6 @@ def registrar_catalogo(app: FastAPI, conn,
         if r.get("video_id"):
             cat.actualizar_publicacion(pid, video_youtube=r["video_id"])
         return {"encontrado": bool(r.get("video_id")), **r}
-
-    @app.post("/api/catalogo/codigos/cargar")
-    def cargar_codigos(body: dict):
-        """Carga códigos de barras a mano, en lote.
-
-        La salida garantizada cuando ninguna fuente automática lo tiene: se
-        pegan líneas `clave;código`, donde la clave es el ASIN o el número de
-        set. Para LEGO, Brickset deja exportar esa lista de una.
-        """
-        import re as _re
-        from gtin_lookup import validar_gtin
-
-        crudo = (body or {}).get("lineas", "")
-        lineas = crudo if isinstance(crudo, list) else str(crudo).splitlines()
-        productos = cat.todos()
-        aplicados, sin_producto, invalidos = [], [], []
-
-        for linea in lineas:
-            partes = [p.strip() for p in _re.split(r"[;,\t|]+|\s{2,}", linea.strip())
-                      if p.strip()]
-            if len(partes) < 2:
-                if linea.strip():
-                    invalidos.append(linea.strip()[:60])
-                continue
-            clave, codigo = partes[0], _re.sub(r"\D", "", partes[-1])
-            if not validar_gtin(codigo):
-                invalidos.append(f"{clave}: {partes[-1]} no es un código válido")
-                continue
-            destino = next(
-                (p for p in productos
-                 if p.asin.upper() == clave.upper()
-                 or (p.modelo_fabricante or "") == clave
-                 or numero_de_set(p.modelo or p.titulo_ml or "") == clave), None)
-            if not destino:
-                sin_producto.append(clave)
-                continue
-            attrs = dict(destino.ml_attributes or {})
-            attrs["GTIN"] = codigo
-            attrs.pop("EMPTY_GTIN_REASON", None)
-            cat.actualizar_publicacion(destino.id, ml_attributes=attrs)
-            aplicados.append({"id": destino.id, "clave": clave, "gtin": codigo,
-                              "nombre": destino.titulo_ml or destino.modelo})
-
-        return {"aplicados": aplicados, "sin_producto": sin_producto,
-                "invalidos": invalidos, "total": len(aplicados)}
 
     @app.post("/api/catalogo/verificar")
     def verificar():
