@@ -2501,3 +2501,69 @@ def test_lo_que_el_navegador_no_pudo_leer_no_se_toca(tmp_path, monkeypatch):
     assert d["revisados"] == 0 and d["no_leidos"] == 1
     assert c.get(f"/api/catalogo/{pid}").json()["precio_usd"] == antes
     assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_pausar_todo_saca_de_venta_todo_lo_publicado(tmp_path, monkeypatch):
+    """Freno de mano: cuando el catálogo está mal calculado, seguir vendiendo
+    es vender a pérdida o no poder entregar."""
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/catalogo/pausar-todo", json={}).json()
+
+    assert d["pausadas"] == 1 and d["quedan"] == 0
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_pausar_todo_no_toca_borradores(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    borrador = _alta(c, asin="B0BORRA0001", marca="LEGO",
+                     modelo="Sin publicar").json()["id"]
+    cli.pausar = lambda item_id: {"status": "paused"}
+
+    c.post("/api/catalogo/pausar-todo", json={})
+
+    assert c.get(f"/api/catalogo/{borrador}").json()["estado"] == "borrador"
+
+
+def test_pausar_todo_devuelve_lo_que_falta_si_se_acaba_el_tiempo(tmp_path, monkeypatch):
+    """Con 126 publicaciones no entra en un solo pedido: hay que poder seguir."""
+    import api.catalogo_routes as rutas
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    for i in range(2):
+        oid = _alta(c, asin=f"B0TODO{i:05d}", marca="LEGO",
+                    titulo_ml=f"Otro {i}", ml_category_id="MLA1157").json()["id"]
+        c.patch(f"/api/catalogo/{oid}/publicacion",
+                json={"pictures": ["http://i/1.jpg"]})
+        c.post(f"/api/catalogo/{oid}/aprobar")
+        c.post(f"/api/catalogo/{oid}/publicar", json={})
+    cli.pausar = lambda item_id: {"status": "paused"}
+    monkeypatch.setattr(rutas, "TOPE_APLICAR_SEG", 0.0)
+
+    d = c.post("/api/catalogo/pausar-todo", json={}).json()
+    assert d["pausadas"] == 1 and d["quedan"] == 2
+
+
+def test_cambiar_el_envio_por_ciento_reestima_todo_el_catalogo(tmp_path, monkeypatch):
+    """El costo mal estimado es lo que hace vender a pérdida. Cambiar el
+    porcentaje tiene que mover a los productos que ya están cargados."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "envpct.db")))
+    pid = _alta(c, marca="LEGO", modelo="LEGO Set", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    antes = c.get(f"/api/catalogo/{pid}").json()
+    assert antes["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
+
+    r = c.post("/api/catalogo/config", json={"envio_import_pct": 60})
+    assert r.json()["envio_import_pct"] == 60.0
+
+    despues = c.get(f"/api/catalogo/{pid}").json()
+    assert despues["costo_envio_usd"] == pytest.approx(60.0, abs=0.01)
+    assert despues["costo_total_ars"] > antes["costo_total_ars"]

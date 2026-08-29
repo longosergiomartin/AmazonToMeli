@@ -305,6 +305,13 @@
         <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
       </div>
       <div class="f" style="margin:0">
+        <label>Envío + importación (%)</label>
+        <input type="number" id="pr-envio-pct" min="0" max="300" step="1"
+               style="width:150px">
+        <span class="hint">Sobre el precio de Amazon. Es el número más
+          importante de la cuenta.</span>
+      </div>
+      <div class="f" style="margin:0">
         <label>Ganancia mínima ($)</label>
         <input type="number" id="pr-piso" min="0" step="1000"
                placeholder="sin piso" style="width:150px">
@@ -416,6 +423,8 @@
     <button type="button" class="sm" id="diagnostico"
             title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
     <button type="button" class="sm" id="verificar" title="Contrasta el estado local con lo que hay de verdad en tu cuenta">🔍 Verificar en MercadoLibre</button>
+    <button type="button" class="sm" id="pausar-todo"
+            title="Saca de venta todo lo publicado, sin borrarlo">⏸ Pausar TODAS</button>
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
 
@@ -1151,6 +1160,19 @@
     tanda();
   };
 
+  $("pr-envio-pct").addEventListener("change",function(){
+    var v=parseFloat(this.value)||0;
+    if(!confirm("Vas a fijar el envío + importación en "+v+"% del precio de "
+      +"Amazon.\n\nSe vuelve a estimar el costo de TODOS los productos que lo "
+      +"tenían estimado. Los que tienen el Total real del checkout cargado a "
+      +"mano no se tocan. ¿Confirmás?")) { cargarConfigPublicacion(); return; }
+    api("POST","/api/catalogo/config",{envio_import_pct:v}).then(function(c){
+      $("pr-msg").textContent="Envío + importación: "+c.envio_import_pct
+        +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
+      cargar();
+    }).catch(err);
+  });
+
   $("pr-piso").addEventListener("change",function(){
     // El piso cambia el precio sugerido de todo el catálogo, así que se guarda
     // como preferencia y no como parámetro de una simulación suelta.
@@ -1180,6 +1202,34 @@
       +(mal.length?" · no se pudo con: "+mal.map(function(x){
           return (x.nombre||x.id)+" ("+x.error+")";}).join(" · "):"")+".";
   }
+
+  $("pausar-todo").onclick=function(){
+    if(!confirm("FRENO DE MANO\n\nEsto saca de venta TODAS tus publicaciones "
+      +"de MercadoLibre.\n\nSe pausan, no se borran: conservan su antigüedad y "
+      +"sus visitas, y las reactivás cuando quieras.\n\n¿Confirmás?")) return;
+    var b=$("pausar-todo"); b.disabled=true;
+    var total=0, fallas=[];
+    // Va por tandas: con 126 publicaciones no entra en un solo pedido.
+    function tanda(){
+      $("lote-msg").textContent="Pausando… "+total+" hechas.";
+      api("POST","/api/catalogo/pausar-todo",{}).then(function(d){
+        total+=d.pausadas||0;
+        (d.resultados||[]).forEach(function(r){
+          if(r.error) fallas.push(r.nombre+" ("+r.error+")"); });
+        // Si quedan y en esta vuelta se pausó alguna, se sigue. Si no se pausó
+        // ninguna, seguir sería un bucle infinito sobre las que fallan.
+        if(d.quedan>0 && d.pausadas>0){ tanda(); return; }
+        b.disabled=false;
+        $("lote-msg").textContent=total+" publicación/es pausadas."
+          +(d.quedan?" Quedaron "+d.quedan+" sin pausar.":"")
+          +(fallas.length?" No se pudo con: "+fallas.slice(0,5).join(" · "):"");
+        cargar();
+      }).catch(function(e){ b.disabled=false;
+        if(total) $("lote-msg").textContent="Se cortó con "+total+" pausadas.";
+        cargar(); err(e); });
+    }
+    tanda();
+  };
 
   $("lote-pausar").onclick=function(){
     var ids=seleccionados();
@@ -1669,6 +1719,7 @@
       // ve y se edita lo mismo que va a leer el comprador.
       $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
       $("pr-piso").value=c.ganancia_minima||"";
+      $("pr-envio-pct").value=c.envio_import_pct||"";
     }).catch(function(){});
   }
 

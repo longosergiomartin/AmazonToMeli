@@ -210,6 +210,7 @@ def registrar_catalogo(app: FastAPI, conn,
         from descripcion import COMPRA_DEFAULT
         return {"tipo_producto": cat.tipo_producto,
                 "ganancia_minima": cat.ganancia_minima,
+                "envio_import_pct": round(cat.envio_import_pct * 100, 1),
                 "texto_compra": cat.texto_compra,
                 "texto_compra_default": COMPRA_DEFAULT,
                 "publicar_en_catalogo": cat.publicar_en_catalogo}
@@ -219,6 +220,16 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         if "tipo_producto" in cuerpo:
             cat.tipo_producto = cuerpo.get("tipo_producto") or ""
+        if "envio_import_pct" in cuerpo:
+            anterior = cat.envio_import_pct
+            try:
+                cat.envio_import_pct = float(
+                    cuerpo.get("envio_import_pct") or 0) / 100.0
+            except (TypeError, ValueError) as e:
+                raise HTTPException(422, str(e))
+            # Sin reestimar, el porcentaje nuevo no movería a los productos que
+            # ya tienen el envío guardado, que son todos los del catálogo.
+            cat.reestimar_envios(pct_anterior=anterior)
         if "ganancia_minima" in cuerpo:
             try:
                 cat.ganancia_minima = cuerpo.get("ganancia_minima")
@@ -1732,6 +1743,44 @@ def registrar_catalogo(app: FastAPI, conn,
             publicar(p.id, Borrador())
 
         return _en_lote(ids, _uno)
+
+    @app.post("/api/catalogo/pausar-todo")
+    def pausar_todo(body: dict = None):
+        """Freno de mano: saca de venta todo lo publicado, de una.
+
+        Sirve cuando hay que corregir el catálogo con calma —costos mal
+        estimados, precios viejos— y seguir vendiendo mientras tanto significa
+        vender a pérdida o no poder entregar.
+
+        Se pausa, no se borra: cada publicación conserva su antigüedad y sus
+        visitas, y se reactiva cuando vuelva a cerrar.
+        """
+        cli = _client()
+        vivos = [p for p in cat.todos()
+                 if p.estado == "publicado" and (p.ml_item_id or "").strip()]
+        resultados = []
+        arranque = time.monotonic()
+        for i, p in enumerate(vivos):
+            # Mismo presupuesto que el resto: con 126 publicaciones esto no
+            # entra en un solo pedido, así que se devuelve lo que falta y el
+            # panel vuelve a llamar.
+            if i and time.monotonic() - arranque > TOPE_APLICAR_SEG:
+                break
+            fila = {"id": p.id, "nombre": p.titulo_ml or p.modelo, "ok": False,
+                    "error": ""}
+            try:
+                cli.pausar(p.ml_item_id)
+                cat.cambiar_estado(p.id, "pausado", "Pausado todo desde el panel")
+                fila["ok"] = True
+            except MeliAPIError as e:
+                fila["error"] = _motivo(e)
+            resultados.append(fila)
+        quedan = len([p for p in cat.todos()
+                      if p.estado == "publicado" and (p.ml_item_id or "").strip()])
+        return {"resultados": resultados,
+                "pausadas": sum(1 for r in resultados if r["ok"]),
+                "fallas": sum(1 for r in resultados if r["error"]),
+                "quedan": quedan}
 
     @app.post("/api/catalogo/lote/pausar")
     def lote_pausar(body: dict):
