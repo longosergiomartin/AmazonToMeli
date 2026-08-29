@@ -43,6 +43,8 @@ class AltaProducto(BaseModel):
     precio_usd: float = 0.0
     peso_kg: float = 0.5
     costo_envio_usd: float = 0.0
+    # None = nadie lo miró. Se costea como si no tuviera envío gratis.
+    envio_gratis_amazon: Optional[bool] = None
     disponibilidad: str = "in_stock"
     regimen: str = "courier"
     categoria: str = "default"
@@ -2263,13 +2265,36 @@ def registrar_catalogo(app: FastAPI, conn,
 
     @app.patch("/api/catalogo/{pid}/costo")
     def costo_manual(pid: int, body: dict):
-        """Costo real en pesos, puesto a mano. Vacío vuelve a la estimación."""
+        """Costo real en pesos, puesto a mano. Vacío vuelve a la estimación.
+
+        Dos formas de cargarlo según qué número se tenga:
+          - `costo_ars`: el total ya puesto acá. Se usa tal cual.
+          - `costo_producto_ars`: lo que sale el producto, sin el envío
+            internacional. Se le suma el % que corresponda según tenga o no
+            envío gratis de Amazon, así el sugerido cambia con esa marca.
+        """
         _p(pid)
+        cuerpo = body or {}
+        vacio = (None, "", 0)
+        base, total = cuerpo.get("costo_producto_ars"), cuerpo.get("costo_ars")
         try:
-            return _dict(cat.actualizar_costo_manual(
-                pid, (body or {}).get("costo_ars")))
+            # Cargar uno borra el otro: hay un solo costo por producto.
+            if base not in vacio:
+                return _dict(cat.actualizar_costo_producto(pid, base))
+            if total not in vacio:
+                return _dict(cat.actualizar_costo_manual(pid, total))
+            # Los dos vacíos: se borra lo que se haya pedido borrar y el costo
+            # vuelve a estimarse entero.
+            p = None
+            if "costo_producto_ars" in cuerpo:
+                p = cat.actualizar_costo_producto(pid, None)
+            if "costo_ars" in cuerpo:
+                p = cat.actualizar_costo_manual(pid, None)
         except ValueError as e:
             raise HTTPException(422, str(e))
+        if p is None:
+            raise HTTPException(422, "Mandá costo_ars o costo_producto_ars.")
+        return _dict(p)
 
     def _envio_gratis_pedido(body: dict):
         """Los tres estados que acepta la marca de envío gratis.

@@ -107,6 +107,14 @@ class ProductoCatalogo:
     # el tipo de cambio, el % de envío y el régimen son estimaciones para
     # cuando no se sabe, y acá se sabe. 0 o None = se calcula.
     costo_manual_ars: Optional[float] = None
+    # Precio del producto en pesos, puesto a mano, SIN el envío internacional.
+    # Es el otro número que se conoce: lo que sale el producto, no lo que sale
+    # traerlo. La herramienta le suma el envío + importación que corresponda
+    # según `envio_gratis_amazon`, así el mismo producto cuesta distinto —y se
+    # vende a distinto precio— según Amazon lo mande gratis o no.
+    # `costo_manual_ars` (el total ya puesto acá) gana sobre este: es un dato
+    # más completo. Cargar uno borra el otro, para que haya una sola verdad.
+    costo_producto_manual_ars: Optional[float] = None
     # --- calculados / estado (los llena el servicio) ---
     id: Optional[int] = None
     costo_total_ars: float = 0.0
@@ -634,7 +642,11 @@ class Catalogo:
                               # Si Amazon lo manda gratis a Argentina. NULL en
                               # todo lo que ya estaba cargado: nadie lo miró
                               # todavía, y se paga como si no lo tuviera.
-                              ("envio_gratis_amazon", "INTEGER")):
+                              ("envio_gratis_amazon", "INTEGER"),
+                              # Precio del producto en pesos puesto a mano,
+                              # sin el envío: la herramienta le suma el que
+                              # corresponda según tenga o no envío gratis.
+                              ("costo_producto_manual_ars", "REAL")):
             if columna not in cols:
                 conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
 
@@ -669,6 +681,30 @@ class Catalogo:
 
     # ---- cálculo (reutiliza el motor arbitraje) --------------------------
 
+    def costo_a_mano(self, p: ProductoCatalogo) -> Optional[float]:
+        """El costo en pesos que cargó el usuario, si cargó alguno.
+
+        Hay dos formas de cargarlo, según qué número se tenga a mano, y una
+        precedencia clara entre ellas:
+
+          - `costo_manual_ars`: el total ya puesto en Argentina. Es el dato más
+            completo —sale del checkout o del resumen de la tarjeta—, no
+            depende de ninguna estimación, y por eso gana.
+          - `costo_producto_manual_ars`: lo que sale el producto, sin el envío
+            internacional. La herramienta le suma el porcentaje que le
+            corresponda según tenga o no envío gratis de Amazon, así el mismo
+            producto cuesta —y se vende a— distinto precio según Amazon lo
+            mande gratis o no.
+
+        `None` = no hay nada cargado y el costo se estima entero.
+        """
+        if p.costo_manual_ars:
+            return float(p.costo_manual_ars)
+        if p.costo_producto_manual_ars:
+            return round(float(p.costo_producto_manual_ars)
+                         * (1 + self.pct_envio(p)), 2)
+        return None
+
     def _calcular(self, p: ProductoCatalogo,
                   cfg_base: Optional[Config] = None) -> None:
         """Completa costo_total_ars, precio_sugerido_ars y margen_pct.
@@ -701,8 +737,8 @@ class Catalogo:
         # El costo puesto a mano gana: el resto de la cuenta —tipo de cambio,
         # porcentaje de envío, régimen— son estimaciones para cuando no se
         # conoce el costo real. Si se conoce, estimarlo es peor.
-        p.costo_total_ars = (float(p.costo_manual_ars)
-                             if p.costo_manual_ars else costo.total_ars)
+        a_mano = self.costo_a_mano(p)
+        p.costo_total_ars = costo.total_ars if a_mano is None else a_mano
         p.precio_sugerido_ars = precio_sugerido(
             p.costo_total_ars, p.margen_deseado, p.categoria, cfg_base)
         # margen real al precio que efectivamente se usará (publicado o sugerido)
@@ -720,8 +756,11 @@ class Catalogo:
             nombre=copia.modelo or copia.asin or "producto",
             query_meli=copia.modelo or "", precio_amazon_usd=base_usd,
             peso_kg=copia.peso_kg, arancel_pct=copia.arancel_pct)
-        if copia.costo_manual_ars:
-            return float(copia.costo_manual_ars)
+        # El costo cargado a mano ya está en pesos: no lo mueve el dólar que se
+        # pida para la simulación.
+        a_mano = self.costo_a_mano(copia)
+        if a_mano is not None:
+            return a_mano
         cfg = self._cfg_efectivo(tc)
         if copia.regimen == "landed":
             pa.precio_landed_usd = base_usd
@@ -819,17 +858,26 @@ class Catalogo:
         for p in self.todos():
             if ids is not None and p.id not in ids:
                 continue
-            if not p.precio_usd or p.costo_manual_ars:
-                continue          # con costo a mano, la estimación no aplica
-            if viejos is not None and self._envio_a_mano(p, viejos):
-                continue              # lo cargó una persona: se respeta
-            nuevo = round(p.precio_usd * self.pct_envio(p), 2)
-            if abs((p.costo_envio_usd or 0) - nuevo) < 0.01:
+            if p.costo_manual_ars:
+                continue      # el total puesto a mano no depende del porcentaje
+            nuevo = None
+            if p.precio_usd and not (viejos is not None
+                                     and self._envio_a_mano(p, viejos)):
+                candidato = round(p.precio_usd * self.pct_envio(p), 2)
+                if abs((p.costo_envio_usd or 0) - candidato) >= 0.01:
+                    nuevo = candidato
+            # Al precio del producto cargado a mano el porcentaje se le suma
+            # arriba: cambia su costo total aunque el envío en dólares no se
+            # mueva, así que hay que recalcularlo igual.
+            if nuevo is None and not p.costo_producto_manual_ars:
                 continue
-            anterior, p.costo_envio_usd = p.costo_envio_usd, nuevo
+            anterior = p.costo_envio_usd
+            if nuevo is not None:
+                p.costo_envio_usd = nuevo
             self._calcular(p)
             self._guardar(p, commit=False)
-            self._log(p.id, "envio", "costo_envio_usd", anterior, nuevo)
+            if nuevo is not None:
+                self._log(p.id, "envio", "costo_envio_usd", anterior, nuevo)
             cambiados += 1
         self.conn.commit()
         return cambiados
@@ -860,9 +908,26 @@ class Catalogo:
         self._log(p.id, "envio", "envio_gratis_amazon", anterior, nuevo)
         return p
 
+    @staticmethod
+    def _monto_o_nada(valor) -> Optional[float]:
+        """Un monto en pesos, o `None` para volver a estimarlo."""
+        if valor in (None, "", 0):
+            return None
+        try:
+            monto = float(valor)
+        except (TypeError, ValueError):
+            raise ValueError("El costo tiene que ser un número.")
+        if monto <= 0:
+            raise ValueError("El costo tiene que ser mayor que cero.")
+        return monto
+
     def actualizar_costo_manual(self, pid: int,
                                 costo_ars: Optional[float]) -> ProductoCatalogo:
-        """Fija el costo en pesos a mano, o lo saca para volver a estimarlo.
+        """Fija el costo TOTAL en pesos a mano, o lo saca para volver a estimarlo.
+
+        Es el costo ya puesto en Argentina: producto + envío + importación, al
+        dólar que se pagó. No lo mueve ni el tipo de cambio ni el porcentaje de
+        envío, porque no es una estimación de nada.
 
         `None` o 0 vuelve al costo calculado. Recalcula el precio sugerido y el
         margen, que es para lo que sirve: saber a cuánto hay que vender con el
@@ -871,20 +936,41 @@ class Catalogo:
         p = self.obtener(pid)
         if not p:
             raise ValueError("No existe ese producto.")
-        if costo_ars in (None, "", 0):
-            nuevo = None
-        else:
-            try:
-                nuevo = float(costo_ars)
-            except (TypeError, ValueError):
-                raise ValueError("El costo tiene que ser un número.")
-            if nuevo <= 0:
-                raise ValueError("El costo tiene que ser mayor que cero.")
+        nuevo = self._monto_o_nada(costo_ars)
         anterior = p.costo_manual_ars
         p.costo_manual_ars = nuevo
+        if nuevo is not None:
+            # Una sola verdad: cargar el total deja sin sentido al precio del
+            # producto suelto, que existe justamente para deducir ese total.
+            p.costo_producto_manual_ars = None
         self._calcular(p)
         self._guardar(p)
         self._log(p.id, "costo", "costo_manual_ars", anterior, nuevo)
+        return p
+
+    def actualizar_costo_producto(self, pid: int,
+                                  costo_ars: Optional[float]) -> ProductoCatalogo:
+        """Fija el precio del producto en pesos, SIN el envío internacional.
+
+        La diferencia con `actualizar_costo_manual` es lo que la herramienta
+        hace después: acá le suma el envío + importación que corresponda según
+        el producto tenga o no envío gratis de Amazon. El mismo número escrito
+        sobre un producto tildado y sobre uno sin tildar da dos costos y dos
+        precios sugeridos distintos, que es justamente lo que hay que ver.
+
+        `None` o 0 lo saca y vuelve a estimarse todo.
+        """
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        nuevo = self._monto_o_nada(costo_ars)
+        anterior = p.costo_producto_manual_ars
+        p.costo_producto_manual_ars = nuevo
+        if nuevo is not None:
+            p.costo_manual_ars = None
+        self._calcular(p)
+        self._guardar(p)
+        self._log(p.id, "costo", "costo_producto_manual_ars", anterior, nuevo)
         return p
 
     def envio_efectivo(self, envio: Optional[float] = None) -> float:
@@ -926,7 +1012,8 @@ class Catalogo:
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
                "ml_permalink", "video_youtube", "revisado_en",
-               "costo_manual_ars", "envio_gratis_amazon"]
+               "costo_manual_ars", "envio_gratis_amazon",
+               "costo_producto_manual_ars"]
 
     def _valores(self, p: ProductoCatalogo) -> list:
         """Los campos de `p` listos para el motor SQL.

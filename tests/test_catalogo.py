@@ -803,6 +803,110 @@ def test_el_costo_a_mano_manda_tambien_al_simular_precios(cat):
     assert r["costo_ars"] == 275000
 
 
+def test_el_precio_del_producto_a_mano_le_suma_el_envio_que_corresponda(cat):
+    """El otro número que se conoce es lo que sale el producto, no lo que sale
+    traerlo: la herramienta le suma el envío según la marca."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=True))
+
+    p2 = cat.actualizar_costo_producto(p.id, 100000)
+
+    assert p2.costo_producto_manual_ars == 100000
+    assert p2.costo_total_ars == pytest.approx(126000, abs=1)   # +26%
+
+
+def test_el_mismo_precio_a_mano_da_dos_costos_segun_el_envio(cat):
+    """Es exactamente lo que la marca tiene que producir: el mismo producto
+    cuesta —y hay que venderlo a— distinto precio según Amazon lo mande gratis
+    o no."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=True))
+    con = cat.actualizar_costo_producto(p.id, 100000)
+    caro_antes = con.precio_sugerido_ars
+
+    sin = cat.marcar_envio_gratis(p.id, False)
+
+    assert sin.costo_total_ars == pytest.approx(170000, abs=1)  # +70%
+    assert sin.precio_sugerido_ars > caro_antes
+
+
+def test_cargar_el_total_a_mano_borra_el_precio_del_producto(cat):
+    """Un solo costo por producto: si quedaran los dos no se sabría cuál manda."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed"))
+    cat.actualizar_costo_producto(p.id, 100000)
+
+    p2 = cat.actualizar_costo_manual(p.id, 333000)
+
+    assert p2.costo_producto_manual_ars is None
+    assert p2.costo_total_ars == 333000
+
+
+def test_cargar_el_precio_del_producto_borra_el_total_a_mano(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=True))
+    cat.actualizar_costo_manual(p.id, 333000)
+
+    p2 = cat.actualizar_costo_producto(p.id, 100000)
+
+    assert p2.costo_manual_ars is None
+    assert p2.costo_total_ars == pytest.approx(126000, abs=1)
+
+
+def test_el_total_a_mano_no_lo_mueve_la_marca_de_envio(cat):
+    """El total ya puesto acá no es una estimación de nada: el porcentaje de
+    envío no tiene por qué tocarlo."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed"))
+    cat.actualizar_costo_manual(p.id, 333000)
+
+    p2 = cat.marcar_envio_gratis(p.id, True)
+
+    assert p2.costo_total_ars == 333000
+
+
+def test_cambiar_el_porcentaje_mueve_el_precio_del_producto_a_mano(cat):
+    """El porcentaje se le suma arriba, así que su costo total sí depende de
+    él aunque el envío en dólares no se mueva."""
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=False))
+    cat.actualizar_costo_producto(p.id, 100000)
+    assert cat.obtener(p.id).costo_total_ars == pytest.approx(170000, abs=1)
+
+    cat.envio_import_sin_gratis_pct = 0.90
+    cat.reestimar_envios(pct_anterior=(0.26, 0.70))
+
+    assert cat.obtener(p.id).costo_total_ars == pytest.approx(190000, abs=1)
+
+
+def test_el_precio_del_producto_a_mano_manda_al_simular(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=True))
+    cat.actualizar_costo_producto(p.id, 100000)
+
+    r = cat.simular(cat.obtener(p.id), tc_costo=1600)
+
+    assert r["costo_ars"] == pytest.approx(126000, abs=1)
+
+
+def test_sacar_el_precio_del_producto_vuelve_a_estimar_todo(cat):
+    p = cat.agregar(_prod(precio_usd=100.0, regimen="landed",
+                          envio_gratis_amazon=True))
+    estimado = p.costo_total_ars
+    cat.actualizar_costo_producto(p.id, 999000)
+
+    p2 = cat.actualizar_costo_producto(p.id, None)
+
+    assert p2.costo_producto_manual_ars is None
+    assert p2.costo_total_ars == pytest.approx(estimado, abs=1)
+
+
+def test_un_precio_de_producto_invalido_se_rechaza(cat):
+    p = cat.agregar(_prod())
+    with pytest.raises(ValueError):
+        cat.actualizar_costo_producto(p.id, -100)
+    with pytest.raises(ValueError):
+        cat.actualizar_costo_producto(p.id, "muchos pesos")
+
+
 def test_marcar_envio_gratis_baja_el_costo_y_el_sugerido(cat):
     """Es el punto de toda la marca: el mismo producto sale mucho menos si
     Amazon paga el flete, y el precio al que hay que venderlo baja con él."""
