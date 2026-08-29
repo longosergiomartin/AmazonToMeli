@@ -210,8 +210,10 @@
       <div class="f"><label>Modelo</label><input id="modelo" placeholder="Waders neopreno con botas"></div>
       <div class="f"><label>Precio en USD</label><input id="precio_usd" type="number" step="0.01" placeholder="118.99"></div>
       <div class="f"><label>Peso (kg)</label><input id="peso_kg" type="number" step="0.1" value="0.5"></div>
-      <div class="f"><label>Envío + importación (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="se calcula solo (26%)">
-        <span class="hint">Se estima en 26% del precio de Amazon. Si tenés el Total del checkout, restale el precio y poné la diferencia.</span></div>
+      <div class="f"><label><input type="checkbox" id="envio_gratis_amazon"> 📦 Amazon lo manda gratis a Argentina</label>
+        <span class="hint">Cambia el costo por tres: tildado se estima el % «con envío gratis», sin tildar el «sin envío gratis». Si no lo miraste, dejalo sin tildar.</span></div>
+      <div class="f"><label>Envío + importación (USD)</label><input id="costo_envio_usd" type="number" step="0.01" placeholder="se calcula solo">
+        <span class="hint">Se estima como % del precio de Amazon. Si tenés el Total del checkout, restale el precio y poné la diferencia: ese número es exacto y le gana a cualquier estimación.</span></div>
       <div class="f"><label>Disponibilidad</label>
         <select id="disponibilidad"><option value="in_stock">En stock</option><option value="out_of_stock">Sin stock</option></select></div>
       <div class="f"><label>Cómo calcular el costo</label>
@@ -263,6 +265,10 @@
             title="Saca de venta las seleccionadas, sin borrarlas">⏸ Pausar</button>
     <button type="button" class="sm" id="lote-reactivar-pub"
             title="Vuelve a poner a la venta las seleccionadas">▶ Reactivar</button>
+    <button type="button" class="sm" id="lote-envio-si"
+            title="Marca las seleccionadas como «Amazon las manda gratis»">📦 Con envío gratis</button>
+    <button type="button" class="sm" id="lote-envio-no"
+            title="Marca las seleccionadas como «hay que pagar el envío»">✈ Sin envío gratis</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
     <span class="msg" id="lote-msg"></span>
   </div>
@@ -305,11 +311,18 @@
         <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
       </div>
       <div class="f" style="margin:0">
-        <label>Envío + importación (%)</label>
+        <label>Envío + imp. CON envío gratis (%)</label>
         <input type="number" id="pr-envio-pct" min="0" max="300" step="1"
                style="width:150px">
-        <span class="hint">Sobre el precio de Amazon. Es el número más
-          importante de la cuenta.</span>
+        <span class="hint">Para los productos tildados 📦. Sobre el precio de
+          Amazon.</span>
+      </div>
+      <div class="f" style="margin:0">
+        <label>Envío + imp. SIN envío gratis (%)</label>
+        <input type="number" id="pr-envio-pct-sin" min="0" max="300" step="1"
+               style="width:150px">
+        <span class="hint">Para el resto ✈. Es el caso más común y el número
+          más importante de la cuenta.</span>
       </div>
       <div class="f" style="margin:0">
         <label>Ganancia mínima ($)</label>
@@ -431,7 +444,9 @@
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
-      <th class="prod">Producto</th><th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
+      <th class="prod">Producto</th>
+      <th style="text-align:center" title="Tildá los productos que Amazon manda gratis a Argentina. Los tildados se costean al % «con envío gratis»; el resto, al de «sin envío gratis».">📦 Envío<br><span class="hint">gratis</span></th>
+      <th style="text-align:right">Costo ARS</th><th style="text-align:right">Sugerido</th>
       <th style="text-align:right">Publicado</th><th style="text-align:right">Margen</th><th>Estado</th><th class="acc">Acciones</th>
     </tr></thead><tbody id="tbody"></tbody></table>
     <div class="empty" id="empty">Todavía no registraste productos.</div>
@@ -657,6 +672,7 @@
     var body={amazon_link:$("amazon_link").value,asin:$("asin").value,marca:$("marca").value,
       modelo:$("modelo").value,precio_usd:num("precio_usd"),peso_kg:num("peso_kg"),
       costo_envio_usd:num("costo_envio_usd"),disponibilidad:$("disponibilidad").value,
+      envio_gratis_amazon:$("envio_gratis_amazon").checked?true:null,
       regimen:$("regimen").value,
       categoria:$("categoria").value,margen_deseado:num("margen_deseado")/100,
       stock:Math.round(num("stock")),dias_preparacion:Math.round(num("dias_preparacion")),
@@ -666,6 +682,9 @@
     $("add-msg").textContent="Calculando...";
     api("POST","/api/catalogo",body).then(function(){ $("add-msg").textContent="✓ Registrado";
       ["amazon_link","asin","marca","modelo","precio_usd","costo_envio_usd","titulo_ml"].forEach(function(k){$(k).value="";});
+      // Vuelve al default conservador: el próximo producto se supone sin envío
+      // gratis hasta que alguien mire su ficha.
+      $("envio_gratis_amazon").checked=false;
       traido={descripcion:"",imagenes:[]}; $("traer-msg").textContent="";
       cargar(); setTimeout(function(){$("add-msg").textContent="";},2000);
     }).catch(function(e){ $("add-msg").textContent="Error: "+JSON.stringify(e); });
@@ -689,10 +708,28 @@
                  +'" target="_blank" rel="noopener">comprar en Amazon ↗</a>'
                : '')
             +'</div></td>'+
-          // Se marca el costo puesto a mano: es un dato distinto de una
-          // estimación y conviene verlo de un vistazo.
-          '<td class="num">'+fmt(p.costo_total_ars)
-            +(p.costo_manual_ars?' <span class="hint" title="Costo puesto a mano">✎</span>':'')
+          // Tildar/destildar cambia el % de envío + importación con el que se
+          // costea el producto, que es lo que más mueve el precio sugerido.
+          // Sin tildar todavía se muestra un "?" : paga como si no tuviera
+          // envío gratis, pero es un dato que nadie miró.
+          '<td style="text-align:center"><input type="checkbox" class="eg" '
+            +'data-id="'+p.id+'"'+(p.envio_gratis_amazon?" checked":"")
+            +' title="Amazon lo manda gratis a Argentina">'
+            +(p.envio_gratis_amazon===null||p.envio_gratis_amazon===undefined
+               ? '<span class="hint" title="Sin revisar: se cobra como si NO '
+                 +'tuviera envío gratis">?</span>' : '')
+            +'</td>'+
+          // El número es el botón para editarlo: el costo a mano estaba
+          // escondido en el menú "⋯" y es lo primero que hay que poder
+          // corregir. Se marca si está puesto a mano, que es un dato distinto
+          // de una estimación y conviene verlo de un vistazo.
+          '<td class="num"><a href="#" class="costo" data-id="'+p.id+'" '
+            +'title="Editar el costo en pesos a mano">'+fmt(p.costo_total_ars)+'</a>'
+            +(p.costo_manual_ars
+               ? ' <span class="hint" title="Costo total puesto a mano">✎</span>'
+               : (p.costo_producto_manual_ars
+                   ? ' <span class="hint" title="Precio del producto puesto a mano, más el envío que corresponda">✎%</span>'
+                   : ''))
             +'</td>'+
           '<td class="num">'+fmt(p.precio_sugerido_ars)+'</td>'+
           '<td class="num">'+fmt(p.precio_publicado_ars)+'</td>'+
@@ -708,6 +745,20 @@
       });
       Array.prototype.forEach.call(document.querySelectorAll(".sel"),
         function(c){ c.onchange=pintarLote; });
+      Array.prototype.forEach.call(document.querySelectorAll("a.costo"),
+        function(a){ a.onclick=function(e){
+          e.preventDefault();
+          var id=parseInt(this.getAttribute("data-id"),10);
+          api("GET","/api/catalogo/"+id).then(dlgCosto).catch(err);
+        }; });
+      Array.prototype.forEach.call(document.querySelectorAll(".eg"),
+        function(c){ c.onchange=function(){
+          var chk=this;
+          chk.disabled=true;
+          api("PATCH","/api/catalogo/"+chk.getAttribute("data-id")+"/envio-gratis",
+              {envio_gratis:chk.checked}).then(cargar)
+            .catch(function(e){ chk.checked=!chk.checked; chk.disabled=false; err(e); });
+        }; });
       $("chk-todos").checked=false; pintarLote();
     });
   }
@@ -1164,18 +1215,28 @@
     tanda();
   };
 
-  $("pr-envio-pct").addEventListener("change",function(){
-    var v=parseFloat(this.value)||0;
-    if(!confirm("Vas a fijar el envío + importación en "+v+"% del precio de "
-      +"Amazon.\n\nSe vuelve a estimar el costo de TODOS los productos que lo "
-      +"tenían estimado. Los que tienen el Total real del checkout cargado a "
-      +"mano no se tocan. ¿Confirmás?")) { cargarConfigPublicacion(); return; }
-    api("POST","/api/catalogo/config",{envio_import_pct:v}).then(function(c){
-      $("pr-msg").textContent="Envío + importación: "+c.envio_import_pct
-        +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
-      cargar();
-    }).catch(err);
-  });
+  // Los dos porcentajes de envío se guardan igual; solo cambia a qué mitad del
+  // catálogo le pega cada uno.
+  function guardarPctEnvio(campo, clave, cuales){
+    $(campo).addEventListener("change",function(){
+      var v=parseFloat(this.value)||0, cuerpo={};
+      if(!confirm("Vas a fijar el envío + importación de "+cuales+" en "+v+"% "
+        +"del precio de Amazon.\n\nSe vuelve a estimar el costo de esos "
+        +"productos. Los que tienen el Total real del checkout cargado a mano, "
+        +"o el costo en pesos puesto a mano, no se tocan. ¿Confirmás?"))
+        { cargarConfigPublicacion(); return; }
+      cuerpo[clave]=v;
+      api("POST","/api/catalogo/config",cuerpo).then(function(c){
+        $("pr-msg").textContent="Envío + importación de "+cuales+": "+v
+          +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
+        cargar();
+      }).catch(err);
+    });
+  }
+  guardarPctEnvio("pr-envio-pct","envio_import_pct",
+                  "los que tienen envío gratis 📦");
+  guardarPctEnvio("pr-envio-pct-sin","envio_import_sin_gratis_pct",
+                  "los que NO tienen envío gratis ✈");
 
   $("pr-piso").addEventListener("change",function(){
     // El piso cambia el precio sugerido de todo el catálogo, así que se guarda
@@ -1259,6 +1320,40 @@
       cargar();
     }).catch(err);
   };
+
+  // Marcar el envío en lote: es lo que hace falta para ordenar un catálogo
+  // entero que se cargó antes de que la marca existiera.
+  function marcarEnvioLote(valor, texto){
+    return function(){
+      var ids=seleccionados();
+      if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
+      if(!confirm("Marcar "+ids.length+" producto/s como "+texto+".\n\nSe "
+        +"recalcula el costo y el precio sugerido de cada uno. No se toca "
+        +"ningún precio publicado. ¿Confirmás?")) return;
+      // El endpoint procesa de a 25: el catálogo entero se marca en tandas.
+      var pend=ids.slice(), hechas=0, fallas=[];
+      (function tanda(){
+        if(!pend.length){
+          $("lote-msg").textContent=hechas+" marcada/s"
+            +(fallas.length?" · fallaron: "+fallas.join(", "):"");
+          cargar(); return;
+        }
+        var lote=pend.splice(0,25);
+        $("lote-msg").textContent="Marcando… "+hechas+"/"+ids.length;
+        api("POST","/api/catalogo/lote/envio-gratis",
+            {ids:lote,envio_gratis:valor}).then(function(d){
+          (d.resultados||[]).forEach(function(r){
+            if(r.ok) hechas++; else fallas.push(r.nombre+" ("+r.error+")"); });
+          tanda();
+        }).catch(function(e){
+          $("lote-msg").textContent="Se cortó con "+hechas+" marcada/s.";
+          cargar(); err(e);
+        });
+      })();
+    };
+  }
+  $("lote-envio-si").onclick=marcarEnvioLote(true,"CON envío gratis de Amazon");
+  $("lote-envio-no").onclick=marcarEnvioLote(false,"SIN envío gratis de Amazon");
 
   $("lote-borrar").onclick=function(){
     var ids=seleccionados();
@@ -1455,16 +1550,7 @@
       if(v)api("PATCH","/api/catalogo/"+p.id+"/precio",{precio:parseFloat(v)}).then(cargar).catch(err);});
     b("Stock",function(){var v=prompt("Nuevo stock:",p.stock);
       if(v)api("PATCH","/api/catalogo/"+p.id+"/stock",{stock:parseInt(v,10)}).then(cargar).catch(err);});
-    b("Costo ARS a mano",function(){
-      var v=prompt("Costo REAL en pesos de este producto.\n\nEs lo que te sale "
-        +"puesto acá: producto + envío + impuestos, al dólar que pagaste.\n"
-        +"Gana sobre toda la estimación y recalcula el precio sugerido.\n\n"
-        +"Vacío = volver a estimarlo.",
-        p.costo_manual_ars?Math.round(p.costo_manual_ars):"");
-      if(v===null) return;
-      api("PATCH","/api/catalogo/"+p.id+"/costo",
-          {costo_ars:v.trim()===""?null:parseFloat(v)}).then(cargar).catch(err);
-    });
+    b("Costo ARS a mano",function(){ dlgCosto(p); });
     b("Cómo se calcula el costo",function(){
       var r=prompt("Cómo calcular el costo — escribí: landed (Total de Amazon), courier o general:",p.regimen);
       if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
@@ -1703,6 +1789,69 @@
       .catch(function(e){ if(e!=="faltan") alert("No se pudo publicar: "+(typeof e==="string"?e:JSON.stringify(e))); });
   }
 
+  // Los dos porcentajes de envío + importación vigentes, para poder mostrar en
+  // el panel qué le va a pasar a un costo antes de guardarlo.
+  var pctEnvio={con:26,sin:70};
+
+  // ---- costo en pesos a mano ---------------------------------------------
+  // Dos números distintos, y hay que dejar claro cuál se está escribiendo:
+  //   · el precio del producto, al que la herramienta le suma el envío según
+  //     el producto tenga o no envío gratis de Amazon;
+  //   · el total ya puesto acá, que se usa tal cual.
+  // Un prompt() no puede preguntar cuál de los dos es, y confundirlos es
+  // errarle al costo por 70%.
+  function dlgCosto(p){
+    var gratis=p.envio_gratis_amazon===true;
+    var pct=gratis?pctEnvio.con:pctEnvio.sin;
+    $("dlg-h").textContent="Costo en pesos · "+(p.modelo||p.asin||"producto");
+    $("dlg-b").innerHTML=
+      '<p class="hint" style="margin:0 0 14px">Este producto está marcado como '
+        +'<b>'+(gratis?"📦 con envío gratis de Amazon":"✈ sin envío gratis")+'</b>, '
+        +'así que al precio del producto se le suma <b>'+pct+'%</b> de envío + '
+        +'importación. Cambiando esa marca en la tabla, el costo y el sugerido '
+        +'se recalculan solos.</p>'
+      +'<div class="f"><label>Precio del producto en pesos <span class="hint">(sin el envío)</span></label>'
+        +'<input id="co-base" type="number" step="1" value="'
+        +(p.costo_producto_manual_ars?Math.round(p.costo_producto_manual_ars):"")+'">'
+        +'<span class="hint" id="co-base-msg">Se le suma el '+pct+'% de envío + importación.</span></div>'
+      +'<div class="f"><label>o · Costo total ya puesto acá, en pesos</label>'
+        +'<input id="co-total" type="number" step="1" value="'
+        +(p.costo_manual_ars?Math.round(p.costo_manual_ars):"")+'">'
+        +'<span class="hint">Producto + envío + impuestos, al dólar que pagaste. '
+        +'Se usa tal cual: no lo mueve ni el dólar ni el porcentaje de envío.</span></div>'
+      +'<p class="hint">Hoy se está usando <b>'+fmt(p.costo_total_ars)+'</b>'
+        +(p.costo_manual_ars?" (total a mano)"
+          :(p.costo_producto_manual_ars?" (producto a mano + "+pct+"%)"
+                                       :" (estimado entero)"))+'.</p>';
+    // Los dos campos son excluyentes: escribir en uno vacía el otro, así no
+    // queda la duda de cuál mandó.
+    function excluir(a,b){ $(a).addEventListener("input",function(){
+      if(this.value.trim()!=="") $(b).value=""; }); }
+    excluir("co-base","co-total"); excluir("co-total","co-base");
+    $("co-base").addEventListener("input",function(){
+      var v=parseFloat(this.value);
+      $("co-base-msg").textContent=(isFinite(v)&&v>0)
+        ? "Costo total: "+fmt(Math.round(v*(1+pct/100)))+" (+"+pct+"% de envío + importación)"
+        : "Se le suma el "+pct+"% de envío + importación.";
+    });
+    var f=$("dlg-f"); f.innerHTML="";
+    function guardar(cuerpo){
+      api("PATCH","/api/catalogo/"+p.id+"/costo",cuerpo)
+        .then(function(){ $("dlg").close(); cargar(); }).catch(err);
+    }
+    addBtn(f,"Volver a estimarlo",function(){
+      guardar({costo_ars:null,costo_producto_ars:null});
+    },"sm");
+    addBtn(f,"Cancelar",function(){ $("dlg").close(); },"sm");
+    addBtn(f,"Guardar",function(){
+      var base=$("co-base").value.trim(), total=$("co-total").value.trim();
+      if(total!=="") guardar({costo_ars:parseFloat(total)});
+      else if(base!=="") guardar({costo_producto_ars:parseFloat(base)});
+      else guardar({costo_ars:null,costo_producto_ars:null});
+    },"sm primary");
+    $("dlg").showModal();
+  }
+
   function historial(id){
     api("GET","/api/catalogo/"+id+"/historial").then(function(h){
       $("dlg-h").textContent="Historial de cambios";
@@ -1716,14 +1865,17 @@
     }).catch(err);
   }
 
-  // Al cargar el precio de Amazon, se estima el envío+importación (26%).
-  $("precio_usd").addEventListener("input",function(){
+  // Al cargar el precio de Amazon se estima el envío+importación, con el
+  // porcentaje que corresponda según esté o no tildado el envío gratis.
+  function estimarEnvioAlta(){
     var envio=$("costo_envio_usd");
-    if(envio.value.trim()==="" || envio.dataset.auto==="1"){
-      var p=parseFloat(this.value);
-      if(isFinite(p)&&p>0){ envio.value=(p*0.26).toFixed(2); envio.dataset.auto="1"; }
-    }
-  });
+    if(envio.value.trim()!=="" && envio.dataset.auto!=="1") return;
+    var p=parseFloat($("precio_usd").value);
+    var pct=$("envio_gratis_amazon").checked?pctEnvio.con:pctEnvio.sin;
+    if(isFinite(p)&&p>0){ envio.value=(p*pct/100).toFixed(2); envio.dataset.auto="1"; }
+  }
+  $("precio_usd").addEventListener("input",estimarEnvioAlta);
+  $("envio_gratis_amazon").addEventListener("change",estimarEnvioAlta);
   $("costo_envio_usd").addEventListener("input",function(){ this.dataset.auto=""; });
   $("add").addEventListener("click",add);
   $("ml-code").addEventListener("click",pegarCodigo);
@@ -1750,6 +1902,9 @@
       $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
       $("pr-piso").value=c.ganancia_minima||"";
       $("pr-envio-pct").value=c.envio_import_pct||"";
+      $("pr-envio-pct-sin").value=c.envio_import_sin_gratis_pct||"";
+      pctEnvio.con=c.envio_import_pct||0;
+      pctEnvio.sin=c.envio_import_sin_gratis_pct||0;
     }).catch(function(){});
   }
 
