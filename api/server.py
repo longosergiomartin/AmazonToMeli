@@ -143,6 +143,55 @@ _BOOKMARKLET_TPL = (
     "})();"
 )
 
+_BOOKMARKLET_REVISION = (
+    "javascript:(function(){"
+    "var B='__BASE__',P=__PRODUCTOS__,T=__PAUSA__;"
+    "if(location.hostname.indexOf('amazon.')<0){alert('Abri primero cualquier pagina de amazon.com y despues toca este boton.');return;}"
+    "if(!P.length){alert('No hay publicaciones para revisar.');return;}"
+    "if(!confirm('Voy a revisar '+P.length+' publicacion(es) leyendo Amazon desde tu navegador.\\nTarda ~'+Math.ceil(P.length*T/1000)+' segundos. Seguimos?'))return;"
+    # Sin stock, con stock, o no se pudo saber: los tres estados, como en el
+    # servidor. Devolver `null` cuando no se sabe es lo que evita pausar una
+    # publicacion que en realidad esta perfecta.
+    "function stock(h){"
+    "var m=h.match(/id=\"availability\"[^>]*>([\\s\\S]{0,400}?)<\\/div>/i);"
+    "if(m){var t=m[1].replace(/<[^>]+>/g,' ').toLowerCase();"
+    "if(/currently unavailable|out of stock|no disponible|sin existencias/.test(t))return false;"
+    "if(/in stock|en stock|disponible/.test(t))return true;}"
+    "if(/id=\"(add-to-cart-button|buy-now-button)\"/i.test(h))return true;"
+    "if(/id=\"outOfStock\"/i.test(h))return false;"
+    "return null;}"
+    "function precio(h){"
+    "var p=[/\"priceAmount\"\\s*:\\s*([0-9]+\\.?[0-9]*)/,"
+    "/class=\"a-price-whole\"[^>]*>\\s*([0-9.,]+)/,"
+    "/class=\"a-offscreen\"[^>]*>\\s*\\$\\s*([0-9.,]+)/];"
+    "for(var i=0;i<p.length;i++){var m=h.match(p[i]);"
+    "if(m)return parseFloat(m[1].replace(/,/g,''));}return null;}"
+    "var res=[],i=0,corto=false;"
+    "var caja=document.createElement('div');"
+    "caja.style.cssText='position:fixed;z-index:99999;right:16px;bottom:16px;background:#111;color:#fff;"
+    "padding:12px 16px;border-radius:10px;font:14px system-ui;box-shadow:0 4px 20px rgba(0,0,0,.4)';"
+    "document.body.appendChild(caja);"
+    "function paso(){"
+    "if(corto||i>=P.length){fin();return;}"
+    "var it=P[i++];"
+    "caja.textContent='Revisando '+i+' de '+P.length+'...';"
+    "fetch(it.url,{credentials:'omit'}).then(function(r){"
+    "if(r.status===503||r.status===429){corto=true;return '';}return r.text();})"
+    ".then(function(h){"
+    "if(h){res.push({id:it.id,precio_usd:precio(h),disponible:stock(h)});}"
+    "setTimeout(paso,T);}).catch(function(){setTimeout(paso,T);});}"
+    "function fin(){"
+    "caja.textContent='Listo: '+res.length+' leidas. Guardando...';"
+    "var f=document.createElement('form');f.method='POST';f.target='_blank';"
+    "f.action=B+'/revisar/guardar';"
+    "var c=document.createElement('input');c.type='hidden';c.name='datos';"
+    "c.value=JSON.stringify(res);f.appendChild(c);"
+    "document.body.appendChild(f);f.submit();"
+    "setTimeout(function(){caja.remove();},4000);}"
+    "paso();})();"
+)
+
+
 _PAGINA_CODIGOS = """<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>Completar códigos de barras</title>
 <style>
@@ -181,6 +230,47 @@ normal — por eso funciona esto y no la búsqueda automática desde Render.</p>
  tarde para el resto.<br><br>
  <b>Si algún producto no tiene el código en la ficha</b>, se carga a mano desde
  el panel (<i>Cargar códigos de barras a mano</i>).
+</div>
+
+<p><a href="/panel">← Volver al panel</a></p>
+</body></html>"""
+
+
+_PAGINA_REVISION = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Revisar precio y stock</title>
+<style>
+ body{{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.6}}
+ .btn{{display:inline-block;background:#0E7C66;color:#fff;padding:12px 20px;border-radius:9px;
+      text-decoration:none;font-weight:700;font-size:1.05rem}}
+ .nota{{background:#f4f4ef;border-radius:9px;padding:12px 16px;margin:18px 0;font-size:.92rem}}
+ li{{margin:8px 0}}
+ a{{color:#0E7C66}}
+</style></head><body>
+<h1>Revisar precio y stock</h1>
+<p>Hay <strong>{n} publicación/es</strong> para revisar en Amazon.</p>
+
+<p>Este botón lee las fichas <strong>desde tu navegador</strong>, con tu conexión.
+Amazon rechaza a los servidores de la nube, pero a vos te responde normal — y
+así <strong>no gasta créditos de ScraperAPI</strong>.</p>
+
+<h2>Cómo se usa</h2>
+<ol>
+ <li>Arrastrá este botón a tu barra de favoritos:<br><br>
+     <a class="btn" href="{bm}">🔖 Revisar publicaciones</a></li>
+ <li>Abrí <a href="https://www.amazon.com" target="_blank" rel="noopener">amazon.com</a>
+     en otra pestaña (cualquier página sirve).</li>
+ <li>Tocá el botón desde el favorito. Va leyendo de a una, con pausa, mostrando
+     el avance abajo a la derecha.</li>
+ <li>Al terminar se abre una pestaña que guarda todo y <strong>pausa lo que se
+     quedó sin stock</strong>.</li>
+</ol>
+
+<div class="nota">
+ <b>Lo que no se pudo leer no se toca.</b> Si una ficha no responde, esa
+ publicación queda como estaba: marcarla “sin stock” la sacaría de venta sin
+ motivo.<br><br>
+ <b>Va despacio a propósito.</b> Una ficha cada 3 segundos. Si Amazon empieza a
+ rechazar, corta solo y guarda lo que consiguió.
 </div>
 
 <p><a href="/panel">← Volver al panel</a></p>
@@ -401,6 +491,58 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
         """Conversor ASIN ⇄ código de barras (EAN/UPC/ISBN)."""
         ruta = Path(__file__).resolve().parent.parent / "web" / "codigos.html"
         return ruta.read_text(encoding="utf-8")
+
+    @app.get("/revisar", response_class=HTMLResponse)
+    def revisar(request: Request):
+        """El botón que revisa precio y stock desde el navegador del usuario.
+
+        Es el camino que funciona sin gastar créditos: la ficha la lee su PC,
+        con IP hogareña, que es la que Amazon no rechaza.
+        """
+        import json as _json
+        base = str(request.base_url).rstrip("/")
+        try:
+            from catalogo import Catalogo
+            cat = Catalogo(almacen.conn)
+            productos = [{"id": p.id,
+                          "url": p.amazon_link
+                                 or f"https://www.amazon.com/dp/{p.asin}"}
+                         for p in cat.a_revisar(300)
+                         if (p.amazon_link or p.asin)]
+        except Exception:  # noqa: BLE001 - base dormida: la página igual carga
+            productos = []
+        bm = (_BOOKMARKLET_REVISION.replace("__BASE__", base)
+              .replace("__PRODUCTOS__", _json.dumps(productos))
+              .replace("__PAUSA__", "3000").replace(chr(34), "&quot;"))
+        return _PAGINA_REVISION.format(n=len(productos), bm=bm)
+
+    @app.post("/revisar/guardar", response_class=HTMLResponse)
+    async def revisar_guardar(request: Request):
+        """Guarda lo que leyó el navegador y pausa lo que quedó sin stock."""
+        import json as _json
+        form = await request.form()
+        try:
+            datos = _json.loads(form.get("datos") or "[]")
+        except ValueError:
+            datos = []
+        base = str(request.base_url).rstrip("/")
+        try:
+            import requests as _rq
+            r = _rq.post(f"{base}/api/revision/reportar",
+                         json={"productos": datos}, timeout=120)
+            d = r.json() if r.status_code == 200 else {}
+        except Exception as e:  # noqa: BLE001
+            return (f"<p>No se pudo guardar: {e}</p>"
+                    f"<p><a href='/panel'>← Volver al panel</a></p>")
+        return (f"<!doctype html><meta charset='utf-8'>"
+                f"<body style=\"font-family:system-ui;max-width:640px;"
+                f"margin:40px auto;line-height:1.6\">"
+                f"<h1>Revisión guardada</h1>"
+                f"<p><b>{d.get('revisados', 0)}</b> publicación/es revisadas · "
+                f"<b>{d.get('pausadas', 0)}</b> pausadas por falta de stock"
+                + (f" · {d['no_leidos']} no se pudieron leer"
+                   if d.get("no_leidos") else "") + ".</p>"
+                f"<p><a href='/panel'>← Volver al panel</a></p></body>")
 
     return app
 

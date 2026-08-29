@@ -259,6 +259,10 @@
     <button type="button" class="sm" id="lote-videos" title="Busca en YouTube el video oficial de cada producto">🎬 Buscar videos</button>
     <button type="button" class="sm" id="lote-preparar">1 · Preparar borradores</button>
     <button type="button" class="sm primary" id="lote-publicar">2 · Aprobar y publicar</button>
+    <button type="button" class="sm" id="lote-pausar"
+            title="Saca de venta las seleccionadas, sin borrarlas">⏸ Pausar</button>
+    <button type="button" class="sm" id="lote-reactivar-pub"
+            title="Vuelve a poner a la venta las seleccionadas">▶ Reactivar</button>
     <button type="button" class="sm" id="lote-borrar">Borrar</button>
     <span class="msg" id="lote-msg"></span>
   </div>
@@ -301,6 +305,13 @@
         <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
       </div>
       <div class="f" style="margin:0">
+        <label>Envío + importación (%)</label>
+        <input type="number" id="pr-envio-pct" min="0" max="300" step="1"
+               style="width:150px">
+        <span class="hint">Sobre el precio de Amazon. Es el número más
+          importante de la cuenta.</span>
+      </div>
+      <div class="f" style="margin:0">
         <label>Ganancia mínima ($)</label>
         <input type="number" id="pr-piso" min="0" step="1000"
                placeholder="sin piso" style="width:150px">
@@ -325,6 +336,30 @@
     </div>
     <div class="msg" id="pr-msg"></div>
     <div id="pr-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
+  </div>
+
+  <div class="card">
+    <b>🤖 Agente de revisión</b>
+    <p class="hint" style="margin:6px 0 10px">Recorre lo que ya está publicado,
+      entra a cada producto en Amazon, relee el precio y recalcula. <b>Si Amazon
+      se quedó sin stock, pausa la publicación.</b> Va de a uno y se puede
+      frenar cuando quieras.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="sm primary" id="rv-toggle">▶ Revisar</button>
+      <button type="button" class="sm" id="rv-reiniciar">↺ Empezar de nuevo</button>
+      <label style="display:flex;align-items:center;gap:6px" id="rv-proxy-caja">
+        <input type="checkbox" id="rv-proxy"> Usar ScraperAPI (5 créditos por producto)
+      </label>
+    </div>
+    <div class="msg" id="rv-estado"></div>
+    <div id="rv-log" class="hist" style="max-height:260px;overflow:auto"></div>
+    <p class="hint" style="margin-top:10px"><b>Si el agente no puede leer
+      Amazon</b> —desde un servidor lo rechaza casi siempre— usá el botón de
+      abajo: la lectura la hace tu navegador, con tu IP de casa, y no gasta
+      créditos.</p>
+    <a class="sm" id="rv-bookmarklet" href="/revisar"
+       style="display:inline-block;text-decoration:none;border:1px solid var(--linea);
+              padding:6px 10px;border-radius:8px">🖐 Revisar desde mi navegador</a>
   </div>
 
   <div class="card">
@@ -388,6 +423,8 @@
     <button type="button" class="sm" id="diagnostico"
             title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
     <button type="button" class="sm" id="verificar" title="Contrasta el estado local con lo que hay de verdad en tu cuenta">🔍 Verificar en MercadoLibre</button>
+    <button type="button" class="sm" id="pausar-todo"
+            title="Saca de venta todo lo publicado, sin borrarlo">⏸ Pausar TODAS</button>
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
 
@@ -880,6 +917,70 @@
   // ---- mejorar títulos y descripciones de lo ya publicado ---------------
   var txFilas=[];
 
+  // ---- agente de revisión ----------------------------------------------
+  // El bucle vive en el navegador, igual que el del agente de publicación:
+  // se pide un producto por vez y se puede frenar en cualquier momento.
+  var rvTimer=null;
+
+  function rvPintar(e){
+    $("rv-toggle").textContent = rvTimer ? "■ Frenar" : "▶ Revisar";
+    $("rv-toggle").className = rvTimer ? "sm" : "sm primary";
+    $("rv-estado").textContent =
+      "Por revisar: "+(e.por_revisar||0)+" · Revisados: "+(e.revisados||0)
+      +" · Pausados por falta de stock: "+(e.sin_stock||0)
+      +" · Encarecidos: "+(e.encarecidos||0)
+      +" · Margen bajo: "+(e.en_perdida||0)
+      +((e.no_leidos||0)?" · No se pudieron leer: "+e.no_leidos:"");
+    if(typeof e.con_proxy!=="undefined") $("rv-proxy").checked=!!e.con_proxy;
+    if(e.proxy_disponible===false){
+      $("rv-proxy").disabled=true;
+      $("rv-proxy-caja").title="No hay SCRAPER_API_KEY configurada.";
+    }
+  }
+
+  function rvLog(r){
+    var color = r.accion==="pausado" ? "var(--bad)"
+              : (r.accion==="margen_bajo" ? "var(--warn)"
+              : (r.accion==="no_leido"||r.accion==="error" ? "var(--muted)"
+              : "var(--good)"));
+    var d=document.createElement("div");
+    d.innerHTML='<span style="color:'+color+'">●</span> '+esc(r.nombre||"")
+      +' <span class="hint">'+esc(r.detalle||r.accion||"")+'</span>';
+    $("rv-log").insertBefore(d, $("rv-log").firstChild);
+  }
+
+  function rvPaso(){
+    api("POST","/api/revision/tick",{}).then(function(r){
+      rvPintar(r);
+      if(r.accion==="sin_trabajo"){ rvFrenar(); 
+        $("rv-estado").textContent="No queda nada por revisar. "
+          +$("rv-estado").textContent; return; }
+      rvLog(r);
+    }).catch(function(e){ rvFrenar(); err(e); });
+  }
+
+  function rvFrenar(){ if(rvTimer) clearInterval(rvTimer); rvTimer=null;
+    api("GET","/api/revision").then(rvPintar).catch(function(){}); }
+
+  $("rv-toggle").onclick=function(){
+    if(rvTimer){ rvFrenar(); return; }
+    // Una pausa entre productos: leer Amazon en ráfaga es lo que hace que nos
+    // empiece a rechazar.
+    rvTimer=setInterval(rvPaso, 3000); rvPaso(); rvPintar({});
+    api("GET","/api/revision").then(rvPintar).catch(function(){});
+  };
+
+  $("rv-reiniciar").onclick=function(){
+    api("POST","/api/revision/reiniciar",{}).then(function(e){
+      $("rv-log").innerHTML=""; rvPintar(e);
+    }).catch(err);
+  };
+
+  $("rv-proxy").addEventListener("change",function(){
+    api("PATCH","/api/revision",{con_proxy:this.checked})
+      .then(rvPintar).catch(err);
+  });
+
   // ---- vigilancia de precio y stock en Amazon --------------------------
   var vgSinStock=[];
 
@@ -1059,6 +1160,19 @@
     tanda();
   };
 
+  $("pr-envio-pct").addEventListener("change",function(){
+    var v=parseFloat(this.value)||0;
+    if(!confirm("Vas a fijar el envío + importación en "+v+"% del precio de "
+      +"Amazon.\n\nSe vuelve a estimar el costo de TODOS los productos que lo "
+      +"tenían estimado. Los que tienen el Total real del checkout cargado a "
+      +"mano no se tocan. ¿Confirmás?")) { cargarConfigPublicacion(); return; }
+    api("POST","/api/catalogo/config",{envio_import_pct:v}).then(function(c){
+      $("pr-msg").textContent="Envío + importación: "+c.envio_import_pct
+        +"% del precio de Amazon. Volvé a apretar «Ver qué cambiaría».";
+      cargar();
+    }).catch(err);
+  });
+
   $("pr-piso").addEventListener("change",function(){
     // El piso cambia el precio sugerido de todo el catálogo, así que se guarda
     // como preferencia y no como parámetro de una simulación suelta.
@@ -1076,6 +1190,70 @@
     api("POST","/api/catalogo/config",{texto_compra:$("tx-compra").value})
       .then(function(){ $("tx-msg").textContent="Condiciones de compra guardadas."; })
       .catch(err);
+  };
+
+  // `_en_lote` devuelve una lista de resultados, no contadores: cada acción
+  // arma su propio resumen y nombra a los que fallaron, que es lo que hay que
+  // mirar.
+  function resumenLote(d, que){
+    var r=d.resultados||[], ok=r.filter(function(x){return x.ok;});
+    var mal=r.filter(function(x){return !x.ok;});
+    return ok.length+" "+que
+      +(mal.length?" · no se pudo con: "+mal.map(function(x){
+          return (x.nombre||x.id)+" ("+x.error+")";}).join(" · "):"")+".";
+  }
+
+  $("pausar-todo").onclick=function(){
+    if(!confirm("FRENO DE MANO\n\nEsto saca de venta TODAS tus publicaciones "
+      +"de MercadoLibre.\n\nSe pausan, no se borran: conservan su antigüedad y "
+      +"sus visitas, y las reactivás cuando quieras.\n\n¿Confirmás?")) return;
+    var b=$("pausar-todo"); b.disabled=true;
+    var total=0, fallas=[];
+    // Va por tandas: con 126 publicaciones no entra en un solo pedido.
+    function tanda(){
+      $("lote-msg").textContent="Pausando… "+total+" hechas.";
+      api("POST","/api/catalogo/pausar-todo",{}).then(function(d){
+        total+=d.pausadas||0;
+        (d.resultados||[]).forEach(function(r){
+          if(r.error) fallas.push(r.nombre+" ("+r.error+")"); });
+        // Si quedan y en esta vuelta se pausó alguna, se sigue. Si no se pausó
+        // ninguna, seguir sería un bucle infinito sobre las que fallan.
+        if(d.quedan>0 && d.pausadas>0){ tanda(); return; }
+        b.disabled=false;
+        $("lote-msg").textContent=total+" publicación/es pausadas."
+          +(d.quedan?" Quedaron "+d.quedan+" sin pausar.":"")
+          +(fallas.length?" No se pudo con: "+fallas.slice(0,5).join(" · "):"");
+        cargar();
+      }).catch(function(e){ b.disabled=false;
+        if(total) $("lote-msg").textContent="Se cortó con "+total+" pausadas.";
+        cargar(); err(e); });
+    }
+    tanda();
+  };
+
+  $("lote-pausar").onclick=function(){
+    var ids=seleccionados();
+    if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
+    if(!confirm("Pausar "+ids.length+" publicación/es en MercadoLibre.\n\nSe "
+      +"pausan, no se borran: cuando quieras las reactivás y conservan su "
+      +"antigüedad y sus visitas. ¿Confirmás?")) return;
+    $("lote-msg").textContent="Pausando…";
+    api("POST","/api/catalogo/lote/pausar",{ids:ids}).then(function(d){
+      $("lote-msg").textContent=resumenLote(d,"pausada/s");
+      cargar();
+    }).catch(err);
+  };
+
+  $("lote-reactivar-pub").onclick=function(){
+    var ids=seleccionados();
+    if(!ids.length){ $("lote-msg").textContent="Tildá al menos una."; return; }
+    if(!confirm("Volver a poner a la venta "+ids.length+" publicación/es. "
+      +"Asegurate de poder cumplirlas. ¿Confirmás?")) return;
+    $("lote-msg").textContent="Reactivando…";
+    api("POST","/api/catalogo/lote/reactivar",{ids:ids}).then(function(d){
+      $("lote-msg").textContent=resumenLote(d,"reactivada/s");
+      cargar();
+    }).catch(err);
   };
 
   $("lote-borrar").onclick=function(){
@@ -1541,12 +1719,14 @@
       // ve y se edita lo mismo que va a leer el comprador.
       $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
       $("pr-piso").value=c.ganancia_minima||"";
+      $("pr-envio-pct").value=c.envio_import_pct||"";
     }).catch(function(){});
   }
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
   cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes();
   cargarConfigPublicacion(); cargarAgente(); cargar();
+  api("GET","/api/revision").then(rvPintar).catch(function(){});
 })();
 </script>
 </body>

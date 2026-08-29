@@ -210,6 +210,7 @@ def registrar_catalogo(app: FastAPI, conn,
         from descripcion import COMPRA_DEFAULT
         return {"tipo_producto": cat.tipo_producto,
                 "ganancia_minima": cat.ganancia_minima,
+                "envio_import_pct": round(cat.envio_import_pct * 100, 1),
                 "texto_compra": cat.texto_compra,
                 "texto_compra_default": COMPRA_DEFAULT,
                 "publicar_en_catalogo": cat.publicar_en_catalogo}
@@ -219,6 +220,16 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         if "tipo_producto" in cuerpo:
             cat.tipo_producto = cuerpo.get("tipo_producto") or ""
+        if "envio_import_pct" in cuerpo:
+            anterior = cat.envio_import_pct
+            try:
+                cat.envio_import_pct = float(
+                    cuerpo.get("envio_import_pct") or 0) / 100.0
+            except (TypeError, ValueError) as e:
+                raise HTTPException(422, str(e))
+            # Sin reestimar, el porcentaje nuevo no movería a los productos que
+            # ya tienen el envío guardado, que son todos los del catálogo.
+            cat.reestimar_envios(pct_anterior=anterior)
         if "ganancia_minima" in cuerpo:
             try:
                 cat.ganancia_minima = cuerpo.get("ganancia_minima")
@@ -1733,6 +1744,74 @@ def registrar_catalogo(app: FastAPI, conn,
 
         return _en_lote(ids, _uno)
 
+    @app.post("/api/catalogo/pausar-todo")
+    def pausar_todo(body: dict = None):
+        """Freno de mano: saca de venta todo lo publicado, de una.
+
+        Sirve cuando hay que corregir el catálogo con calma —costos mal
+        estimados, precios viejos— y seguir vendiendo mientras tanto significa
+        vender a pérdida o no poder entregar.
+
+        Se pausa, no se borra: cada publicación conserva su antigüedad y sus
+        visitas, y se reactiva cuando vuelva a cerrar.
+        """
+        cli = _client()
+        vivos = [p for p in cat.todos()
+                 if p.estado == "publicado" and (p.ml_item_id or "").strip()]
+        resultados = []
+        arranque = time.monotonic()
+        for i, p in enumerate(vivos):
+            # Mismo presupuesto que el resto: con 126 publicaciones esto no
+            # entra en un solo pedido, así que se devuelve lo que falta y el
+            # panel vuelve a llamar.
+            if i and time.monotonic() - arranque > TOPE_APLICAR_SEG:
+                break
+            fila = {"id": p.id, "nombre": p.titulo_ml or p.modelo, "ok": False,
+                    "error": ""}
+            try:
+                cli.pausar(p.ml_item_id)
+                cat.cambiar_estado(p.id, "pausado", "Pausado todo desde el panel")
+                fila["ok"] = True
+            except MeliAPIError as e:
+                fila["error"] = _motivo(e)
+            resultados.append(fila)
+        quedan = len([p for p in cat.todos()
+                      if p.estado == "publicado" and (p.ml_item_id or "").strip()])
+        return {"resultados": resultados,
+                "pausadas": sum(1 for r in resultados if r["ok"]),
+                "fallas": sum(1 for r in resultados if r["error"]),
+                "quedan": quedan}
+
+    @app.post("/api/catalogo/lote/pausar")
+    def lote_pausar(body: dict):
+        """Pausa varias publicaciones de una. Se pausa, no se borra: cuando se
+        pueda volver a cumplir se reactiva y conserva antigüedad y visitas."""
+        ids = (body or {}).get("ids") or []
+        cli = _client() if ids else None
+
+        def _uno(p):
+            if p.estado == "pausado":
+                return {"ya": True}
+            if (p.ml_item_id or "").strip():
+                cli.pausar(p.ml_item_id)
+            return _dict(cat.cambiar_estado(p.id, "pausado",
+                                            "Pausada en lote desde el panel"))
+
+        return _en_lote(ids, _uno)
+
+    @app.post("/api/catalogo/lote/reactivar")
+    def lote_reactivar(body: dict):
+        ids = (body or {}).get("ids") or []
+        cli = _client() if ids else None
+
+        def _uno(p):
+            if (p.ml_item_id or "").strip():
+                cli.reactivar(p.ml_item_id)
+            return _dict(cat.cambiar_estado(p.id, "publicado",
+                                            "Reactivada en lote desde el panel"))
+
+        return _en_lote(ids, _uno)
+
     @app.post("/api/catalogo/lote/borrar")
     def lote_borrar(body: dict):
         ids = (body or {}).get("ids") or []
@@ -2057,6 +2136,118 @@ def registrar_catalogo(app: FastAPI, conn,
         """Avanza un paso sobre un producto. El panel lo llama en bucle mientras
         el agente está encendido; también sirve para un cron externo."""
         return _agente().tick()
+
+    # ---- agente de revisión: mantiene al día lo ya publicado ---------------
+
+    def _agente_revision():
+        """El hermano del agente de publicación, al revés: recorre lo que ya
+        está a la venta y verifica que todavía se pueda cumplir."""
+        from agente_revision import AgenteRevision
+
+        def _leer(url: str) -> dict:
+            # **Sin proxy**: cada página son 5 créditos de ScraperAPI y esta
+            # tarea recorre el catálogo entero. Desde un servidor la lectura
+            # directa casi siempre la rechaza Amazon; el camino que sí anda es
+            # el botón que corre en el navegador del usuario (/revisar).
+            return importar_desde_url(
+                url, pais=cat.filtro.get("pais_lectura", "us"),
+                usar_proxy=cat.revisar_con_proxy)
+
+        def _pausar(p) -> None:
+            _client().pausar(p.ml_item_id)
+            cat.cambiar_estado(p.id, "pausado",
+                               "Amazon se quedó sin stock: pausada por el agente")
+
+        if getattr(app.state, "agente_revision", None) is None:
+            app.state.agente_revision = AgenteRevision(
+                cat, _leer, _pausar,
+                margen_minimo=cat.cfg.umbral_margen_bueno_pct)
+        ag = app.state.agente_revision
+        ag.margen_minimo = cat.cfg.umbral_margen_bueno_pct
+        return ag
+
+    @app.get("/api/revision")
+    def revision_estado():
+        e = _agente_revision().estado()
+        e["con_proxy"] = cat.revisar_con_proxy
+        e["proxy_disponible"] = scraperapi_configurada()
+        return e
+
+    @app.patch("/api/revision")
+    def revision_config(body: dict):
+        cuerpo = body or {}
+        if "con_proxy" in cuerpo:
+            cat.revisar_con_proxy = bool(cuerpo.get("con_proxy"))
+        return revision_estado()
+
+    @app.post("/api/revision/reiniciar")
+    def revision_reiniciar():
+        _agente_revision().reiniciar()
+        return revision_estado()
+
+    @app.post("/api/revision/tick")
+    def revision_tick():
+        """Revisa un producto. El panel lo llama en bucle, como al otro agente."""
+        r = _agente_revision().tick()
+        r["con_proxy"] = cat.revisar_con_proxy
+        return r
+
+    @app.post("/api/revision/reportar")
+    def revision_reportar(body: dict):
+        """Recibe lo que leyó el navegador del usuario desde Amazon.
+
+        Es el camino que funciona sin gastar créditos: la página la lee su PC,
+        con IP hogareña, que es la que Amazon no rechaza. El servidor solo
+        guarda y decide.
+        """
+        filas = (body or {}).get("productos") or []
+        if not filas:
+            raise HTTPException(422, "No vino ningún producto.")
+        cli = None
+        resultados = []
+        for f in filas[:200]:
+            try:
+                pid = int(f.get("id"))
+            except (TypeError, ValueError):
+                continue
+            p = cat.obtener(pid)
+            if not p:
+                continue
+            precio = f.get("precio_usd")
+            disponible = f.get("disponible")
+            if precio is None and disponible is None:
+                resultados.append({"id": pid, "nombre": p.titulo_ml or p.modelo,
+                                   "leido": False, "pausado": False})
+                continue
+            p = cat.marcar_revisado(pid, precio, disponible)
+            fila = {"id": pid, "nombre": p.titulo_ml or p.modelo, "leido": True,
+                    "precio_ahora": precio, "pausado": False,
+                    "margen_pct": p.margen_pct}
+            if disponible is False and p.estado != "pausado" and p.ml_item_id:
+                try:
+                    cli = cli or _client()
+                    cli.pausar(p.ml_item_id)
+                    cat.cambiar_estado(pid, "pausado",
+                                       "Amazon se quedó sin stock: pausada")
+                    fila["pausado"] = True
+                except (MeliAPIError, HTTPException) as e:
+                    fila["error"] = str(e)
+            resultados.append(fila)
+        return {"resultados": resultados,
+                "revisados": sum(1 for r in resultados if r["leido"]),
+                "pausadas": sum(1 for r in resultados if r["pausado"]),
+                "no_leidos": sum(1 for r in resultados if not r["leido"])}
+
+    @app.get("/api/revision/pendientes")
+    def revision_pendientes(limite: int = 200):
+        """Qué productos hay que mirar y en qué link. Lo usa el botón del
+        navegador, que necesita la lista antes de arrancar."""
+        return {"productos": [
+            {"id": p.id, "asin": p.asin,
+             "url": p.amazon_link or (f"https://www.amazon.com/dp/{p.asin}"
+                                      if p.asin else ""),
+             "nombre": p.titulo_ml or p.modelo}
+            for p in cat.a_revisar(limite) if (p.amazon_link or p.asin)]}
 
     @app.post("/api/catalogo/{pid}/pausar")
     def pausar(pid: int):

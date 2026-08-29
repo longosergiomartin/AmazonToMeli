@@ -661,3 +661,57 @@ def test_la_cache_no_le_pega_el_default_de_una_clave_a_otra_lectura(cat):
     su default a todos los demás."""
     assert cat._pref("no_existe", "primero") == "primero"
     assert cat._pref("no_existe", "segundo") == "segundo"
+
+
+# ---- envío + importación: el número más importante de la cuenta ----------
+
+def test_el_envio_se_suma_al_costo(cat):
+    """El 26% de envío+importación sí entra en el costo. Verificado porque se
+    sospechó que el costo salía del precio de Amazon pelado."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    assert p.costo_envio_usd == pytest.approx(26.0, abs=0.01)
+    tc = cat._cfg_efectivo().tc_compra()
+    assert p.costo_total_ars == pytest.approx(126.0 * tc, abs=1)
+
+
+def test_cambiar_el_porcentaje_reestima_lo_que_estaba_estimado(cat):
+    """Sin esto el porcentaje nuevo no serviría: `costo_envio_usd` se guarda, y
+    los productos ya cargados se quedarían con la estimación vieja."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    assert p.costo_envio_usd == pytest.approx(26.0, abs=0.01)
+    costo_antes = p.costo_total_ars
+
+    cat.envio_import_pct = 0.60
+    assert cat.reestimar_envios(pct_anterior=0.26) == 1
+
+    p2 = cat.obtener(p.id)
+    assert p2.costo_envio_usd == pytest.approx(60.0, abs=0.01)
+    assert p2.costo_total_ars > costo_antes
+
+
+def test_el_total_real_del_checkout_no_se_pisa(cat):
+    """Si alguien cargó el Total de verdad, ese dato es mejor que cualquier
+    porcentaje: pisarlo sería perder la única medición real que hay."""
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=73.40,
+                          regimen="landed"))
+
+    cat.envio_import_pct = 0.60
+    cat.reestimar_envios(pct_anterior=0.26)
+
+    assert cat.obtener(p.id).costo_envio_usd == 73.40
+
+
+def test_un_porcentaje_disparatado_se_rechaza(cat):
+    with pytest.raises(ValueError):
+        cat.envio_import_pct = 5.0        # 500%
+    with pytest.raises(ValueError):
+        cat.envio_import_pct = -1
+
+
+def test_el_porcentaje_configurado_manda_sobre_el_de_fabrica(cat):
+    cat.envio_import_pct = 0.55
+    p = cat.agregar(_prod(precio_usd=100.0, costo_envio_usd=0.0,
+                          regimen="landed"))
+    assert p.costo_envio_usd == pytest.approx(55.0, abs=0.01)

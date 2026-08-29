@@ -296,18 +296,20 @@ def _parse_peso_kg(texto: str) -> Optional[float]:
     return round(val, 2)
 
 
-def _bajar(url: str, timeout: int, pais: str = "us"):
+def _bajar(url: str, timeout: int, pais: str = "us",
+           usar_proxy: bool = True):
     """La página de Amazon, por proxy si hay clave. Ver `descarga.bajar`.
 
     `pais` es desde dónde se pide. Con "ar" Amazon contesta si el producto
     llega a Argentina, que es el dato que no se consigue desde EE.UU.
     """
-    return descarga.bajar(url, timeout, country=pais,
+    return descarga.bajar(url, timeout, country=pais, usar_proxy=usar_proxy,
                           headers={"User-Agent": _UA,
                                    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"})
 
 
-def importar_desde_url(url: str, timeout: int = 12, pais: str = "us") -> dict:
+def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
+                       usar_proxy: bool = True) -> dict:
     """Devuelve los datos que se pudieron obtener del producto de Amazon.
     Siempre incluye asin (si está en el link) y amazon_link; `ok` indica si se
     pudo leer la página."""
@@ -325,7 +327,7 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us") -> dict:
         datos["mensaje"] = "Pegá un link válido de Amazon."
         return datos
     try:
-        resp, por_proxy = _bajar(url, timeout, pais)
+        resp, por_proxy = _bajar(url, timeout, pais, usar_proxy)
     except requests.RequestException as e:
         datos["mensaje"] = f"No se pudo leer la página ({e}). Completá a mano."
         return datos

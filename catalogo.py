@@ -160,6 +160,9 @@ class Catalogo:
         envio = self.envio_manual if envio is None else envio
         if envio is not None:
             cfg = replace(cfg, meli=replace(cfg.meli, envio_gratis_ars=float(envio)))
+        pct = self.envio_import_pct
+        if pct != cfg.envio_import_pct:
+            cfg = replace(cfg, envio_import_pct=pct)
         piso = self.ganancia_minima
         if piso != cfg.ganancia_minima_ars:
             cfg = replace(cfg, ganancia_minima_ars=piso)
@@ -287,6 +290,48 @@ class Catalogo:
         if v < 0:
             raise ValueError("La ganancia mínima no puede ser negativa.")
         self._set_pref("ganancia_minima", str(v))
+
+    @property
+    def envio_import_pct(self) -> float:
+        """Envío internacional + cargos de importación, como % del precio de
+        Amazon, cuando no se cargó el Total real del checkout.
+
+        El 26% de fábrica supone que el envío entra en la promoción de envío
+        gratis de Amazon. Comprando de a un producto no entra, y el costo real
+        es bastante más: subestimarlo es vender por debajo del costo sin
+        enterarse. Es el número más importante de toda la cuenta, así que tiene
+        que poder ajustarse contra un checkout de verdad.
+        """
+        try:
+            v = float(self._pref("envio_import_pct", "") or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        return v if v > 0 else self.cfg.envio_import_pct
+
+    @envio_import_pct.setter
+    def envio_import_pct(self, valor) -> None:
+        try:
+            v = float(valor or 0)
+        except (TypeError, ValueError):
+            raise ValueError("El porcentaje tiene que ser un número.")
+        if v < 0 or v > 3:
+            raise ValueError("El porcentaje va entre 0 y 3 (0% a 300%).")
+        self._set_pref("envio_import_pct", str(v))
+
+    @property
+    def revisar_con_proxy(self) -> bool:
+        """Si la revisión de precio y stock pasa por ScraperAPI.
+
+        Apagado por defecto: cada página son 5 créditos de los 1.000 del mes y
+        esta tarea recorre el catálogo entero. Directo, desde un servidor,
+        Amazon casi siempre rechaza; el camino que sí anda sin gastar créditos
+        es leer desde el navegador del usuario.
+        """
+        return self._pref("revisar_con_proxy", "0") == "1"
+
+    @revisar_con_proxy.setter
+    def revisar_con_proxy(self, valor) -> None:
+        self._set_pref("revisar_con_proxy", "1" if valor else "0")
 
     @property
     def tipo_producto(self) -> str:
@@ -560,7 +605,7 @@ class Catalogo:
         # Amazon (envio_import_pct, ~26%). Cargando el Total real del checkout
         # el número es exacto.
         if not p.costo_envio_usd and p.precio_usd:
-            p.costo_envio_usd = round(p.precio_usd * self.cfg.envio_import_pct, 2)
+            p.costo_envio_usd = round(p.precio_usd * self.envio_import_pct, 2)
         base_usd = p.precio_usd + p.costo_envio_usd
         pa = ProductoArbitraje(
             nombre=p.modelo or p.asin or "producto", query_meli=p.modelo or "",
@@ -590,7 +635,7 @@ class Catalogo:
         """El costo puesto en Argentina, valuado al tipo de cambio que se pida."""
         copia = replace(p)
         if not copia.costo_envio_usd and copia.precio_usd:
-            copia.costo_envio_usd = round(copia.precio_usd * self.cfg.envio_import_pct, 2)
+            copia.costo_envio_usd = round(copia.precio_usd * self.envio_import_pct, 2)
         base_usd = copia.precio_usd + copia.costo_envio_usd
         pa = ProductoArbitraje(
             nombre=copia.modelo or copia.asin or "producto",
@@ -663,6 +708,38 @@ class Catalogo:
         self._calcular(p)
         self._guardar(p)
         return p
+
+    def reestimar_envios(self, pct_anterior: Optional[float] = None) -> int:
+        """Vuelve a estimar el envío de los productos donde estaba estimado.
+
+        Hace falta porque `costo_envio_usd` se guarda: cambiar el porcentaje no
+        mueve solo a los productos que ya están cargados, y ahí el número nuevo
+        no serviría para nada.
+
+        **Los cargados a mano no se tocan.** Se reconocen porque su valor no
+        coincide con lo que daba la estimación anterior: si alguien puso el
+        Total real del checkout, ese dato es mejor que cualquier porcentaje y
+        pisarlo sería perder la única medición de verdad que hay.
+        """
+        pct_nuevo = self.envio_import_pct
+        cambiados = 0
+        for p in self.todos():
+            if not p.precio_usd:
+                continue
+            if pct_anterior is not None:
+                estimado_viejo = round(p.precio_usd * pct_anterior, 2)
+                if abs((p.costo_envio_usd or 0) - estimado_viejo) > 0.02:
+                    continue          # lo cargó una persona: se respeta
+            nuevo = round(p.precio_usd * pct_nuevo, 2)
+            if abs((p.costo_envio_usd or 0) - nuevo) < 0.01:
+                continue
+            anterior, p.costo_envio_usd = p.costo_envio_usd, nuevo
+            self._calcular(p)
+            self._guardar(p, commit=False)
+            self._log(p.id, "envio", "costo_envio_usd", anterior, nuevo)
+            cambiados += 1
+        self.conn.commit()
+        return cambiados
 
     def envio_efectivo(self, envio: Optional[float] = None) -> float:
         """Cuánto se está descontando por envío gratis: lo pedido, lo guardado a

@@ -2394,3 +2394,176 @@ def test_el_piso_llega_al_precio_de_un_producto_nuevo(tmp_path, monkeypatch):
               regimen="landed", margen_deseado=0.30).json()
     # 40 USD puestos son un costo bajo: el 30% no llega a 100.000, manda el piso.
     assert p["precio_sugerido_ars"] > p["costo_total_ars"] + 100000
+
+
+# ---- botón rápido de pausar / reactivar ----------------------------------
+
+def test_pausar_en_lote_manda_la_pausa_a_mercadolibre(tmp_path, monkeypatch):
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/catalogo/lote/pausar", json={"ids": [pid]}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_reactivar_en_lote_vuelve_a_ponerla_a_la_venta(tmp_path, monkeypatch):
+    reactivados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: {"status": "paused"}
+    cli.reactivar = lambda item_id: reactivados.append(item_id) or {"status": "active"}
+    c.post("/api/catalogo/lote/pausar", json={"ids": [pid]})
+
+    d = c.post("/api/catalogo/lote/reactivar", json={"ids": [pid]}).json()
+
+    assert all(r["ok"] for r in d["resultados"])
+    assert reactivados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_el_error_de_uno_no_frena_el_lote(tmp_path, monkeypatch):
+    """Un producto que MercadoLibre rechaza no puede dejar sin pausar al resto,
+    ni pasar en silencio."""
+    from mercadolibre.client import MeliAPIError
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "lp3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    otro = _alta(c, asin="B0OTRO00099", marca="LEGO", titulo_ml="Otro",
+                 ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{otro}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{otro}/aprobar")
+    c.post(f"/api/catalogo/{otro}/publicar", json={})
+
+    llamadas = []
+
+    def _pausar(item_id):
+        llamadas.append(item_id)
+        if len(llamadas) == 1:
+            raise MeliAPIError("no se puede", status=400, cuerpo={})
+        return {"status": "paused"}
+
+    cli.pausar = _pausar
+    d = c.post("/api/catalogo/lote/pausar", json={"ids": [pid, otro]}).json()
+
+    assert len(llamadas) == 2, "el error del primero frenó al segundo"
+    assert sum(1 for r in d["resultados"] if r["ok"]) == 1
+    assert sum(1 for r in d["resultados"] if not r["ok"]) == 1
+
+
+def test_el_agente_de_revision_tiene_su_propio_estado(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+
+    e = c.get("/api/revision").json()
+    assert e["por_revisar"] == 1 and e["revisados"] == 0
+    # Por defecto NO usa ScraperAPI: recorre el catálogo entero y son 5
+    # créditos por producto.
+    assert e["con_proxy"] is False
+
+    r = c.post("/api/revision/tick", json={}).json()
+    assert r["accion"] in ("revisar", "margen_bajo")
+    assert c.get("/api/revision").json()["revisados"] == 1
+
+
+def test_el_navegador_puede_reportar_lo_que_leyo(tmp_path, monkeypatch):
+    """El camino que no gasta créditos: la ficha la lee la PC del usuario."""
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/revision/reportar", json={"productos": [
+        {"id": pid, "precio_usd": 53.0, "disponible": False}]}).json()
+
+    assert d["revisados"] == 1 and d["pausadas"] == 1
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_usd"] == 53.0
+
+
+def test_lo_que_el_navegador_no_pudo_leer_no_se_toca(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "rev3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    antes = c.get(f"/api/catalogo/{pid}").json()["precio_usd"]
+
+    d = c.post("/api/revision/reportar", json={"productos": [
+        {"id": pid, "precio_usd": None, "disponible": None}]}).json()
+
+    assert d["revisados"] == 0 and d["no_leidos"] == 1
+    assert c.get(f"/api/catalogo/{pid}").json()["precio_usd"] == antes
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "publicado"
+
+
+def test_pausar_todo_saca_de_venta_todo_lo_publicado(tmp_path, monkeypatch):
+    """Freno de mano: cuando el catálogo está mal calculado, seguir vendiendo
+    es vender a pérdida o no poder entregar."""
+    pausados = []
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo1.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    cli.pausar = lambda item_id: pausados.append(item_id) or {"status": "paused"}
+
+    d = c.post("/api/catalogo/pausar-todo", json={}).json()
+
+    assert d["pausadas"] == 1 and d["quedan"] == 0
+    assert pausados == ["MLA100"]
+    assert c.get(f"/api/catalogo/{pid}").json()["estado"] == "pausado"
+
+
+def test_pausar_todo_no_toca_borradores(tmp_path, monkeypatch):
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo2.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    borrador = _alta(c, asin="B0BORRA0001", marca="LEGO",
+                     modelo="Sin publicar").json()["id"]
+    cli.pausar = lambda item_id: {"status": "paused"}
+
+    c.post("/api/catalogo/pausar-todo", json={})
+
+    assert c.get(f"/api/catalogo/{borrador}").json()["estado"] == "borrador"
+
+
+def test_pausar_todo_devuelve_lo_que_falta_si_se_acaba_el_tiempo(tmp_path, monkeypatch):
+    """Con 126 publicaciones no entra en un solo pedido: hay que poder seguir."""
+    import api.catalogo_routes as rutas
+    c, cli, pid = _publicado_para_vigilar(
+        tmp_path, monkeypatch, "todo3.db",
+        {"ok": True, "precio_usd": 40.0, "disponible": True, "mensaje": ""})
+    for i in range(2):
+        oid = _alta(c, asin=f"B0TODO{i:05d}", marca="LEGO",
+                    titulo_ml=f"Otro {i}", ml_category_id="MLA1157").json()["id"]
+        c.patch(f"/api/catalogo/{oid}/publicacion",
+                json={"pictures": ["http://i/1.jpg"]})
+        c.post(f"/api/catalogo/{oid}/aprobar")
+        c.post(f"/api/catalogo/{oid}/publicar", json={})
+    cli.pausar = lambda item_id: {"status": "paused"}
+    monkeypatch.setattr(rutas, "TOPE_APLICAR_SEG", 0.0)
+
+    d = c.post("/api/catalogo/pausar-todo", json={}).json()
+    assert d["pausadas"] == 1 and d["quedan"] == 2
+
+
+def test_cambiar_el_envio_por_ciento_reestima_todo_el_catalogo(tmp_path, monkeypatch):
+    """El costo mal estimado es lo que hace vender a pérdida. Cambiar el
+    porcentaje tiene que mover a los productos que ya están cargados."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "envpct.db")))
+    pid = _alta(c, marca="LEGO", modelo="LEGO Set", precio_usd=100.0,
+                costo_envio_usd=0, regimen="landed").json()["id"]
+    antes = c.get(f"/api/catalogo/{pid}").json()
+    assert antes["costo_envio_usd"] == pytest.approx(26.0, abs=0.01)
+
+    r = c.post("/api/catalogo/config", json={"envio_import_pct": 60})
+    assert r.json()["envio_import_pct"] == 60.0
+
+    despues = c.get(f"/api/catalogo/{pid}").json()
+    assert despues["costo_envio_usd"] == pytest.approx(60.0, abs=0.01)
+    assert despues["costo_total_ars"] > antes["costo_total_ars"]
