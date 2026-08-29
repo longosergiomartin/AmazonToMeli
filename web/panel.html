@@ -301,6 +301,12 @@
         <span class="hint">Lo que te queda limpio, ya descontado todo.</span>
       </div>
       <div class="f" style="margin:0">
+        <label>Ganancia mínima ($)</label>
+        <input type="number" id="pr-piso" min="0" step="1000"
+               placeholder="sin piso" style="width:150px">
+        <span class="hint">Piso en pesos por venta, pase lo que pase.</span>
+      </div>
+      <div class="f" style="margin:0">
         <label>Envío gratis que pagás</label>
         <input type="number" id="pr-envio" min="0" step="1"
                placeholder="el configurado" style="width:150px">
@@ -1053,6 +1059,19 @@
     tanda();
   };
 
+  $("pr-piso").addEventListener("change",function(){
+    // El piso cambia el precio sugerido de todo el catálogo, así que se guarda
+    // como preferencia y no como parámetro de una simulación suelta.
+    api("POST","/api/catalogo/config",{ganancia_minima:parseFloat(this.value)||0})
+      .then(function(c){
+        $("pr-msg").textContent = c.ganancia_minima
+          ? "Ganancia mínima: "+fmt(c.ganancia_minima)+" por venta. Volvé a "
+            +"apretar «Ver qué cambiaría»."
+          : "Sin piso de ganancia. Volvé a apretar «Ver qué cambiaría».";
+        cargar();
+      }).catch(err);
+  });
+
   $("tx-guardar-compra").onclick=function(){
     api("POST","/api/catalogo/config",{texto_compra:$("tx-compra").value})
       .then(function(){ $("tx-msg").textContent="Condiciones de compra guardadas."; })
@@ -1521,6 +1540,7 @@
       // Vacío muestra el texto por defecto, que es el que se va a usar: así se
       // ve y se edita lo mismo que va a leer el comprador.
       $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
+      $("pr-piso").value=c.ganancia_minima||"";
     }).catch(function(){});
   }
 

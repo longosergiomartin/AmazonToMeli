@@ -154,6 +154,11 @@ class Config:
     # por debajo y resignar unos puntos antes que saltar ~10% de precio y perder
     # competitividad. Si ni así llega a este piso, se acepta el salto.
     margen_piso_pct: float = 0.25
+    # Piso de ganancia en PESOS por venta. Los imprevistos de importar —que el
+    # precio suba entre publicar y vender, que se agote y haya que conseguirlo
+    # más caro, un reclamo— cuestan un monto fijo, no un porcentaje: un 30%
+    # sobre un set barato no banca ninguno. 0 = sin piso.
+    ganancia_minima_ars: float = 0.0
     courier: CourierConfig = field(default_factory=CourierConfig)
     general: GeneralConfig = field(default_factory=GeneralConfig)
     meli: MeliConfig = field(default_factory=MeliConfig)
@@ -181,7 +186,7 @@ class Config:
         top = {k: v for k, v in data.items()
                if k in {"tipo_cambio_oficial", "recargo_tarjeta_pct",
                         "umbral_margen_bueno_pct", "envio_import_pct",
-                        "margen_piso_pct"}}
+                        "margen_piso_pct", "ganancia_minima_ars"}}
         return replace(base, courier=courier, general=general, meli=meli, **top)
 
     @classmethod

@@ -209,6 +209,7 @@ def registrar_catalogo(app: FastAPI, conn,
     def config_publicacion():
         from descripcion import COMPRA_DEFAULT
         return {"tipo_producto": cat.tipo_producto,
+                "ganancia_minima": cat.ganancia_minima,
                 "texto_compra": cat.texto_compra,
                 "texto_compra_default": COMPRA_DEFAULT,
                 "publicar_en_catalogo": cat.publicar_en_catalogo}
@@ -218,6 +219,13 @@ def registrar_catalogo(app: FastAPI, conn,
         cuerpo = body or {}
         if "tipo_producto" in cuerpo:
             cat.tipo_producto = cuerpo.get("tipo_producto") or ""
+        if "ganancia_minima" in cuerpo:
+            try:
+                cat.ganancia_minima = cuerpo.get("ganancia_minima")
+            except ValueError as e:
+                raise HTTPException(422, str(e))
+            # El piso cambia el precio sugerido de TODO el catálogo.
+            cat.recalcular_todos()
         if "texto_compra" in cuerpo:
             cat.texto_compra = cuerpo.get("texto_compra") or ""
         if "publicar_en_catalogo" in cuerpo:

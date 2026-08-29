@@ -2362,3 +2362,35 @@ def test_el_limite_de_revision_esta_acotado(tmp_path, monkeypatch):
 
     d = c.post("/api/catalogo/vigilancia/revisar", json={"limite": 9999}).json()
     assert d["revisados"] <= 40
+
+
+def test_la_ganancia_minima_se_guarda_y_recalcula_el_catalogo(tmp_path, monkeypatch):
+    """El piso cambia el precio sugerido de todos los productos, no solo de los
+    nuevos: si no se recalcula, la tabla muestra precios que ya no rigen."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "piso.db")))
+    pid = _alta(c, marca="LEGO", modelo="LEGO Set 21181", precio_usd=100.0,
+                regimen="landed", margen_deseado=0.30).json()["id"]
+    antes = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
+
+    r = c.post("/api/catalogo/config", json={"ganancia_minima": 100000})
+    assert r.json()["ganancia_minima"] == 100000.0
+
+    despues = c.get(f"/api/catalogo/{pid}").json()["precio_sugerido_ars"]
+    assert despues > antes
+
+
+def test_una_ganancia_minima_negativa_se_rechaza(client):
+    assert client.post("/api/catalogo/config",
+                       json={"ganancia_minima": -5000}).status_code == 422
+
+
+def test_el_piso_llega_al_precio_de_un_producto_nuevo(tmp_path, monkeypatch):
+    """La regla es "cada vez que metamos un producto": tiene que valer al dar
+    de alta, no solo al recalcular."""
+    c = TestClient(crear_app(db_path=str(tmp_path / "piso2.db")))
+    c.post("/api/catalogo/config", json={"ganancia_minima": 100000})
+
+    p = _alta(c, marca="LEGO", modelo="LEGO Set chico", precio_usd=40.0,
+              regimen="landed", margen_deseado=0.30).json()
+    # 40 USD puestos son un costo bajo: el 30% no llega a 100.000, manda el piso.
+    assert p["precio_sugerido_ars"] > p["costo_total_ars"] + 100000

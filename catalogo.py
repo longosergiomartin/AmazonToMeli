@@ -160,6 +160,9 @@ class Catalogo:
         envio = self.envio_manual if envio is None else envio
         if envio is not None:
             cfg = replace(cfg, meli=replace(cfg.meli, envio_gratis_ars=float(envio)))
+        piso = self.ganancia_minima
+        if piso != cfg.ganancia_minima_ars:
+            cfg = replace(cfg, ganancia_minima_ars=piso)
         condicion = self.condicion_fiscal
         if condicion and condicion != cfg.meli.condicion_fiscal:
             cfg = replace(cfg, meli=cfg.meli.con_condicion_fiscal(condicion))
@@ -260,6 +263,30 @@ class Catalogo:
     @publicar_en_catalogo.setter
     def publicar_en_catalogo(self, valor) -> None:
         self._set_pref("publicar_en_catalogo", "1" if valor else "0")
+
+    @property
+    def ganancia_minima(self) -> float:
+        """Cuánto tiene que dejar como mínimo cada venta, en pesos.
+
+        Los imprevistos de importar —que el precio suba entre publicar y
+        vender, que se agote y haya que conseguirlo más caro, un reclamo— salen
+        un monto fijo, no un porcentaje del producto. Un 30% sobre un set barato
+        no banca ninguno. 0 = sin piso.
+        """
+        try:
+            return float(self._pref("ganancia_minima", "0") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @ganancia_minima.setter
+    def ganancia_minima(self, valor) -> None:
+        try:
+            v = float(valor or 0)
+        except (TypeError, ValueError):
+            raise ValueError("La ganancia mínima tiene que ser un número.")
+        if v < 0:
+            raise ValueError("La ganancia mínima no puede ser negativa.")
+        self._set_pref("ganancia_minima", str(v))
 
     @property
     def tipo_producto(self) -> str:
