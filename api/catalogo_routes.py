@@ -99,7 +99,7 @@ TOPE_APLICAR_SEG = 100.0
 
 
 def registrar_catalogo(app: FastAPI, conn,
-                       cfg: Config = CONFIG_DEFAULT) -> None:
+                       cfg: Config = CONFIG_DEFAULT) -> Catalogo:
     # La cotización se busca en el primer uso, no al arrancar: si la API del
     # dólar tarda o no responde, el arranque no se puede quedar esperándola.
     cat = Catalogo(conn, cfg=cfg,
@@ -2177,3 +2177,9 @@ def registrar_catalogo(app: FastAPI, conn,
         sugerido, que es el que ya tiene en cuenta el costo corregido."""
         p = _p(pid)
         return _dict(_reactivar_uno(p, bool((body or {}).get("al_sugerido"))))
+
+    # El catálogo se devuelve para que otras rutas —las de Tiendanube— usen
+    # ESTA instancia y no una propia: cada `Catalogo` cachea las preferencias
+    # en memoria, así que dos instancias sobre la misma base se desincronizan
+    # apenas una escribe y la otra lee.
+    return cat
