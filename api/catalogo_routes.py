@@ -529,6 +529,78 @@ def registrar_catalogo(app: FastAPI, conn,
                 "via": res.get("via", ""), "producto": res.get("producto", ""),
                 "link_manual": link_manual, "error": ""}
 
+    # ---- ¿cuáles de mis productos pueden competir de verdad? --------------
+
+    # Con qué margen sobre el más barato se considera que todavía se puede
+    # pelear. Arriba de eso no es cuestión de mejorar la foto ni el título: el
+    # producto no da, y hay que dejar de gastarle tiempo.
+    _CERCA_PCT = 10.0
+
+    def _competitividad_de(p: ProductoCatalogo, cli: MeliClient) -> dict:
+        """Mi precio contra el más barato que ya vende ese producto.
+
+        Es la pregunta que define qué hacer con cada publicación: mejorar el
+        título de algo que está 80% arriba del más barato no cambia nada, y
+        pausar algo que está más barato que todos sería tirar la única
+        oportunidad que hay.
+        """
+        consulta = (p.titulo_ml or p.modelo or p.asin or "").strip()
+        mio = float(p.precio_publicado_ars or p.precio_sugerido_ars or 0)
+        fila = {"id": p.id, "nombre": (p.titulo_ml or p.modelo or "")[:70],
+                "mi_precio": round(mio, 2), "estado": p.estado,
+                "permalink": p.ml_permalink, "competidores": 0,
+                "minimo": 0.0, "mediana": 0.0, "diferencia_pct": None,
+                "veredicto": "sin_datos", "error": ""}
+        if not consulta or mio <= 0:
+            fila["error"] = "sin título o sin precio"
+            return fila
+        try:
+            res = cli.buscar_listados(consulta, limit=10)
+        except MeliAPIError as e:
+            fila["error"] = _motivo(e)
+            return fila
+        precios = sorted(i["precio"] for i in res.get("items") or [])
+        if not precios:
+            fila["error"] = "MercadoLibre no devolvió competencia para este"
+            return fila
+        minimo, mediana = precios[0], precios[len(precios) // 2]
+        fila.update(competidores=len(precios), minimo=minimo, mediana=mediana,
+                    diferencia_pct=round((mio / minimo - 1) * 100, 1))
+        if mio <= minimo:
+            fila["veredicto"] = "gano"
+        elif fila["diferencia_pct"] <= _CERCA_PCT:
+            fila["veredicto"] = "cerca"
+        else:
+            fila["veredicto"] = "caro"
+        return fila
+
+    @app.post("/api/catalogo/competitividad")
+    def competitividad(body: dict = None):
+        """Contra quién compite cada publicación y a qué distancia está.
+
+        Responde la única pregunta que importa cuando hay 126 publicaciones y
+        cero ventas: **cuáles pueden vender**. Con el precio 80% arriba del más
+        barato no hay título ni foto que alcance; con el precio más bajo de
+        todos, el problema es otro y vale la pena trabajarlo.
+
+        No cambia nada: solo lee y ordena. De a pocos por llamada, porque cada
+        producto son una o dos consultas a MercadoLibre.
+        """
+        cuerpo = body or {}
+        pedidos = {int(i) for i in cuerpo.get("ids", [])}
+        productos = [p for p in _publicados_con_item()
+                     if not pedidos or p.id in pedidos]
+        # `desde` permite continuar donde quedó la tanda anterior.
+        desde = max(0, int(cuerpo.get("desde") or 0))
+        tanda = productos[desde:desde + 10]
+        if not tanda:
+            return {"filas": [], "total": len(productos), "siguiente": None}
+        cli = _client()
+        filas = [_competitividad_de(p, cli) for p in tanda]
+        siguiente = desde + len(tanda)
+        return {"filas": filas, "total": len(productos),
+                "siguiente": siguiente if siguiente < len(productos) else None}
+
     # ---- desglose de margen a un precio dado -----------------------------
 
     @app.get("/api/catalogo/{pid}/desglose")

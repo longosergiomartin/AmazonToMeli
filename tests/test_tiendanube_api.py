@@ -101,6 +101,42 @@ def test_el_estado_dice_si_esta_conectada(tmp_path):
     assert d["conectado"] is False and "configurado" in d
 
 
+def test_el_estado_muestra_la_url_de_autorizacion(tmp_path, monkeypatch):
+    """Si el botón de conectar no lleva a ninguna parte, esta URL es lo único
+    que dice por qué: el App ID va en la RUTA, así que uno equivocado da un 404
+    del sitio de Tiendanube sin ningún mensaje de error que lo explique."""
+    monkeypatch.setenv("TIENDANUBE_CLIENT_ID", "998877")
+    monkeypatch.setenv("TIENDANUBE_CLIENT_SECRET", "sec")
+    c = TestClient(crear_app(db_path=str(tmp_path / "url.db")))
+
+    d = c.get("/oauth/tiendanube/status").json()
+
+    assert d["url_autorizacion"].startswith(
+        "https://www.tiendanube.com/apps/998877/authorize")
+    assert d["client_id_es_numerico"] is True
+
+
+def test_el_estado_avisa_si_el_app_id_no_es_un_numero(tmp_path, monkeypatch):
+    """El error fácil del portal: copiar el «client id» alfanumérico de otra
+    pantalla en vez del App ID."""
+    monkeypatch.setenv("TIENDANUBE_CLIENT_ID", "abc-def-123")
+    monkeypatch.setenv("TIENDANUBE_CLIENT_SECRET", "sec")
+    c = TestClient(crear_app(db_path=str(tmp_path / "url2.db")))
+
+    d = c.get("/oauth/tiendanube/status").json()
+
+    assert d["client_id_es_numerico"] is False
+    assert d["client_id_largo"] == 11
+
+
+def test_sin_credenciales_no_se_arma_ninguna_url(tmp_path, monkeypatch):
+    monkeypatch.delenv("TIENDANUBE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TIENDANUBE_CLIENT_SECRET", raising=False)
+    c = TestClient(crear_app(db_path=str(tmp_path / "url3.db")))
+
+    assert c.get("/oauth/tiendanube/status").json()["url_autorizacion"] == ""
+
+
 # ---- publicar -------------------------------------------------------------
 
 def test_publicar_manda_el_producto_y_guarda_los_ids(tmp_path, monkeypatch):

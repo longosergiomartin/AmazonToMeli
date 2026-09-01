@@ -424,6 +424,22 @@
   </div>
 
   <div class="card">
+    <b>🎯 ¿Cuáles puedo vender de verdad?</b>
+    <p class="hint" style="margin:6px 0 10px">Compara tu precio con el del más
+      barato que ya vende ese mismo producto en MercadoLibre. Es la pregunta que
+      importa cuando hay muchas publicaciones y pocas ventas: <b>con el precio
+      muy arriba del más barato no hay título ni foto que alcance</b>, y donde sí
+      podés competir conviene poner el esfuerzo. <b>No cambia nada</b>: solo lee.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="sm primary" id="cp-correr">Analizar mis publicaciones</button>
+      <button type="button" class="sm" id="cp-frenar" style="display:none">■ Frenar</button>
+      <span class="msg" id="cp-msg"></span>
+    </div>
+    <div id="cp-resumen" style="margin-top:10px"></div>
+    <div id="cp-tabla" class="hist" style="max-height:320px;overflow:auto"></div>
+  </div>
+
+  <div class="card">
     <b>🏪 Tu tienda (Tiendanube)</b>
     <p class="hint" style="margin:6px 0 10px">Publica en tu tienda propia lo que
       ya está en MercadoLibre. Después, <b>sincronizar</b> le lleva el precio y el
@@ -437,6 +453,7 @@
       <button type="button" class="sm" id="tn-probar"
               title="Una llamada mínima a la tienda para ver si el token anda">🔌 Probar conexión</button>
     </div>
+    <div class="hint" id="tn-diag" style="margin-top:8px;word-break:break-all"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
       <div class="f" style="margin:0">
         <label>Ajuste de precio (%)</label>
@@ -1818,6 +1835,63 @@
     $("dlg").showModal();
   }
 
+  // ---- ¿cuáles puedo vender de verdad? -----------------------------------
+  // Va de a tandas: cada producto son una o dos consultas a MercadoLibre y
+  // todas juntas darían una petición que el servidor corta a mitad de camino.
+  var cpFilas=[], cpCorriendo=false;
+  var CP_ETIQUETA={gano:"🟢 sos el más barato", cerca:"🟡 estás cerca",
+                   caro:"🔴 muy caro", sin_datos:"⚪ sin datos"};
+
+  function cpPintar(){
+    var por={gano:0,cerca:0,caro:0,sin_datos:0};
+    cpFilas.forEach(function(f){ por[f.veredicto]=(por[f.veredicto]||0)+1; });
+    $("cp-resumen").innerHTML=
+      '<b>'+cpFilas.length+' analizadas</b> · '
+      +'<span style="color:var(--good)">'+por.gano+' donde ganás</span> · '
+      +por.cerca+' cerca · '
+      +'<span style="color:var(--bad)">'+por.caro+' muy caras</span> · '
+      +por.sin_datos+' sin datos';
+    // De peor a mejor no: primero lo accionable, que es donde se puede vender.
+    var orden={gano:0,cerca:1,caro:2,sin_datos:3};
+    var lista=cpFilas.slice().sort(function(a,b){
+      return (orden[a.veredicto]-orden[b.veredicto])
+          || ((a.diferencia_pct==null?9e9:a.diferencia_pct)
+              -(b.diferencia_pct==null?9e9:b.diferencia_pct));
+    });
+    $("cp-tabla").innerHTML=lista.map(function(f){
+      var dif=f.diferencia_pct==null?"":(f.diferencia_pct>0?"+":"")+f.diferencia_pct+"%";
+      var color=f.veredicto==="gano"?"var(--good)"
+               :(f.veredicto==="caro"?"var(--bad)":"var(--muted)");
+      return '<div><span style="color:'+color+'">'+CP_ETIQUETA[f.veredicto]+'</span> '
+        +(f.permalink?'<a href="'+esc(f.permalink)+'" target="_blank" rel="noopener">'
+           +esc(f.nombre)+' ↗</a>':esc(f.nombre))
+        +' · vos '+fmt(f.mi_precio)
+        +(f.minimo?' · el más barato '+fmt(f.minimo)+' <b style="color:'+color+'">'+dif+'</b>':'')
+        +(f.error?' <span class="hint">('+esc(f.error)+')</span>':'')
+        +'</div>';
+    }).join("");
+  }
+
+  $("cp-frenar").onclick=function(){ cpCorriendo=false; };
+  $("cp-correr").onclick=function(){
+    cpFilas=[]; cpCorriendo=true;
+    $("cp-correr").disabled=true; $("cp-frenar").style.display="";
+    (function tanda(desde){
+      if(!cpCorriendo){ cpFin("Frenado."); return; }
+      $("cp-msg").textContent="Consultando MercadoLibre… "+cpFilas.length+" listas.";
+      api("POST","/api/catalogo/competitividad",{desde:desde}).then(function(d){
+        cpFilas=cpFilas.concat(d.filas||[]); cpPintar();
+        if(d.siguiente!=null && cpCorriendo) tanda(d.siguiente);
+        else cpFin(cpFilas.length?"":"No hay publicaciones para analizar.");
+      }).catch(function(e){ cpFin(""); err(e); });
+    })(0);
+  };
+  function cpFin(msg){
+    cpCorriendo=false; $("cp-correr").disabled=false;
+    $("cp-frenar").style.display="none";
+    $("cp-msg").textContent=msg||"Listo.";
+  }
+
   // ---- Tiendanube: la tienda propia --------------------------------------
   function tnEstado(){
     api("GET","/oauth/tiendanube/status").then(function(s){
@@ -1826,6 +1900,20 @@
         ? "Faltan las credenciales (TIENDANUBE_CLIENT_ID y _CLIENT_SECRET van en Render)."
         : (s.conectado ? "🟢 Conectada · tienda "+s.store_id
                        : "⚪ Sin conectar.");
+      // La URL de autorización, a la vista. Si el botón de conectar no lleva a
+      // ninguna parte, es lo único que dice por qué: el App ID va en la RUTA,
+      // así que uno equivocado da un 404 del sitio de Tiendanube y ningún
+      // mensaje de error que lo explique.
+      $("tn-diag").innerHTML = (s.configurado && !s.conectado)
+        ? "Te va a mandar a: <code>"+esc(s.url_autorizacion||"(vacía)")+"</code>"
+          +(s.client_id_es_numerico ? ""
+            : "<br>⚠ El <b>App ID de Tiendanube es un número</b> y el tuyo tiene "
+              +s.client_id_largo+" caracteres que no son solo dígitos. Si esa "
+              +"URL da 404, es esto: buscá en el portal el <b>App ID</b>, no el "
+              +"«client id» de otra pantalla.")
+          +"<br>Vuelve a: <code>"+esc(s.redirect_uri||"(sin configurar)")+"</code>"
+          +" — tiene que coincidir EXACTO con la que registraste en el portal."
+        : "";
       if(s.conectado) api("GET","/api/tiendanube/config").then(function(c){
         $("tn-ajuste").value=c.ajuste_pct||0;
         $("tn-estado").textContent+=" · "+c.publicados+" publicado/s allá";
