@@ -2778,3 +2778,116 @@ def test_un_costo_negativo_se_rechaza(client):
     pid = _alta(client, marca="LEGO", modelo="LEGO Set 3").json()["id"]
     assert client.patch(f"/api/catalogo/{pid}/costo",
                         json={"costo_ars": -5}).status_code == 422
+
+
+# ---- ¿cuáles de mis publicaciones pueden competir? ------------------------
+
+def _cli_competencia(por_consulta):
+    """Cliente falso que devuelve la competencia que se le programe."""
+    class _Cli:
+        def __init__(s): s.consultas = []
+        def publicar(s, item): return {"id": "MLA100", "permalink": "http://ml/x",
+                                       "status": "active"}
+        def atributos_obligatorios(s, cid): return []
+        def ficha_de_catalogo(s, *a, **k): return {}
+        def valores_permitidos(s, *a, **k): return {}
+        def poner_descripcion(s, *a, **k): return {}
+        def actualizar_precio(s, *a, **k): return {}
+        def buscar_listados(s, consulta, limit=10):
+            s.consultas.append(consulta)
+            precios = por_consulta.get("*", [])
+            return {"items": [{"titulo": "otro", "precio": p, "link": "",
+                               "envio_gratis": True, "vendidos": 0}
+                              for p in precios],
+                    "via": "catalogo", "producto": "x"}
+    return _Cli()
+
+
+def _app_competencia(tmp_path, monkeypatch, nombre, precios, mi_precio):
+    import api.catalogo_routes as rutas
+    cli = _cli_competencia({"*": precios})
+    monkeypatch.setattr(rutas, "MeliClient", lambda *a, **k: cli)
+    monkeypatch.setattr(rutas.MeliCredenciales, "configurado",
+                        property(lambda self: True))
+    monkeypatch.setattr(rutas.TokenStore, "hay_sesion", lambda self: True)
+    c = TestClient(crear_app(db_path=str(tmp_path / nombre)))
+    pid = _alta(c, asin="B0COMP0001", marca="LEGO", titulo_ml="LEGO Set 21042",
+                ml_category_id="MLA1157").json()["id"]
+    c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+    c.post(f"/api/catalogo/{pid}/aprobar")
+    c.post(f"/api/catalogo/{pid}/publicar", json={})
+    c.patch(f"/api/catalogo/{pid}/precio", json={"precio": mi_precio})
+    return c, cli, pid
+
+
+def test_competitividad_marca_el_que_gana(tmp_path, monkeypatch):
+    """Si sos el más barato, el problema no es el precio: vale la pena
+    trabajarlo en vez de pausarlo."""
+    c, _, pid = _app_competencia(tmp_path, monkeypatch, "comp1.db",
+                                 [300000, 350000, 400000], 280000)
+
+    d = c.post("/api/catalogo/competitividad", json={}).json()
+
+    fila = d["filas"][0]
+    assert fila["veredicto"] == "gano"
+    assert fila["minimo"] == 300000 and fila["competidores"] == 3
+
+
+def test_competitividad_marca_el_que_esta_cerca(tmp_path, monkeypatch):
+    c, _, pid = _app_competencia(tmp_path, monkeypatch, "comp2.db",
+                                 [300000, 350000], 315000)
+
+    fila = c.post("/api/catalogo/competitividad", json={}).json()["filas"][0]
+
+    assert fila["veredicto"] == "cerca" and fila["diferencia_pct"] == 5.0
+
+
+def test_competitividad_marca_el_que_no_da(tmp_path, monkeypatch):
+    """Arriba de cierto punto no hay título ni foto que alcance, y decirlo
+    ahorra el tiempo que se gastaría mejorándolo."""
+    c, _, pid = _app_competencia(tmp_path, monkeypatch, "comp3.db",
+                                 [300000, 350000], 540000)
+
+    fila = c.post("/api/catalogo/competitividad", json={}).json()["filas"][0]
+
+    assert fila["veredicto"] == "caro" and fila["diferencia_pct"] == 80.0
+
+
+def test_competitividad_no_toca_nada(tmp_path, monkeypatch):
+    """Solo lee: ni cambia precios ni toca MercadoLibre."""
+    c, _, pid = _app_competencia(tmp_path, monkeypatch, "comp4.db",
+                                 [300000], 280000)
+    antes = c.get(f"/api/catalogo/{pid}").json()
+
+    c.post("/api/catalogo/competitividad", json={})
+
+    assert c.get(f"/api/catalogo/{pid}").json() == antes
+
+
+def test_competitividad_avisa_cuando_no_hay_con_quien_comparar(tmp_path, monkeypatch):
+    """Sin competencia no se inventa un veredicto: se dice que no hay datos."""
+    c, _, pid = _app_competencia(tmp_path, monkeypatch, "comp5.db", [], 280000)
+
+    fila = c.post("/api/catalogo/competitividad", json={}).json()["filas"][0]
+
+    assert fila["veredicto"] == "sin_datos" and fila["error"]
+
+
+def test_competitividad_va_de_a_tandas(tmp_path, monkeypatch):
+    """Cada producto son una o dos consultas a MercadoLibre: 126 de una sola
+    vez darían una petición que el servidor corta."""
+    c, cli, _ = _app_competencia(tmp_path, monkeypatch, "comp6.db",
+                                 [300000], 280000)
+    for i in range(12):
+        pid = _alta(c, asin=f"B0COMP01{i:02d}", marca="LEGO",
+                    titulo_ml=f"LEGO Set {i}", ml_category_id="MLA1157").json()["id"]
+        c.patch(f"/api/catalogo/{pid}/publicacion", json={"pictures": ["http://i/1.jpg"]})
+        c.post(f"/api/catalogo/{pid}/aprobar")
+        c.post(f"/api/catalogo/{pid}/publicar", json={})
+
+    d = c.post("/api/catalogo/competitividad", json={}).json()
+
+    assert len(d["filas"]) == 10 and d["total"] == 13
+    assert d["siguiente"] == 10
+    ultima = c.post("/api/catalogo/competitividad", json={"desde": 10}).json()
+    assert len(ultima["filas"]) == 3 and ultima["siguiente"] is None
