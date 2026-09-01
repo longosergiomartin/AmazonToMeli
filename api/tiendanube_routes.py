@@ -64,11 +64,23 @@ def registrar_tiendanube(app: FastAPI, conn, cat: Catalogo) -> None:
     @app.get("/oauth/tiendanube/status")
     def tn_status():
         fila = store.leer()
+        # La URL de autorización se devuelve armada para poder VERLA. Si el
+        # botón de conectar no lleva a ninguna parte, el problema está acá y no
+        # hay forma de saberlo sin mirar qué se está construyendo: Tiendanube
+        # pone el App ID en la ruta, no como parámetro, así que un id
+        # equivocado da un 404 de su sitio en vez de un error de OAuth.
+        url = oauth.url_autorizacion() if cred.configurado else ""
         return {"configurado": cred.configurado,
                 "conectado": store.hay_sesion(),
                 "store_id": (fila["store_id"] if fila else "") or "",
                 "redirect_uri": cred.redirect_uri,
-                "user_agent": cred.user_agent}
+                "user_agent": cred.user_agent,
+                "url_autorizacion": url,
+                # El App ID de Tiendanube es un número. Si acá viene el "client
+                # id" alfanumérico de otra pantalla del portal, la URL de
+                # autorización no existe y no hay mensaje que lo explique.
+                "client_id_es_numerico": cred.client_id.isdigit(),
+                "client_id_largo": len(cred.client_id)}
 
     @app.get("/oauth/tiendanube/login")
     def tn_login():

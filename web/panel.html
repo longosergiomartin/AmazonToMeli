@@ -437,6 +437,7 @@
       <button type="button" class="sm" id="tn-probar"
               title="Una llamada mínima a la tienda para ver si el token anda">🔌 Probar conexión</button>
     </div>
+    <div class="hint" id="tn-diag" style="margin-top:8px;word-break:break-all"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
       <div class="f" style="margin:0">
         <label>Ajuste de precio (%)</label>
@@ -1826,6 +1827,20 @@
         ? "Faltan las credenciales (TIENDANUBE_CLIENT_ID y _CLIENT_SECRET van en Render)."
         : (s.conectado ? "🟢 Conectada · tienda "+s.store_id
                        : "⚪ Sin conectar.");
+      // La URL de autorización, a la vista. Si el botón de conectar no lleva a
+      // ninguna parte, es lo único que dice por qué: el App ID va en la RUTA,
+      // así que uno equivocado da un 404 del sitio de Tiendanube y ningún
+      // mensaje de error que lo explique.
+      $("tn-diag").innerHTML = (s.configurado && !s.conectado)
+        ? "Te va a mandar a: <code>"+esc(s.url_autorizacion||"(vacía)")+"</code>"
+          +(s.client_id_es_numerico ? ""
+            : "<br>⚠ El <b>App ID de Tiendanube es un número</b> y el tuyo tiene "
+              +s.client_id_largo+" caracteres que no son solo dígitos. Si esa "
+              +"URL da 404, es esto: buscá en el portal el <b>App ID</b>, no el "
+              +"«client id» de otra pantalla.")
+          +"<br>Vuelve a: <code>"+esc(s.redirect_uri||"(sin configurar)")+"</code>"
+          +" — tiene que coincidir EXACTO con la que registraste en el portal."
+        : "";
       if(s.conectado) api("GET","/api/tiendanube/config").then(function(c){
         $("tn-ajuste").value=c.ajuste_pct||0;
         $("tn-estado").textContent+=" · "+c.publicados+" publicado/s allá";
