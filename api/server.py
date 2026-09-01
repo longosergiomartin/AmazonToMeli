@@ -460,8 +460,13 @@ def crear_app(db_path: str = "data/arbitraje.db") -> FastAPI:
 
     # Catálogo + OAuth de MercadoLibre + publicación (comparte la misma base).
     from .catalogo_routes import registrar_catalogo
+    from .tiendanube_routes import registrar_tiendanube
     from arbitraje.config import CONFIG_DEFAULT
-    registrar_catalogo(app, almacen.conn, CONFIG_DEFAULT)
+    # Se reusa el catálogo que arma `registrar_catalogo`: cada instancia cachea
+    # las preferencias en memoria, y dos sobre la misma base se desincronizan
+    # apenas una escribe y la otra lee.
+    cat = registrar_catalogo(app, almacen.conn, CONFIG_DEFAULT)
+    registrar_tiendanube(app, almacen.conn, cat)
 
     @app.get("/panel", response_class=HTMLResponse)
     def panel():

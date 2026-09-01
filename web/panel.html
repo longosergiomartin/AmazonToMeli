@@ -423,6 +423,37 @@
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
   </div>
 
+  <div class="card">
+    <b>🏪 Tu tienda (Tiendanube)</b>
+    <p class="hint" style="margin:6px 0 10px">Publica en tu tienda propia lo que
+      ya está en MercadoLibre. Después, <b>sincronizar</b> le lleva el precio y el
+      stock que la herramienta calcula hoy, así corregir un costo se refleja en
+      los dos canales sin reeditar nada a mano.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <span class="msg" id="tn-estado">…</span>
+      <a class="sm" id="tn-conectar" href="/oauth/tiendanube/login"
+         style="display:none;text-decoration:none;border:1px solid var(--line);
+                padding:6px 10px;border-radius:8px">Conectar Tiendanube</a>
+      <button type="button" class="sm" id="tn-probar"
+              title="Una llamada mínima a la tienda para ver si el token anda">🔌 Probar conexión</button>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
+      <div class="f" style="margin:0">
+        <label>Ajuste de precio (%)</label>
+        <input type="number" id="tn-ajuste" step="1" style="width:150px">
+        <span class="hint">Sobre el precio de MercadoLibre. <b>0 = el mismo
+          precio.</b> Acá no pagás la comisión de ML, así que podés poner un
+          número negativo y vender más barato.</span>
+      </div>
+      <button type="button" class="sm" id="tn-publicar"
+              title="Publica en tu tienda los productos tildados en la tabla">Publicar los tildados</button>
+      <button type="button" class="sm primary" id="tn-sincronizar"
+              title="Lleva precio y stock de todo lo que ya está en tu tienda">↻ Sincronizar precio y stock</button>
+    </div>
+    <div class="msg" id="tn-msg"></div>
+    <div id="tn-tabla" class="hist" style="max-height:240px;overflow:auto"></div>
+  </div>
+
   <div class="tablewrap">
     <table id="tabla"><thead><tr>
       <th class="chk"><input type="checkbox" id="chk-todos" title="Seleccionar todo"></th>
@@ -1787,6 +1818,66 @@
     $("dlg").showModal();
   }
 
+  // ---- Tiendanube: la tienda propia --------------------------------------
+  function tnEstado(){
+    api("GET","/oauth/tiendanube/status").then(function(s){
+      $("tn-conectar").style.display=(s.configurado && !s.conectado)?"":"none";
+      $("tn-estado").textContent = !s.configurado
+        ? "Faltan las credenciales (TIENDANUBE_CLIENT_ID y _CLIENT_SECRET van en Render)."
+        : (s.conectado ? "🟢 Conectada · tienda "+s.store_id
+                       : "⚪ Sin conectar.");
+      if(s.conectado) api("GET","/api/tiendanube/config").then(function(c){
+        $("tn-ajuste").value=c.ajuste_pct||0;
+        $("tn-estado").textContent+=" · "+c.publicados+" publicado/s allá";
+      }).catch(function(){});
+    }).catch(function(){ $("tn-estado").textContent="No se pudo leer el estado."; });
+  }
+  $("tn-probar").onclick=function(){
+    $("tn-msg").textContent="Probando…";
+    api("GET","/api/tiendanube/probar").then(function(d){
+      $("tn-msg").textContent="🟢 Anda. Tienda "+d.store_id+".";
+    }).catch(function(e){
+      // El texto crudo de Tiendanube es lo único que dice qué está mal: los
+      // tres fallos típicos dan todos el mismo 401 opaco.
+      $("tn-msg").textContent="No anda: "+(typeof e==="string"?e:JSON.stringify(e));
+    });
+  };
+  $("tn-ajuste").addEventListener("change",function(){
+    api("POST","/api/tiendanube/config",{ajuste_pct:parseFloat(this.value)||0})
+      .then(function(c){
+        $("tn-msg").textContent = c.ajuste_pct
+          ? "Ajuste "+c.ajuste_pct+"% sobre el precio de MercadoLibre."
+          : "Mismo precio que en MercadoLibre.";
+      }).catch(err);
+  });
+  function tnResumen(d, verbo){
+    var mal=(d.resultados||[]).filter(function(r){return !r.ok;});
+    return (d.publicados!==undefined?d.publicados:d.sincronizados)+" "+verbo
+      +(mal.length?" · fallaron: "+mal.map(function(r){
+          return r.nombre+" ("+r.error+")";}).join(" · "):"");
+  }
+  $("tn-publicar").onclick=function(){
+    var ids=seleccionados();
+    if(!ids.length){ $("tn-msg").textContent="Tildá al menos uno en la tabla."; return; }
+    if(!confirm("Publicar "+ids.length+" producto/s en TU TIENDA de Tiendanube, "
+      +"visibles para los compradores. ¿Confirmás?")) return;
+    $("tn-msg").textContent="Publicando…";
+    api("POST","/api/tiendanube/lote/publicar",{ids:ids}).then(function(d){
+      $("tn-msg").textContent=tnResumen(d,"publicado/s");
+      tnEstado(); cargar();
+    }).catch(err);
+  };
+  $("tn-sincronizar").onclick=function(){
+    if(!confirm("Lleva a tu tienda el precio y el stock que la herramienta "
+      +"calcula hoy, para todo lo que ya está publicado allá.\n\nLo que esté "
+      +"pausado acá se despublica allá. ¿Confirmás?")) return;
+    $("tn-msg").textContent="Sincronizando…";
+    api("POST","/api/tiendanube/lote/sincronizar",{}).then(function(d){
+      $("tn-msg").textContent=tnResumen(d,"sincronizado/s");
+      tnEstado();
+    }).catch(err);
+  };
+
   function historial(id){
     api("GET","/api/catalogo/"+id+"/historial").then(function(h){
       $("dlg-h").textContent="Historial de cambios";
@@ -1853,7 +1944,7 @@
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
   cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes();
-  cargarConfigPublicacion(); cargarAgente(); cargar();
+  cargarConfigPublicacion(); cargarAgente(); tnEstado(); cargar();
   api("GET","/api/revision").then(rvPintar).catch(function(){});
 })();
 </script>

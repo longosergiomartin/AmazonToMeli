@@ -301,10 +301,45 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `SCRAPER_API_KEY` = clave de [scraperapi.com](https://www.scraperapi.com/)
      (*opcional*, para que la carga en lote funcione desde el servidor, ver
      abajo).
+   - `TIENDANUBE_CLIENT_ID` / `TIENDANUBE_CLIENT_SECRET` = de la app que crees
+     en el portal de Partners de Tiendanube (*opcional*, solo si además de
+     MercadoLibre querés publicar en tu tienda propia, ver abajo).
+   - `TIENDANUBE_REDIRECT_URI` = `https://TU-APP.onrender.com/oauth/tiendanube/callback`
+   - `TIENDANUBE_USER_AGENT` = `TuApp (tu@mail.com)` — **Tiendanube lo exige**:
+     sin un User-Agent que identifique la app y un mail de contacto, rechaza
+     todas las llamadas.
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
    MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
+
+### Publicar también en tu tienda de Tiendanube
+
+El mismo producto puede vivir en los dos canales. Desde el panel, la tarjeta
+**🏪 Tu tienda (Tiendanube)** publica lo que tengas tildado en la tabla y después
+**sincroniza** precio y stock, para que corregir un costo se refleje en los dos
+lados sin reeditar nada a mano. Lo que pauses acá se despublica allá.
+
+Pasos:
+
+1. Creá una app en el portal de Partners de Tiendanube y anotá el **App ID**
+   (va en `TIENDANUBE_CLIENT_ID`) y el **Client Secret**.
+2. Registrá como Redirect URI `https://TU-APP.onrender.com/oauth/tiendanube/callback`.
+3. Cargá las cuatro variables de arriba en Render.
+4. En el panel, **Conectar Tiendanube** → instalás la app en tu tienda.
+5. Apretá **🔌 Probar conexión** antes de publicar nada.
+
+**El precio.** Por defecto se publica al mismo precio que en MercadoLibre. En tu
+tienda no pagás la comisión de ML ni el envío gratis subsidiado, así que hay
+lugar para vender más barato: cuánto de eso conviene resignar es una decisión
+comercial y no una cuenta, y por eso el campo **Ajuste de precio (%)** arranca en
+0 y lo ponés a mano.
+
+**Un detalle de esta API que cuesta caro descubrir solo**: el header de
+autenticación se llama `Authentication`, no `Authorization`, y el `User-Agent`
+es obligatorio. Los dos errores dan el mismo 401 sin explicación; para eso está
+el botón **Probar conexión**, que los separa antes de intentar publicar 126
+productos.
 
 ### El código de barras (GTIN) y por qué importa
 

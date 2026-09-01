@@ -124,6 +124,15 @@ class ProductoCatalogo:
     estado: str = "borrador"
     ml_item_id: str = ""
     ml_permalink: str = ""
+    # --- Tiendanube (la tienda propia) ---
+    # El mismo producto vive en los dos canales a la vez. El estado de la
+    # publicación en MercadoLibre (`estado`) no dice nada de Tiendanube: se
+    # puede estar publicado en uno y no en el otro, y hay que poder verlo.
+    tn_product_id: str = ""
+    # Precio y stock viven en la variante, no en el producto: sin este id no se
+    # puede actualizar ninguno de los dos.
+    tn_variant_id: str = ""
+    tn_permalink: str = ""
 
 
 def _ahora() -> str:
@@ -474,6 +483,65 @@ class Catalogo:
                    for pct in pcts)
 
     @property
+    def tn_ajuste_pct(self) -> float:
+        """Cuánto se corrige, en %, el precio de MercadoLibre para la tienda
+        propia. 0 = el mismo precio en los dos canales.
+
+        En Tiendanube no se paga la comisión de MercadoLibre ni el envío gratis
+        subsidiado, así que hay margen para vender más barato. Pero cuánto de
+        eso conviene resignar es una decisión comercial —depende de si se quiere
+        ganar más por venta o competir por precio—, no una cuenta que la
+        herramienta pueda hacer sola. Por eso es un número a mano y arranca en 0.
+        """
+        try:
+            return float(self._pref("tn_ajuste_pct", "0") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @tn_ajuste_pct.setter
+    def tn_ajuste_pct(self, valor) -> None:
+        try:
+            v = float(valor or 0)
+        except (TypeError, ValueError):
+            raise ValueError("El ajuste tiene que ser un número.")
+        if v < -90 or v > 200:
+            raise ValueError("El ajuste va entre -90% y 200%.")
+        self._set_pref("tn_ajuste_pct", str(v))
+
+    def registrar_tiendanube(self, pid: int, product_id, variant_id="",
+                             permalink: str = "") -> ProductoCatalogo:
+        """Guarda los ids que devolvió Tiendanube al crear el producto.
+
+        Sin el id de variante no se puede tocar después ni el precio ni el
+        stock, así que se guarda junto con el del producto.
+        """
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        p.tn_product_id = str(product_id or "")
+        p.tn_variant_id = str(variant_id or "")
+        p.tn_permalink = permalink or ""
+        self._guardar(p)
+        self._log(p.id, "tiendanube", "tn_product_id", None, p.tn_product_id,
+                  nota="Publicado en la tienda propia")
+        return p
+
+    def olvidar_tiendanube(self, pid: int) -> ProductoCatalogo:
+        """Suelta el vínculo con Tiendanube, sin tocar nada allá."""
+        p = self.obtener(pid)
+        if not p:
+            raise ValueError("No existe ese producto.")
+        anterior = p.tn_product_id
+        p.tn_product_id = p.tn_variant_id = p.tn_permalink = ""
+        self._guardar(p)
+        self._log(p.id, "tiendanube", "tn_product_id", anterior, "")
+        return p
+
+    def en_tiendanube(self) -> list[ProductoCatalogo]:
+        """Los que ya están publicados en la tienda propia."""
+        return [p for p in self.todos() if (p.tn_product_id or "").strip()]
+
+    @property
     def revisar_con_proxy(self) -> bool:
         """Si la revisión de precio y stock pasa por ScraperAPI.
 
@@ -727,7 +795,12 @@ class Catalogo:
                               # Precio del producto en pesos puesto a mano,
                               # sin el envío: la herramienta le suma el que
                               # corresponda según tenga o no envío gratis.
-                              ("costo_producto_manual_ars", "REAL")):
+                              ("costo_producto_manual_ars", "REAL"),
+                              # El mismo producto, publicado también en la
+                              # tienda propia. Vacío = todavía no está allá.
+                              ("tn_product_id", "TEXT"),
+                              ("tn_variant_id", "TEXT"),
+                              ("tn_permalink", "TEXT")):
             if columna not in cols:
                 conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
 
@@ -1146,7 +1219,8 @@ class Catalogo:
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
                "ml_permalink", "video_youtube", "revisado_en",
                "costo_manual_ars", "envio_gratis_amazon",
-               "costo_producto_manual_ars"]
+               "costo_producto_manual_ars",
+               "tn_product_id", "tn_variant_id", "tn_permalink"]
 
     def _valores(self, p: ProductoCatalogo) -> list:
         """Los campos de `p` listos para el motor SQL.
@@ -1170,6 +1244,8 @@ class Catalogo:
         # resto del código espera un str.
         d["video_youtube"] = d.get("video_youtube") or ""
         d["revisado_en"] = d.get("revisado_en") or ""
+        for campo in ("tn_product_id", "tn_variant_id", "tn_permalink"):
+            d[campo] = d.get(campo) or ""
         # 0/1/NULL en la base, tres estados acá. NULL tiene que seguir siendo
         # None: "no lo miré" no es lo mismo que "no tiene envío gratis" aunque
         # los dos paguen igual.
