@@ -48,6 +48,49 @@ def _buscar(patrones, texto) -> Optional[str]:
     return None
 
 
+# Amazon responde 200 con esta pagina cuando decide que sos un bot. Tiene el
+# tamano de un error y ningun dato del producto, asi que hay que tratarla como
+# bloqueo: si se la toma por buena, el producto queda sin precio ni stock y el
+# agente concluye cosas falsas sobre el.
+_MURO_ANTIBOT = "Click the button below to continue shopping"
+
+
+def _es_muro_antibot(texto: str) -> bool:
+    """Distingue la pantalla anti-bot de una ficha real.
+
+    El texto del boton la identifica sola. El tamano no alcanza como senal
+    -una ficha legitima puede ser corta-, asi que solo cuenta cuando ademas
+    no hay ni precio ni titulo: eso ya no es un producto, sea lo que sea.
+    """
+    if _MURO_ANTIBOT in texto:
+        return True
+    if len(texto) >= 20_000:
+        return False
+    sin_precio = "a-price" not in texto and "priceAmount" not in texto
+    sin_titulo = "productTitle" not in texto and "<title" not in texto
+    return sin_precio and sin_titulo
+
+
+def _moneda(texto: str) -> Optional[str]:
+    """Moneda en la que Amazon coto la ficha, o None si no se pudo determinar.
+
+    Importa porque Amazon sirve la pagina en pesos a las IP argentinas y el
+    numero sale igual de bien parseado: sin este chequeo, un precio en ARS se
+    guarda como dolares y el margen sale multiplicado por el tipo de cambio.
+    """
+    m = re.search(r'"currencyCode"\s*:\s*"([A-Z]{3})"', texto)
+    if m:
+        return m.group(1)
+    m = re.search(r'class="a-price-symbol"[^>]*>\s*([^<]{1,6})', texto)
+    if m:
+        simbolo = m.group(1).strip()
+        if simbolo == "$":
+            return "USD"
+        if simbolo.isalpha():
+            return simbolo.upper()
+    return None
+
+
 def _parse_precio(texto: str) -> Optional[float]:
     val = _buscar([
         r'"priceAmount"\s*:\s*([0-9]+\.?[0-9]*)',
@@ -334,6 +377,12 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
 
     datos["status"] = resp.status_code
     datos["via_proxy"] = por_proxy
+    if resp.status_code == 200 and _es_muro_antibot(resp.text):
+        datos["bloqueado"] = True
+        datos["mensaje"] = ("Amazon devolvio su pantalla anti-bot en vez de la "
+                            "ficha. Responde 200, pero no trae datos: hay que "
+                            "espaciar las lecturas o leer desde el navegador.")
+        return datos
     if resp.status_code != 200:
         # 429/503 = nos está limitando; 403 = nos bloqueó. En esos casos la
         # cola tiene que parar, no insistir.
@@ -382,7 +431,17 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
     datos["modelo"] = (titulo or "")[:120]
     datos["marca"] = (limpiar_marca(_de_detalles(detalles, _ETIQUETAS_MARCA))
                       or limpiar_marca(marca or ""))
-    datos["precio_usd"] = _parse_precio(texto)
+    moneda = _moneda(texto)
+    datos["moneda"] = moneda
+    precio = _parse_precio(texto)
+    if precio is not None and moneda not in (None, "USD"):
+        # El numero se parseo bien, pero no esta en dolares. Se descarta en vez
+        # de convertirlo: el tipo de cambio que aplique Amazon no es el que paga
+        # el comprador, y un costo inventado es peor que un costo faltante.
+        datos["mensaje"] = (f"Amazon coto la ficha en {moneda}, no en dolares. "
+                            "No se guarda el precio para no falsear el margen.")
+        precio = None
+    datos["precio_usd"] = precio
     datos["disponible"] = _parse_disponible(texto)
     datos["envia_al_exterior"] = _parse_envia_al_exterior(texto)
     datos["vendedor"] = _parse_vendedor(texto)
