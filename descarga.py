@@ -43,8 +43,14 @@ def bajar(url: str, timeout: int = 12, params: dict | None = None,
     """
     clave = os.getenv("SCRAPER_API_KEY", "").strip() if usar_proxy else ""
     if not clave:
+        # Sin proxy, Amazon geolocaliza por IP: desde Argentina devuelve la
+        # ficha en pesos. Estas cookies son las que usa su propio selector de
+        # moneda y pais, y piden la version en dolares. No es garantia -Amazon
+        # a veces las ignora-, por eso ademas se valida la moneda al parsear.
+        galletas = {"i18n-prefs": "USD", "lc-main": "en_US"}
         return requests.get(url, timeout=timeout, params=params,
-                            headers=headers or {"User-Agent": _UA}), False
+                            headers=headers or {"User-Agent": _UA},
+                            cookies=galletas), False
     # El proxy recibe la URL como parámetro, así que lo que iba en `params`
     # tiene que ir ya pegado a la URL.
     destino = f"{url}?{urlencode(params)}" if params else url
