@@ -102,7 +102,6 @@ class ProductoCatalogo:
     videos: list = field(default_factory=list)
     # El que sí va a la publicación: id de un video de YouTube.
     video_youtube: str = ""
-    revisado_en: str = ""              # última revisión de precio/stock en Amazon
     # Costo real en pesos, puesto a mano. Si está, gana sobre todo el cálculo:
     # el tipo de cambio, el % de envío y el régimen son estimaciones para
     # cuando no se sabe, y acá se sabe. 0 o None = se calcula.
@@ -124,15 +123,6 @@ class ProductoCatalogo:
     estado: str = "borrador"
     ml_item_id: str = ""
     ml_permalink: str = ""
-    # --- Tiendanube (la tienda propia) ---
-    # El mismo producto vive en los dos canales a la vez. El estado de la
-    # publicación en MercadoLibre (`estado`) no dice nada de Tiendanube: se
-    # puede estar publicado en uno y no en el otro, y hay que poder verlo.
-    tn_product_id: str = ""
-    # Precio y stock viven en la variante, no en el producto: sin este id no se
-    # puede actualizar ninguno de los dos.
-    tn_variant_id: str = ""
-    tn_permalink: str = ""
 
 
 def _ahora() -> str:
@@ -483,80 +473,6 @@ class Catalogo:
                    for pct in pcts)
 
     @property
-    def tn_ajuste_pct(self) -> float:
-        """Cuánto se corrige, en %, el precio de MercadoLibre para la tienda
-        propia. 0 = el mismo precio en los dos canales.
-
-        En Tiendanube no se paga la comisión de MercadoLibre ni el envío gratis
-        subsidiado, así que hay margen para vender más barato. Pero cuánto de
-        eso conviene resignar es una decisión comercial —depende de si se quiere
-        ganar más por venta o competir por precio—, no una cuenta que la
-        herramienta pueda hacer sola. Por eso es un número a mano y arranca en 0.
-        """
-        try:
-            return float(self._pref("tn_ajuste_pct", "0") or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    @tn_ajuste_pct.setter
-    def tn_ajuste_pct(self, valor) -> None:
-        try:
-            v = float(valor or 0)
-        except (TypeError, ValueError):
-            raise ValueError("El ajuste tiene que ser un número.")
-        if v < -90 or v > 200:
-            raise ValueError("El ajuste va entre -90% y 200%.")
-        self._set_pref("tn_ajuste_pct", str(v))
-
-    def registrar_tiendanube(self, pid: int, product_id, variant_id="",
-                             permalink: str = "") -> ProductoCatalogo:
-        """Guarda los ids que devolvió Tiendanube al crear el producto.
-
-        Sin el id de variante no se puede tocar después ni el precio ni el
-        stock, así que se guarda junto con el del producto.
-        """
-        p = self.obtener(pid)
-        if not p:
-            raise ValueError("No existe ese producto.")
-        p.tn_product_id = str(product_id or "")
-        p.tn_variant_id = str(variant_id or "")
-        p.tn_permalink = permalink or ""
-        self._guardar(p)
-        self._log(p.id, "tiendanube", "tn_product_id", None, p.tn_product_id,
-                  nota="Publicado en la tienda propia")
-        return p
-
-    def olvidar_tiendanube(self, pid: int) -> ProductoCatalogo:
-        """Suelta el vínculo con Tiendanube, sin tocar nada allá."""
-        p = self.obtener(pid)
-        if not p:
-            raise ValueError("No existe ese producto.")
-        anterior = p.tn_product_id
-        p.tn_product_id = p.tn_variant_id = p.tn_permalink = ""
-        self._guardar(p)
-        self._log(p.id, "tiendanube", "tn_product_id", anterior, "")
-        return p
-
-    def en_tiendanube(self) -> list[ProductoCatalogo]:
-        """Los que ya están publicados en la tienda propia."""
-        return [p for p in self.todos() if (p.tn_product_id or "").strip()]
-
-    @property
-    def revisar_con_proxy(self) -> bool:
-        """Si la revisión de precio y stock pasa por ScraperAPI.
-
-        Apagado por defecto: cada página son 5 créditos de los 1.000 del mes y
-        esta tarea recorre el catálogo entero. Directo, desde un servidor,
-        Amazon casi siempre rechaza; el camino que sí anda sin gastar créditos
-        es leer desde el navegador del usuario.
-        """
-        return self._pref("revisar_con_proxy", "0") == "1"
-
-    @revisar_con_proxy.setter
-    def revisar_con_proxy(self, valor) -> None:
-        self._set_pref("revisar_con_proxy", "1" if valor else "0")
-
-    @property
     def tipo_producto(self) -> str:
         """Palabra con la que arranca el título ("Set", "Kit", "Muñeco"…).
 
@@ -778,11 +694,6 @@ class Catalogo:
                               ("descripcion", "TEXT"),
                               ("videos", "TEXT"),
                               ("video_youtube", "TEXT"),
-                              # Cuándo se miró por última vez el precio y el
-                              # stock en Amazon. Sirve para ir rotando: revisar
-                              # todo el catálogo de una gasta casi el mes
-                              # entero de créditos de ScraperAPI.
-                              ("revisado_en", "TEXT"),
                               # Costo puesto a mano, en pesos. Cuando el
                               # usuario conoce el costo real —del checkout de
                               # Amazon, del resumen de la tarjeta— ese dato es
@@ -795,12 +706,7 @@ class Catalogo:
                               # Precio del producto en pesos puesto a mano,
                               # sin el envío: la herramienta le suma el que
                               # corresponda según tenga o no envío gratis.
-                              ("costo_producto_manual_ars", "REAL"),
-                              # El mismo producto, publicado también en la
-                              # tienda propia. Vacío = todavía no está allá.
-                              ("tn_product_id", "TEXT"),
-                              ("tn_variant_id", "TEXT"),
-                              ("tn_permalink", "TEXT")):
+                              ("costo_producto_manual_ars", "REAL")):
             if columna not in cols:
                 conn.execute(f"ALTER TABLE catalogo ADD COLUMN {columna} {tipo}")
 
@@ -941,47 +847,6 @@ class Catalogo:
                 "margen_pct": round(real["margen_pct"], 1),
                 "margen_ars": round(real["margen_ars"], 2)}
 
-    def a_revisar(self, limite: int = 10) -> list[ProductoCatalogo]:
-        """Las publicaciones que hace más tiempo que no se miran en Amazon.
-
-        Revisar el catálogo entero de una no se puede: cada producto son 5
-        créditos de ScraperAPI y el plan gratis trae 1.000 por mes, así que 126
-        productos son dos tercios del mes en una sola pasada. Se rota: primero
-        las que nunca se revisaron, después las más viejas.
-        """
-        vivos = [p for p in self.todos()
-                 if p.estado in ("publicado", "pausado")
-                 and (p.amazon_link or p.asin)]
-        vivos.sort(key=lambda p: p.revisado_en or "")
-        return vivos[:max(0, int(limite))]
-
-    def marcar_revisado(self, pid: int, precio_usd: Optional[float] = None,
-                        disponible: Optional[bool] = None) -> ProductoCatalogo:
-        """Guarda lo que se vio en Amazon y recalcula costo, precio y margen.
-
-        `disponible=None` significa que no se pudo determinar: no se toca la
-        disponibilidad guardada. Marcar como agotado algo que solo no se pudo
-        leer sacaría de venta un producto que sí está.
-        """
-        p = self.obtener(pid)
-        if not p:
-            raise ValueError("No existe ese producto.")
-        p.revisado_en = _ahora()
-        if precio_usd is not None and precio_usd > 0 and precio_usd != p.precio_usd:
-            anterior = p.precio_usd
-            p.precio_usd = float(precio_usd)
-            # El envío se había estimado como % del precio viejo: se recalcula,
-            # salvo que el usuario haya cargado el total real del checkout.
-            self._log(p.id, "precio_amazon", "precio_usd", anterior, p.precio_usd)
-        if disponible is not None:
-            nueva = "in_stock" if disponible else "out_of_stock"
-            if nueva != p.disponibilidad:
-                self._log(p.id, "stock_amazon", "disponibilidad",
-                          p.disponibilidad, nueva)
-                p.disponibilidad = nueva
-        self._calcular(p)
-        self._guardar(p)
-        return p
 
     def reestimar_envios(self, pct_anterior=None,
                          solo: Optional[Sequence[int]] = None) -> int:
@@ -1217,10 +1082,9 @@ class Catalogo:
                "titulo_ml", "descripcion",
                "ml_category_id", "costo_total_ars", "precio_sugerido_ars",
                "precio_publicado_ars", "margen_pct", "estado", "ml_item_id",
-               "ml_permalink", "video_youtube", "revisado_en",
+               "ml_permalink", "video_youtube",
                "costo_manual_ars", "envio_gratis_amazon",
-               "costo_producto_manual_ars",
-               "tn_product_id", "tn_variant_id", "tn_permalink"]
+               "costo_producto_manual_ars"]
 
     def _valores(self, p: ProductoCatalogo) -> list:
         """Los campos de `p` listos para el motor SQL.
@@ -1234,18 +1098,23 @@ class Catalogo:
             vals.append(int(v) if isinstance(v, bool) else v)
         return vals
 
+    # Los campos que el producto conoce hoy. Se usa para descartar columnas que
+    # quedaron en la base de una función que se sacó: SQLite no borra columnas,
+    # así que una base vieja sigue trayéndolas y sin este filtro el producto
+    # explotaría al construirse con un argumento que ya no existe.
+    _CAMPOS_CONOCIDOS = frozenset(ProductoCatalogo.__dataclass_fields__)
+
     def _fila_a_producto(self, row) -> ProductoCatalogo:
-        d = dict(row)
-        attrs = json.loads(d.pop("ml_attributes") or "{}")
-        pics = json.loads(d.pop("pictures") or "[]")
-        vids = json.loads(d.pop("videos", None) or "[]")
+        d = {k: v for k, v in dict(row).items() if k in self._CAMPOS_CONOCIDOS}
+        attrs = json.loads(dict(row).get("ml_attributes") or "{}")
+        pics = json.loads(dict(row).get("pictures") or "[]")
+        vids = json.loads(dict(row).get("videos") or "[]")
+        for campo in ("ml_attributes", "pictures", "videos"):
+            d.pop(campo, None)
         # Las filas anteriores a la migración traen NULL en las columnas nuevas,
         # y el campo está declarado como texto: sin esto entra un None donde el
         # resto del código espera un str.
         d["video_youtube"] = d.get("video_youtube") or ""
-        d["revisado_en"] = d.get("revisado_en") or ""
-        for campo in ("tn_product_id", "tn_variant_id", "tn_permalink"):
-            d[campo] = d.get(campo) or ""
         # 0/1/NULL en la base, tres estados acá. NULL tiene que seguir siendo
         # None: "no lo miré" no es lo mismo que "no tiene envío gratis" aunque
         # los dos paguen igual.
