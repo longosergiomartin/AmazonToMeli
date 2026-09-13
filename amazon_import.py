@@ -399,9 +399,14 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
                   f"ScraperAPI respondió {resp.status_code}. El ASIN quedó "
                   "cargado; completá el resto a mano.")
         else:
+            # Amazon rechaza casi siempre a un servidor, y ésta es la salida
+            # que siempre funcionó: la página la lee el navegador del usuario,
+            # con su IP de casa, y manda los datos ya leídos.
             datos["mensaje"] = (
-                f"Amazon respondió {resp.status_code} (suele pasar en "
-                "servidores). El ASIN quedó cargado; completá el resto a mano.")
+                f"Amazon respondió {resp.status_code} (le pasa a cualquier "
+                "servidor). El ASIN quedó cargado. Para traer el resto usá el "
+                "botón «Capturar producto» desde la página de inicio: la "
+                "lectura la hace tu navegador y Amazon no la rechaza.")
         return datos
 
     texto = resp.text

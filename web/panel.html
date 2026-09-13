@@ -120,10 +120,6 @@
 <div class="wrap">
   <div class="bar">
     <div><h1>Panel de publicación</h1><div class="sub">Amazon → tu cuenta de MercadoLibre Argentina ·
-      <a href="/codigos" style="color:var(--accent)">Conversor ASIN ⇄ código de barras</a>
-      <!-- "¿me quedó andando la clave?" es de las primeras preguntas que uno se
-           hace; estaba adentro de un desplegable cerrado, donde no se encontraba. -->
-      <span id="extras" style="display:block;margin-top:4px"></span></div></div>
     <div class="ml">
       <span class="dot" id="ml-dot"></span><span id="ml-txt">MercadoLibre: —</span>
       <button class="sm" id="ml-btn" type="button">Conectar</button>
@@ -218,6 +214,10 @@
           <input id="amazon_link" placeholder="https://amazon.com/dp/..." style="flex:1">
           <button type="button" id="traer" class="sm" style="white-space:nowrap">Traer datos</button>
         </div>
+        <span class="hint">Si Amazon rechaza al servidor, usá el botón
+          <b>«Capturar producto»</b> de
+          <a href="/" target="_blank" rel="noopener">la página de inicio</a>:
+          la página la lee tu navegador.</span>
         <span class="hint" id="traer-msg"></span></div>
       <div class="f"><label>ASIN</label><input id="asin" placeholder="B0BBHHT8LY"></div>
       <div class="f"><label>Marca</label><input id="marca" placeholder="HISEA"></div>
@@ -246,27 +246,6 @@
     </div>
     <div style="margin-top:14px"><button class="primary" id="add" type="button">Registrar y calcular</button>
       <span class="msg" id="add-msg"></span></div>
-  </div>
-
-  <div class="card" style="margin-top:16px">
-    <h2>Agente</h2>
-    <p class="hint" style="margin:0 0 12px">Recorre el catálogo completando lo que
-      falta —marca, categoría, atributos, código de barras— y publica los que
-      quedan listos. Va de a un producto por vez: podés frenarlo cuando quieras.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <button type="button" class="primary" id="ag-toggle">▶ Encender</button>
-      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
-        <input type="checkbox" id="ag-publicar" style="width:auto"> También publicar
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
-        Tope <input type="number" id="ag-tope" min="0" max="50" style="width:70px">
-      </label>
-      <label style="display:flex;align-items:center;gap:6px;font-weight:500">
-        Margen mín. <input type="number" id="ag-margen" min="0" style="width:70px"> %
-      </label>
-    </div>
-    <div id="ag-estado" class="hist" style="margin-top:12px"></div>
-    <div id="ag-log" class="hist" style="max-height:180px;overflow:auto"></div>
   </div>
 
   <div class="lote off" id="lote">
@@ -356,119 +335,11 @@
     <div id="pr-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
   </div>
 
-  <div class="card">
-    <b>🤖 Agente de revisión</b>
-    <p class="hint" style="margin:6px 0 10px">Recorre lo que ya está publicado,
-      entra a cada producto en Amazon, relee el precio y recalcula. <b>Si Amazon
-      se quedó sin stock, pausa la publicación.</b> Va de a uno y se puede
-      frenar cuando quieras.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <button type="button" class="sm primary" id="rv-toggle">▶ Revisar</button>
-      <button type="button" class="sm" id="rv-reiniciar">↺ Empezar de nuevo</button>
-      <label style="display:flex;align-items:center;gap:6px" id="rv-proxy-caja">
-        <input type="checkbox" id="rv-proxy"> Usar ScraperAPI (5 créditos por producto)
-      </label>
-    </div>
-    <div class="msg" id="rv-estado"></div>
-    <div id="rv-log" class="hist" style="max-height:260px;overflow:auto"></div>
-    <p class="hint" style="margin-top:10px"><b>Si el agente no puede leer
-      Amazon</b> —desde un servidor lo rechaza casi siempre— usá el botón de
-      abajo: la lectura la hace tu navegador, con tu IP de casa, y no gasta
-      créditos.</p>
-    <a class="sm" id="rv-bookmarklet" href="/revisar"
-       style="display:inline-block;text-decoration:none;border:1px solid var(--linea);
-              padding:6px 10px;border-radius:8px">🖐 Revisar desde mi navegador</a>
-  </div>
-
-  <div class="card">
-    <b>✍️ Mejorar títulos y descripciones de lo publicado</b>
-    <p class="hint" style="margin:6px 0 10px">Rehace el título con la estrategia
-      de publicación y reescribe la descripción con la ficha y las condiciones de
-      compra. Primero se ve qué cambiaría; nada se toca hasta que confirmes.
-      <b>En las publicaciones de catálogo el título lo pone MercadoLibre</b> y no
-      se puede cambiar: esas se informan aparte.</p>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center">
-      <label style="display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="tx-titulo" checked> Título</label>
-      <label style="display:flex;align-items:center;gap:6px">
-        <input type="checkbox" id="tx-descripcion" checked> Descripción</label>
-      <button type="button" class="sm" id="tx-diagnostico"
-              title="Consulta a MercadoLibre, sin cambiar nada">🩺 Por qué falla el título</button>
-      <button type="button" class="sm" id="tx-probar"
-              title="Intenta el cambio en UNA sola publicación y muestra la respuesta cruda de MercadoLibre">🧪 Probar en una</button>
-      <button type="button" class="sm" id="tx-simular">Ver qué cambiaría</button>
-      <button type="button" class="sm primary" id="tx-aplicar"
-              style="display:none">Aplicar en MercadoLibre</button>
-      <button type="button" class="sm" id="tx-frenar"
-              style="display:none">■ Frenar</button>
-    </div>
-    <div class="msg" id="tx-msg"></div>
-    <div id="tx-tabla" class="hist" style="max-height:260px;overflow:auto"></div>
-    <details style="margin-top:10px">
-      <summary class="hint">Editar las condiciones de compra que van en la descripción</summary>
-      <p class="hint" style="margin:6px 0">Lo que digas acá es un compromiso con
-        el comprador. <code>{dias}</code> se reemplaza por los días de preparación
-        de cada publicación.</p>
-      <textarea id="tx-compra" rows="8" style="width:100%"></textarea>
-      <button type="button" class="sm" id="tx-guardar-compra">Guardar</button>
-    </details>
-  </div>
-
   <div style="display:flex;justify-content:flex-end;margin-top:10px">
-    <button type="button" class="sm" id="diagnostico"
-            title="Qué le pregunta la herramienta al catálogo de MercadoLibre y qué contesta">🩺 Por qué no se encuentran los códigos</button>
     <button type="button" class="sm" id="verificar" title="Contrasta el estado local con lo que hay de verdad en tu cuenta">🔍 Verificar en MercadoLibre</button>
     <button type="button" class="sm" id="pausar-todo"
             title="Saca de venta todo lo publicado, sin borrarlo">⏸ Pausar TODAS</button>
     <button type="button" class="sm" id="vaciar" title="Borra el catálogo y la cola para arrancar de cero">🗑 Vaciar catálogo</button>
-  </div>
-
-  <div class="card">
-    <b>🎯 ¿Cuáles puedo vender de verdad?</b>
-    <p class="hint" style="margin:6px 0 10px">Compara tu precio con el del más
-      barato que ya vende ese mismo producto en MercadoLibre. Es la pregunta que
-      importa cuando hay muchas publicaciones y pocas ventas: <b>con el precio
-      muy arriba del más barato no hay título ni foto que alcance</b>, y donde sí
-      podés competir conviene poner el esfuerzo. <b>No cambia nada</b>: solo lee.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <button type="button" class="sm primary" id="cp-correr">Analizar mis publicaciones</button>
-      <button type="button" class="sm" id="cp-frenar" style="display:none">■ Frenar</button>
-      <span class="msg" id="cp-msg"></span>
-    </div>
-    <div id="cp-resumen" style="margin-top:10px"></div>
-    <div id="cp-tabla" class="hist" style="max-height:320px;overflow:auto"></div>
-  </div>
-
-  <div class="card">
-    <b>🏪 Tu tienda (Tiendanube)</b>
-    <p class="hint" style="margin:6px 0 10px">Publica en tu tienda propia lo que
-      ya está en MercadoLibre. Después, <b>sincronizar</b> le lleva el precio y el
-      stock que la herramienta calcula hoy, así corregir un costo se refleja en
-      los dos canales sin reeditar nada a mano.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <span class="msg" id="tn-estado">…</span>
-      <a class="sm" id="tn-conectar" href="/oauth/tiendanube/login"
-         style="display:none;text-decoration:none;border:1px solid var(--line);
-                padding:6px 10px;border-radius:8px">Conectar Tiendanube</a>
-      <button type="button" class="sm" id="tn-probar"
-              title="Una llamada mínima a la tienda para ver si el token anda">🔌 Probar conexión</button>
-    </div>
-    <div class="hint" id="tn-diag" style="margin-top:8px;word-break:break-all"></div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
-      <div class="f" style="margin:0">
-        <label>Ajuste de precio (%)</label>
-        <input type="number" id="tn-ajuste" step="1" style="width:150px">
-        <span class="hint">Sobre el precio de MercadoLibre. <b>0 = el mismo
-          precio.</b> Acá no pagás la comisión de ML, así que podés poner un
-          número negativo y vender más barato.</span>
-      </div>
-      <button type="button" class="sm" id="tn-publicar"
-              title="Publica en tu tienda los productos tildados en la tabla">Publicar los tildados</button>
-      <button type="button" class="sm primary" id="tn-sincronizar"
-              title="Lleva precio y stock de todo lo que ya está en tu tienda">↻ Sincronizar precio y stock</button>
-    </div>
-    <div class="msg" id="tn-msg"></div>
-    <div id="tn-tabla" class="hist" style="max-height:240px;overflow:auto"></div>
   </div>
 
   <div class="tablewrap">
@@ -1002,190 +873,6 @@
     tanda();
   };
 
-  // ---- mejorar títulos y descripciones de lo ya publicado ---------------
-  var txFilas=[];
-
-  // ---- agente de revisión ----------------------------------------------
-  // El bucle vive en el navegador, igual que el del agente de publicación:
-  // se pide un producto por vez y se puede frenar en cualquier momento.
-  var rvTimer=null;
-
-  function rvPintar(e){
-    $("rv-toggle").textContent = rvTimer ? "■ Frenar" : "▶ Revisar";
-    $("rv-toggle").className = rvTimer ? "sm" : "sm primary";
-    $("rv-estado").textContent =
-      "Por revisar: "+(e.por_revisar||0)+" · Revisados: "+(e.revisados||0)
-      +" · Pausados por falta de stock: "+(e.sin_stock||0)
-      +" · Encarecidos: "+(e.encarecidos||0)
-      +" · Margen bajo: "+(e.en_perdida||0)
-      +((e.no_leidos||0)?" · No se pudieron leer: "+e.no_leidos:"");
-    if(typeof e.con_proxy!=="undefined") $("rv-proxy").checked=!!e.con_proxy;
-    if(e.proxy_disponible===false){
-      $("rv-proxy").disabled=true;
-      $("rv-proxy-caja").title="No hay SCRAPER_API_KEY configurada.";
-    }
-  }
-
-  function rvLog(r){
-    var color = r.accion==="pausado" ? "var(--bad)"
-              : (r.accion==="margen_bajo" ? "var(--warn)"
-              : (r.accion==="no_leido"||r.accion==="error" ? "var(--muted)"
-              : "var(--good)"));
-    var d=document.createElement("div");
-    d.innerHTML='<span style="color:'+color+'">●</span> '+esc(r.nombre||"")
-      +' <span class="hint">'+esc(r.detalle||r.accion||"")+'</span>';
-    $("rv-log").insertBefore(d, $("rv-log").firstChild);
-  }
-
-  function rvPaso(){
-    api("POST","/api/revision/tick",{}).then(function(r){
-      rvPintar(r);
-      if(r.accion==="sin_trabajo"){ rvFrenar(); 
-        $("rv-estado").textContent="No queda nada por revisar. "
-          +$("rv-estado").textContent; return; }
-      rvLog(r);
-    }).catch(function(e){ rvFrenar(); err(e); });
-  }
-
-  function rvFrenar(){ if(rvTimer) clearInterval(rvTimer); rvTimer=null;
-    api("GET","/api/revision").then(rvPintar).catch(function(){}); }
-
-  $("rv-toggle").onclick=function(){
-    if(rvTimer){ rvFrenar(); return; }
-    // Una pausa entre productos: leer Amazon en ráfaga es lo que hace que nos
-    // empiece a rechazar.
-    rvTimer=setInterval(rvPaso, 3000); rvPaso(); rvPintar({});
-    api("GET","/api/revision").then(rvPintar).catch(function(){});
-  };
-
-  $("rv-reiniciar").onclick=function(){
-    api("POST","/api/revision/reiniciar",{}).then(function(e){
-      $("rv-log").innerHTML=""; rvPintar(e);
-    }).catch(err);
-  };
-
-  $("rv-proxy").addEventListener("change",function(){
-    api("PATCH","/api/revision",{con_proxy:this.checked})
-      .then(rvPintar).catch(err);
-  });
-
-  $("tx-diagnostico").onclick=function(){
-    var b=$("tx-diagnostico"); b.disabled=true;
-    $("tx-msg").textContent="Consultando MercadoLibre… (solo lee, no cambia nada)";
-    api("GET","/api/catalogo/publicaciones/diagnostico").then(function(d){
-      b.disabled=false; var r=d.resumen||{}, s=d.salud||{};
-      // La salud va primero: una publicación pausada o sin stock se ve pero no
-      // se puede comprar, y eso explica visitas con cero ventas.
-      $("tx-msg").textContent=
-        "De "+d.total+": "+(s.activas||0)+" activas · "+(s.pausadas||0)
-        +" PAUSADAS · "+(s.sin_stock||0)+" sin stock"
-        +((s.otro_estado||0)?" · "+s.otro_estado+" en otro estado":"")
-        +".\nTítulo: "+(r.editable||0)+" editables · "+(r.catalogo||0)
-        +" de catálogo · "+(r.familia||0)+" con «family_name»"
-        +((r.no_leido||0)?" · "+r.no_leido+" no se pudieron leer":"")+".";
-      $("tx-tabla").innerHTML=(d.filas||[]).map(function(f){
-        var color=f.clave==="editable"?"var(--good)":"var(--warn)";
-        return '<div><b>'+esc(f.nombre)+'</b> <span style="color:'+color+'">'
-          +esc(f.motivo)+'</span>'
-          +(f.family_name?' <span class="hint">family_name: '+esc(f.family_name)+'</span>':'')
-          +'</div>';
-      }).join("");
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
-  $("tx-probar").onclick=function(){
-    // Se prueba sobre la primera que cambiaría de título. Hay que simular
-    // antes: sin eso no se sabe cuál tiene sentido probar.
-    var cand=txFilas.filter(function(f){return f.cambia_titulo;})[0];
-    if(!cand){ $("tx-msg").textContent="Primero apretá «Ver qué cambiaría»."; return; }
-    if(!confirm("Esto intenta cambiar el título de UNA publicación:\n\n"
-      +cand.titulo_actual+"\n→ "+cand.titulo_nuevo+"\n\nSi MercadoLibre lo "
-      +"rechaza no cambia nada. ¿Probamos?")) return;
-    var b=$("tx-probar"); b.disabled=true;
-    $("tx-msg").textContent="Probando en una publicación…";
-    api("POST","/api/catalogo/"+cand.id+"/probar-titulo",{}).then(function(d){
-      b.disabled=false;
-      $("tx-msg").textContent=d.ok
-        ? "✅ Salió. El título quedó: "+d.titulo_probado
-          +". Entonces sí se pueden cambiar: probá «Aplicar»."
-        : "❌ MercadoLibre lo rechazó. "+d.error;
-      // El cuerpo crudo se muestra siempre: es el dato para diagnosticar.
-      $("tx-tabla").innerHTML='<div><b>'+esc(cand.titulo_actual)+'</b><br>→ '
-        +esc(d.titulo_probado)+'</div>'
-        +(d.crudo?'<pre style="white-space:pre-wrap;font-size:.72rem">'
-          +esc(JSON.stringify(d.crudo,null,2))+'</pre>':'');
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
-  $("tx-simular").onclick=function(){
-    var b=$("tx-simular"); b.disabled=true;
-    $("tx-msg").textContent="Armando los títulos y las descripciones…";
-    $("tx-aplicar").style.display="none";
-    api("POST","/api/catalogo/publicaciones/simular",{}).then(function(d){
-      b.disabled=false; txFilas=d.filas||[];
-      if(!txFilas.length){ $("tx-msg").textContent="No hay publicaciones.";
-        $("tx-tabla").innerHTML=""; return; }
-      $("tx-msg").textContent=d.con_titulo_nuevo+" de "+d.total
-        +" cambiarían de título. La descripción se rehace en todas.";
-      $("tx-tabla").innerHTML=txFilas.map(function(f){
-        return '<div style="margin-bottom:6px">'
-          +(f.cambia_titulo
-             ? '<span style="color:var(--muted)">'+esc(f.titulo_actual)+'</span><br>→ <b>'
-               +esc(f.titulo_nuevo)+'</b> <span class="hint">('
-               +f.titulo_nuevo.length+' caracteres)</span>'
-             : '<b>'+esc(f.titulo_actual)+'</b> <span class="hint">(el título ya está bien)</span>')
-          +'</div>';
-      }).join("");
-      $("tx-aplicar").style.display="";
-    }).catch(function(e){ b.disabled=false; err(e); });
-  };
-
-  $("tx-aplicar").onclick=function(){
-    if(!txFilas.length) return;
-    if(!confirm("Esto cambia "+txFilas.length+" publicación/es EN TU CUENTA de "
-      +"MercadoLibre, ya visibles para los compradores. ¿Confirmás?")) return;
-    var b=$("tx-aplicar"); b.disabled=true; $("tx-frenar").style.display="";
-    var pendientes=txFilas.map(function(f){return f.id;});
-    var tit=0, des=0, fallas=[], frenado=false, reloj=null;
-    function parar(){ if(reloj) clearInterval(reloj); reloj=null;
-      b.disabled=false; $("tx-frenar").style.display="none"; }
-    $("tx-frenar").onclick=function(){ frenado=true;
-      $("tx-msg").textContent="Frenando al terminar la tanda en curso…"; };
-    function cerrar(cortado){
-      parar(); $("tx-aplicar").style.display="none";
-      $("tx-msg").textContent=(cortado?"Frenado. ":"")
-        +tit+" título/s y "+des+" descripción/es actualizados."
-        +(pendientes.length?" Quedaron "+pendientes.length+" sin tocar.":"")
-        +(fallas.length?" No se pudo con: "+fallas.join(" · "):"");
-      cargar();
-    }
-    function tanda(){
-      if(!pendientes.length || frenado) return cerrar(frenado);
-      var lote=pendientes.splice(0,5), desde=Date.now();
-      function pintar(){
-        $("tx-msg").textContent="Actualizando… "+tit+" títulos, "
-          +(pendientes.length+lote.length)+" por hacer. ("
-          +Math.round((Date.now()-desde)/1000)+"s en esta tanda)";
-      }
-      pintar(); if(reloj) clearInterval(reloj); reloj=setInterval(pintar,1000);
-      api("POST","/api/catalogo/publicaciones/aplicar",
-          {ids:lote, titulo:$("tx-titulo").checked,
-           descripcion:$("tx-descripcion").checked}).then(function(d){
-        if(d.pendientes && d.pendientes.length)
-          pendientes=d.pendientes.concat(pendientes);
-        tit+=d.titulos||0; des+=d.descripciones||0;
-        (d.resultados||[]).forEach(function(r){
-          if(r.error) fallas.push(r.nombre+" ("+r.error+")"); });
-        tanda();
-      }).catch(function(e){ parar();
-        if(tit||des) $("tx-msg").textContent="Se cortó con "+tit+" título/s y "
-          +des+" descripción/es. Quedaron "+(pendientes.length+lote.length)
-          +" sin tocar.";
-        cargar(); err(e); });
-    }
-    tanda();
-  };
-
   // Los dos porcentajes de envío se guardan igual; solo cambia a qué mitad del
   // catálogo le pega cada uno.
   function guardarPctEnvio(campo, clave, cuales){
@@ -1221,12 +908,6 @@
         cargar();
       }).catch(err);
   });
-
-  $("tx-guardar-compra").onclick=function(){
-    api("POST","/api/catalogo/config",{texto_compra:$("tx-compra").value})
-      .then(function(){ $("tx-msg").textContent="Condiciones de compra guardadas."; })
-      .catch(err);
-  };
 
   // `_en_lote` devuelve una lista de resultados, no contadores: cada acción
   // arma su propio resumen y nombra a los que fallaron, que es lo que hay que
@@ -1339,96 +1020,6 @@
       api("POST","/api/catalogo/lote/borrar",{ids:ids}).then(cargar).catch(err);
   };
 
-  // ---- Agente ----------------------------------------------------------
-  // El bucle vive en el navegador: mientras el panel esté abierto y el agente
-  // encendido, pide un paso por vez. Así no hace falta un worker aparte (que en
-  // el plan gratis de Render no existe) y el avance se ve en vivo.
-  var agTimer=null;
-
-  function pintarAgente(e){
-    $("ag-publicar").checked=!!e.publicar;
-    if(document.activeElement!==$("ag-tope")) $("ag-tope").value=e.max_publicaciones;
-    if(document.activeElement!==$("ag-margen")) $("ag-margen").value=e.margen_minimo;
-    $("ag-toggle").textContent=e.encendido?"■ Frenar":"▶ Encender";
-    $("ag-toggle").className=e.encendido?"":"primary";
-    var partes=["Por preparar: "+e.por_preparar, "Sin código: "+e.sin_codigo,
-                "Listos: "+e.listos_para_publicar, "Publicados: "+e.publicados];
-    if(e.sin_codigo_a_intentar) partes.push("Sin código (se intenta igual): "+e.sin_codigo_a_intentar);
-    if(e.trabados) partes.push("Trabados: "+e.trabados);
-    var html="<div>"+partes.join(" · ")+"</div>";
-    (e.detalle_trabados||[]).forEach(function(t){
-      html+="<div style='color:var(--warn)'>#"+t.id+": "+esc(t.motivo)+"</div>";});
-    $("ag-estado").innerHTML=html;
-  }
-
-  function logAgente(r){
-    if(r.accion==="apagado"||r.accion==="sin_trabajo") return;
-    var color=(r.accion==="publicar")?"var(--good)"
-             :(r.accion==="error"||r.accion==="trabado")?"var(--warn)":"var(--muted)";
-    var d=document.createElement("div");
-    d.style.color=color;
-    d.textContent=r.accion.toUpperCase()+" · "+(r.nombre||"")+" — "+(r.detalle||"");
-    $("ag-log").insertBefore(d,$("ag-log").firstChild);
-  }
-
-  function tick(){
-    api("POST","/api/agente/tick",{}).then(function(r){
-      pintarAgente(r); logAgente(r);
-      if(r.accion==="publicar") cargar();
-      if(!r.encendido){ pararAgente(); return; }
-      if(r.accion==="sin_trabajo"){
-        $("ag-estado").innerHTML+="<div>No queda nada por hacer.</div>";
-        pararAgente(); api("PATCH","/api/agente",{encendido:false}).catch(function(){});
-        return;
-      }
-      // Pausa entre pasos: los que salen a la red no deben ir en ráfaga.
-      agTimer=setTimeout(tick, r.accion==="listo"?300:2000);
-    }).catch(function(e){ err(e); pararAgente(); });
-  }
-
-  function pararAgente(){ if(agTimer){clearTimeout(agTimer);agTimer=null;} }
-
-  $("ag-toggle").onclick=function(){
-    api("GET","/api/agente").then(function(e){
-      var nuevo=!e.encendido;
-      api("PATCH","/api/agente",{encendido:nuevo}).then(function(e2){
-        pintarAgente(e2);
-        if(nuevo){ $("ag-log").innerHTML=""; tick(); } else pararAgente();
-      }).catch(err);
-    }).catch(err);
-  };
-  ["ag-publicar","ag-tope","ag-margen"].forEach(function(id){
-    $(id).onchange=function(){
-      api("PATCH","/api/agente",{publicar:$("ag-publicar").checked,
-          max_publicaciones:parseInt($("ag-tope").value,10)||0,
-          margen_minimo:parseFloat($("ag-margen").value)||0}).then(pintarAgente).catch(err);
-    };
-  });
-  function cargarAgente(){ api("GET","/api/agente").then(pintarAgente).catch(function(){}); }
-
-  // Qué claves de entorno están puestas. Se muestra arriba, a la vista: es lo
-  // único que el usuario acaba de configurar y quiere confirmar que tomó.
-  function cargarFuentes(){
-    api("GET","/api/codigos/fuentes").then(function(f){
-      var claves=[
-        {on:f.proxy_amazon, si:"🟢 Amazon por proxy",
-         no:"⚪ Amazon directo (sin SCRAPER_API_KEY el agente de revisión solo "
-            +"puede leer desde tu navegador)"},
-        {on:f.youtube, si:"🟢 Videos de YouTube",
-         no:"⚪ Videos de YouTube apagados (falta YOUTUBE_API_KEY)"}];
-      $("extras").innerHTML=claves.map(function(c){
-        return '<span style="margin-right:12px;color:'
-          +(c.on?"var(--good)":"var(--muted)")+'">'+esc(c.on?c.si:c.no)+'</span>';
-      }).join("");
-    }).catch(function(){});
-  }
-
-  // El estado local puede mentir: MercadoLibre responde 200 a un ítem que
-  // después queda en revisión. Esto pregunta y corrige.
-  $("diagnostico").onclick=function(){
-    window.open("/codigos/diagnostico","_blank","noopener");
-  };
-
   $("verificar").onclick=function(){
     var b=$("verificar"); b.disabled=true; b.textContent="Verificando…";
     api("POST","/api/catalogo/verificar",{}).then(function(d){
@@ -1439,7 +1030,7 @@
       alert("Publicaciones en tu cuenta de MercadoLibre: "+d.publicaciones_en_la_cuenta+"\n"
             +"Revisados: "+d.total+" · Corregidos: "+d.corregidos+"\n\n"
             +lineas.slice(0,25).join("\n"));
-      cargar(); cargarAgente();
+      cargar();
     }).catch(function(e){ b.disabled=false; b.textContent="🔍 Verificar en MercadoLibre"; err(e); });
   };
 
@@ -1526,8 +1117,6 @@
       if(r)api("PATCH","/api/catalogo/"+p.id+"/regimen",{regimen:r.trim()}).then(cargar).catch(err);
     });
     b("Historial",function(){historial(p.id);});
-    // Por qué no se consigue el GTIN de este producto, paso por paso.
-    b("Diagnóstico",function(){ window.open("/api/catalogo/"+p.id+"/diagnostico","_blank"); });
     b("Borrar",function(){ if(confirm("¿Borrar este producto del catálogo?")) api("DELETE","/api/catalogo/"+p.id).then(cargar).catch(err); });
     c.appendChild(d);
   }
@@ -1563,8 +1152,7 @@
       var cur=(v.atributos&&v.atributos[a.id])||a.sugerido||"";
       var hint=(a.id==="GTIN")
         ? '<span class="hint">Código de barras EAN/UPC (solo números) de la caja. <b>No es el ASIN.</b> '
-          +(p.asin?'<button type="button" class="sm" id="btn-gtin-auto">🔎 Buscar GTIN automáticamente</button> '
-            +'<a href="https://www.google.com/search?q='+encodeURIComponent(p.asin+" EAN UPC barcode")+'" target="_blank" rel="noopener">o buscar a mano ↗</a>':'')
+          +(p.asin?'<a href="https://www.google.com/search?q='+encodeURIComponent(p.asin+" EAN UPC barcode")+'" target="_blank" rel="noopener">o buscar a mano ↗</a>':'')
           +' <span id="gtin-msg"></span></span>' : '';
       return '<div class="f"><label>'+esc(a.name||a.id)+' *</label>'+
         '<input id="ed-attr-'+esc(a.id)+'" list="dl-'+esc(a.id)+'" value="'+esc(cur)+'" placeholder="'+esc(a.name||"")+'">'+
@@ -1615,20 +1203,6 @@
       (faltan.length?'<ul class="flist">Falta para publicar:'+faltan.map(function(f){return '<li>'+esc(f)+'</li>';}).join("")+'</ul>'
         :'<p class="msg" style="color:var(--good)">✓ Listo. Guardá y luego Aprobar y publicar.</p>');
     var sel=$("ed-cat"); sel.onchange=function(){ $("ed-cat-manual").style.display=sel.value==="__manual__"?"":"none"; };
-    // Búsqueda automática del GTIN a partir del ASIN (la hace el servidor).
-    var bg=$("btn-gtin-auto");
-    if(bg) bg.onclick=function(){
-      $("gtin-msg").textContent="Buscando…"; bg.disabled=true;
-      api("POST","/api/gtin",{asin:p.asin}).then(function(r){
-        bg.disabled=false;
-        if(r.ok && r.gtin){
-          var inp=$("ed-attr-GTIN"); if(inp) inp.value=r.gtin;
-          $("gtin-msg").textContent="✓ "+r.gtin+(r.candidatos.length>1?" (otros: "+r.candidatos.slice(1).join(", ")+")":"")+" — confirmalo.";
-        } else {
-          $("gtin-msg").textContent=r.mensaje||"No encontrado; cargalo a mano.";
-        }
-      }).catch(function(){ bg.disabled=false; $("gtin-msg").textContent="Error de búsqueda; probá el link manual."; });
-    };
     // Video oficial en YouTube. Guarda el producto primero: la búsqueda usa la
     // marca y el número de set, que pueden estar recién editados en pantalla.
     var bv=$("btn-video-auto");
@@ -1835,137 +1409,6 @@
     $("dlg").showModal();
   }
 
-  // ---- ¿cuáles puedo vender de verdad? -----------------------------------
-  // Va de a tandas: cada producto son una o dos consultas a MercadoLibre y
-  // todas juntas darían una petición que el servidor corta a mitad de camino.
-  var cpFilas=[], cpCorriendo=false;
-  var CP_ETIQUETA={gano:"🟢 sos el más barato", cerca:"🟡 estás cerca",
-                   caro:"🔴 muy caro", sin_datos:"⚪ sin datos"};
-
-  function cpPintar(){
-    var por={gano:0,cerca:0,caro:0,sin_datos:0};
-    cpFilas.forEach(function(f){ por[f.veredicto]=(por[f.veredicto]||0)+1; });
-    $("cp-resumen").innerHTML=
-      '<b>'+cpFilas.length+' analizadas</b> · '
-      +'<span style="color:var(--good)">'+por.gano+' donde ganás</span> · '
-      +por.cerca+' cerca · '
-      +'<span style="color:var(--bad)">'+por.caro+' muy caras</span> · '
-      +por.sin_datos+' sin datos';
-    // De peor a mejor no: primero lo accionable, que es donde se puede vender.
-    var orden={gano:0,cerca:1,caro:2,sin_datos:3};
-    var lista=cpFilas.slice().sort(function(a,b){
-      return (orden[a.veredicto]-orden[b.veredicto])
-          || ((a.diferencia_pct==null?9e9:a.diferencia_pct)
-              -(b.diferencia_pct==null?9e9:b.diferencia_pct));
-    });
-    $("cp-tabla").innerHTML=lista.map(function(f){
-      var dif=f.diferencia_pct==null?"":(f.diferencia_pct>0?"+":"")+f.diferencia_pct+"%";
-      var color=f.veredicto==="gano"?"var(--good)"
-               :(f.veredicto==="caro"?"var(--bad)":"var(--muted)");
-      return '<div><span style="color:'+color+'">'+CP_ETIQUETA[f.veredicto]+'</span> '
-        +(f.permalink?'<a href="'+esc(f.permalink)+'" target="_blank" rel="noopener">'
-           +esc(f.nombre)+' ↗</a>':esc(f.nombre))
-        +' · vos '+fmt(f.mi_precio)
-        +(f.minimo?' · el más barato '+fmt(f.minimo)+' <b style="color:'+color+'">'+dif+'</b>':'')
-        +(f.error?' <span class="hint">('+esc(f.error)+')</span>':'')
-        +'</div>';
-    }).join("");
-  }
-
-  $("cp-frenar").onclick=function(){ cpCorriendo=false; };
-  $("cp-correr").onclick=function(){
-    cpFilas=[]; cpCorriendo=true;
-    $("cp-correr").disabled=true; $("cp-frenar").style.display="";
-    (function tanda(desde){
-      if(!cpCorriendo){ cpFin("Frenado."); return; }
-      $("cp-msg").textContent="Consultando MercadoLibre… "+cpFilas.length+" listas.";
-      api("POST","/api/catalogo/competitividad",{desde:desde}).then(function(d){
-        cpFilas=cpFilas.concat(d.filas||[]); cpPintar();
-        if(d.siguiente!=null && cpCorriendo) tanda(d.siguiente);
-        else cpFin(cpFilas.length?"":"No hay publicaciones para analizar.");
-      }).catch(function(e){ cpFin(""); err(e); });
-    })(0);
-  };
-  function cpFin(msg){
-    cpCorriendo=false; $("cp-correr").disabled=false;
-    $("cp-frenar").style.display="none";
-    $("cp-msg").textContent=msg||"Listo.";
-  }
-
-  // ---- Tiendanube: la tienda propia --------------------------------------
-  function tnEstado(){
-    api("GET","/oauth/tiendanube/status").then(function(s){
-      $("tn-conectar").style.display=(s.configurado && !s.conectado)?"":"none";
-      $("tn-estado").textContent = !s.configurado
-        ? "Faltan las credenciales (TIENDANUBE_CLIENT_ID y _CLIENT_SECRET van en Render)."
-        : (s.conectado ? "🟢 Conectada · tienda "+s.store_id
-                       : "⚪ Sin conectar.");
-      // La URL de autorización, a la vista. Si el botón de conectar no lleva a
-      // ninguna parte, es lo único que dice por qué: el App ID va en la RUTA,
-      // así que uno equivocado da un 404 del sitio de Tiendanube y ningún
-      // mensaje de error que lo explique.
-      $("tn-diag").innerHTML = (s.configurado && !s.conectado)
-        ? "Te va a mandar a: <code>"+esc(s.url_autorizacion||"(vacía)")+"</code>"
-          +(s.client_id_es_numerico ? ""
-            : "<br>⚠ El <b>App ID de Tiendanube es un número</b> y el tuyo tiene "
-              +s.client_id_largo+" caracteres que no son solo dígitos. Si esa "
-              +"URL da 404, es esto: buscá en el portal el <b>App ID</b>, no el "
-              +"«client id» de otra pantalla.")
-          +"<br>Vuelve a: <code>"+esc(s.redirect_uri||"(sin configurar)")+"</code>"
-          +" — tiene que coincidir EXACTO con la que registraste en el portal."
-        : "";
-      if(s.conectado) api("GET","/api/tiendanube/config").then(function(c){
-        $("tn-ajuste").value=c.ajuste_pct||0;
-        $("tn-estado").textContent+=" · "+c.publicados+" publicado/s allá";
-      }).catch(function(){});
-    }).catch(function(){ $("tn-estado").textContent="No se pudo leer el estado."; });
-  }
-  $("tn-probar").onclick=function(){
-    $("tn-msg").textContent="Probando…";
-    api("GET","/api/tiendanube/probar").then(function(d){
-      $("tn-msg").textContent="🟢 Anda. Tienda "+d.store_id+".";
-    }).catch(function(e){
-      // El texto crudo de Tiendanube es lo único que dice qué está mal: los
-      // tres fallos típicos dan todos el mismo 401 opaco.
-      $("tn-msg").textContent="No anda: "+(typeof e==="string"?e:JSON.stringify(e));
-    });
-  };
-  $("tn-ajuste").addEventListener("change",function(){
-    api("POST","/api/tiendanube/config",{ajuste_pct:parseFloat(this.value)||0})
-      .then(function(c){
-        $("tn-msg").textContent = c.ajuste_pct
-          ? "Ajuste "+c.ajuste_pct+"% sobre el precio de MercadoLibre."
-          : "Mismo precio que en MercadoLibre.";
-      }).catch(err);
-  });
-  function tnResumen(d, verbo){
-    var mal=(d.resultados||[]).filter(function(r){return !r.ok;});
-    return (d.publicados!==undefined?d.publicados:d.sincronizados)+" "+verbo
-      +(mal.length?" · fallaron: "+mal.map(function(r){
-          return r.nombre+" ("+r.error+")";}).join(" · "):"");
-  }
-  $("tn-publicar").onclick=function(){
-    var ids=seleccionados();
-    if(!ids.length){ $("tn-msg").textContent="Tildá al menos uno en la tabla."; return; }
-    if(!confirm("Publicar "+ids.length+" producto/s en TU TIENDA de Tiendanube, "
-      +"visibles para los compradores. ¿Confirmás?")) return;
-    $("tn-msg").textContent="Publicando…";
-    api("POST","/api/tiendanube/lote/publicar",{ids:ids}).then(function(d){
-      $("tn-msg").textContent=tnResumen(d,"publicado/s");
-      tnEstado(); cargar();
-    }).catch(err);
-  };
-  $("tn-sincronizar").onclick=function(){
-    if(!confirm("Lleva a tu tienda el precio y el stock que la herramienta "
-      +"calcula hoy, para todo lo que ya está publicado allá.\n\nLo que esté "
-      +"pausado acá se despublica allá. ¿Confirmás?")) return;
-    $("tn-msg").textContent="Sincronizando…";
-    api("POST","/api/tiendanube/lote/sincronizar",{}).then(function(d){
-      $("tn-msg").textContent=tnResumen(d,"sincronizado/s");
-      tnEstado();
-    }).catch(err);
-  };
-
   function historial(id){
     api("GET","/api/catalogo/"+id+"/historial").then(function(h){
       $("dlg-h").textContent="Historial de cambios";
@@ -2011,9 +1454,6 @@
 
   function cargarConfigPublicacion(){
     api("GET","/api/catalogo/config").then(function(c){
-      // Vacío muestra el texto por defecto, que es el que se va a usar: así se
-      // ve y se edita lo mismo que va a leer el comprador.
-      $("tx-compra").value=c.texto_compra||c.texto_compra_default||"";
       $("pr-piso").value=c.ganancia_minima||"";
       $("pr-envio-pct").value=c.envio_import_pct||"";
       $("pr-envio-pct-sin").value=c.envio_import_sin_gratis_pct||"";
@@ -2031,9 +1471,8 @@
   }
 
   mlStatus(); cargarCotiz(false); cargarFiscal(); cargarDolarCosto();
-  cargarAlmacenamiento(); cargarCola(); cargarFiltro(); cargarFuentes();
-  cargarConfigPublicacion(); cargarAgente(); tnEstado(); cargar();
-  api("GET","/api/revision").then(rvPintar).catch(function(){});
+  cargarAlmacenamiento(); cargarCola(); cargarFiltro();
+  cargarConfigPublicacion(); cargar();
 })();
 </script>
 </body>

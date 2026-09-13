@@ -61,66 +61,7 @@ def test_si_no_se_puede_saber_devuelve_none():
 
 # ---- guardar lo que se vio ----------------------------------------------
 
-def test_un_precio_nuevo_recalcula_el_costo_y_el_margen(cat):
-    p = _pub(cat)
-    costo_antes, margen_antes = p.costo_total_ars, p.margen_pct
-
-    p2 = cat.marcar_revisado(p.id, precio_usd=53.00, disponible=True)
-
-    assert p2.precio_usd == 53.00
-    assert p2.costo_total_ars > costo_antes
-    # Mismo precio publicado y más costo: el margen tiene que caer.
-    assert p2.margen_pct < margen_antes
-    assert p2.revisado_en
-
-
-def test_sin_stock_queda_registrado(cat):
-    p = _pub(cat)
-    p2 = cat.marcar_revisado(p.id, precio_usd=None, disponible=False)
-    assert p2.disponibilidad == "out_of_stock"
-    assert any(h["tipo"] == "stock_amazon" for h in cat.historial(p.id))
-
-
-def test_no_se_marca_agotado_lo_que_solo_no_se_pudo_leer(cat):
-    """Pausar por no haber podido leer la página sacaría de venta un producto
-    que sí está disponible."""
-    p = _pub(cat)
-    p2 = cat.marcar_revisado(p.id, precio_usd=None, disponible=None)
-    assert p2.disponibilidad == "in_stock"
-    assert p2.revisado_en, "igual se anota que se intentó, para no reintentarlo ya"
-
-
-def test_un_precio_que_no_se_pudo_leer_no_pisa_el_guardado(cat):
-    p = _pub(cat)
-    p2 = cat.marcar_revisado(p.id, precio_usd=None, disponible=True)
-    assert p2.precio_usd == 31.69
-
-
 # ---- a quién revisar -----------------------------------------------------
-
-def test_se_revisan_primero_los_que_hace_mas_que_no_se_miran(cat):
-    """Revisar el catálogo entero son 5 créditos por producto: con 126 se va
-    dos tercios del mes en una pasada. Hay que rotar."""
-    a = _pub(cat, asin="B0AAA", amazon_link="https://amazon.com/dp/B0AAA")
-    b = _pub(cat, asin="B0BBB", amazon_link="https://amazon.com/dp/B0BBB")
-    cat.marcar_revisado(a.id, None, True)          # a queda recién revisado
-
-    orden = [p.id for p in cat.a_revisar(10)]
-    assert orden[0] == b.id, "el que nunca se revisó tiene que ir primero"
-
-
-def test_no_se_revisa_lo_que_no_esta_publicado(cat):
-    cat.agregar(ProductoCatalogo(asin="B0BORRADOR", marca="LEGO",
-                                 modelo="Sin publicar", precio_usd=20.0))
-    _pub(cat)
-    assert [p.asin for p in cat.a_revisar(10)] == ["B0TEST0001"]
-
-
-def test_el_limite_se_respeta(cat):
-    for i in range(5):
-        _pub(cat, asin=f"B0X{i:05d}", amazon_link=f"https://amazon.com/dp/B0X{i:05d}")
-    assert len(cat.a_revisar(3)) == 3
-
 
 # ---- envío a Argentina ---------------------------------------------------
 

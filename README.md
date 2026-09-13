@@ -294,89 +294,30 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `MELI_CLIENT_ID` = tu App ID.
    - `MELI_CLIENT_SECRET` = tu Secret Key.
    - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
-   - `BRICKSET_API_KEY` = tu clave de [brickset.com/api](https://brickset.com/api/)
-     (**opcional pero muy recomendada si vendés LEGO**, ver abajo).
    - `YOUTUBE_API_KEY` = clave de YouTube Data API v3 (*opcional*, para buscar
      el video del producto, ver abajo).
    - `SCRAPER_API_KEY` = clave de [scraperapi.com](https://www.scraperapi.com/)
      (*opcional*, para que la carga en lote funcione desde el servidor, ver
      abajo).
-   - `TIENDANUBE_CLIENT_ID` / `TIENDANUBE_CLIENT_SECRET` = de la app que crees
-     en el portal de Partners de Tiendanube (*opcional*, solo si además de
-     MercadoLibre querés publicar en tu tienda propia, ver abajo).
-   - `TIENDANUBE_REDIRECT_URI` = `https://TU-APP.onrender.com/oauth/tiendanube/callback`
-   - `TIENDANUBE_USER_AGENT` = `TuApp (tu@mail.com)` — **Tiendanube lo exige**:
-     sin un User-Agent que identifique la app y un mail de contacto, rechaza
-     todas las llamadas.
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
    MercadoLibre, el flujo es el mismo (**Conectar → Pegar código**).
 
-### Publicar también en tu tienda de Tiendanube
+### El código de barras (GTIN)
 
-El mismo producto puede vivir en los dos canales. Desde el panel, la tarjeta
-**🏪 Tu tienda (Tiendanube)** publica lo que tengas tildado en la tabla y después
-**sincroniza** precio y stock, para que corregir un costo se refleje en los dos
-lados sin reeditar nada a mano. Lo que pauses acá se despublica allá.
+MercadoLibre exige el código de barras en varias categorías. **Se carga a
+mano**, en el editor de cada producto: la búsqueda automática se probó contra
+Brickset, UPCitemdb, el catálogo de MercadoLibre y la propia ficha de Amazon, y
+en la práctica nunca lo resolvió —Amazon rechaza las IP de datacenter y las
+otras fuentes no tienen los sets—, así que se sacó en vez de dejarla dando una
+falsa sensación de que algo se está intentando.
 
-Pasos:
+Lo que sí sostiene las publicaciones es la vía oficial de MercadoLibre para
+cuando el código no existe o no se consigue: **declarar el motivo de GTIN
+vacío** (`EMPTY_GTIN_REASON`, "Otro"). *Preparar borradores* lo completa solo,
+y es lo que permite publicar sin código.
 
-1. Creá una app en el portal de Partners de Tiendanube y anotá el **App ID**
-   (va en `TIENDANUBE_CLIENT_ID`) y el **Client Secret**.
-2. Registrá como Redirect URI `https://TU-APP.onrender.com/oauth/tiendanube/callback`.
-3. Cargá las cuatro variables de arriba en Render.
-4. En el panel, **Conectar Tiendanube** → instalás la app en tu tienda.
-5. Apretá **🔌 Probar conexión** antes de publicar nada.
-
-**El precio.** Por defecto se publica al mismo precio que en MercadoLibre. En tu
-tienda no pagás la comisión de ML ni el envío gratis subsidiado, así que hay
-lugar para vender más barato: cuánto de eso conviene resignar es una decisión
-comercial y no una cuenta, y por eso el campo **Ajuste de precio (%)** arranca en
-0 y lo ponés a mano.
-
-**Un detalle de esta API que cuesta caro descubrir solo**: el header de
-autenticación se llama `Authentication`, no `Authorization`, y el `User-Agent`
-es obligatorio. Los dos errores dan el mismo 401 sin explicación; para eso está
-el botón **Probar conexión**, que los separa antes de intentar publicar 126
-productos.
-
-### El código de barras (GTIN) y por qué importa
-
-MercadoLibre exige el código de barras en varias categorías: sin él, la
-publicación se rechaza. La herramienta lo busca sola, probando de la fuente más
-confiable a la menos:
-
-| # | Fuente | Cómo funciona | ¿Sirve desde la nube? |
-|---|--------|---------------|------------------------|
-| 1 | Tu catálogo | Otro producto tuyo con el mismo ASIN ya lo tiene | Sí, instantáneo |
-| 2 | Catálogo de MercadoLibre | Su ficha del producto, por número o por nombre | **Sí** |
-| 3 | UPCitemdb | Base genérica de códigos, por nombre | Sí (límite diario) |
-| 4 | Amazon / buscador web | Lee la página del producto | **No**: bloquea servidores |
-
-La última fila es el problema: **Amazon rechaza las IP de datacenter**, así que
-desde Render esa fuente casi nunca responde.
-
-#### El botón que lo resuelve para cualquier rubro
-
-`/codigos/asistido` arma un bookmarklet que **lee las fichas de Amazon desde tu
-navegador**, con tu conexión hogareña. Amazon te responde normal a vos aunque
-rechace al servidor. Lo abrís desde cualquier página de amazon.com, va de a una
-ficha con pausa entre cada una, corta solo si Amazon pide verificación y guarda
-lo que consiguió.
-
-Sirve para **cualquier producto**, porque lee el código de la propia ficha: LEGO,
-herramientas, electrónica, lo que sea. Es el mismo principio que los otros
-botones de la herramienta: leer lo que vos ya podés ver.
-
-#### Últimos recursos
-
-- **Cargar códigos de barras a mano** (en el panel): se pegan líneas
-  `número de set;código` o `ASIN;código` y se aplican en lote. Acepta pegar
-  desde una planilla.
-- **`BRICKSET_API_KEY`** *(opcional, solo LEGO)*: si tenés una API key de
-  [brickset.com/api](https://brickset.com/api/), se usa como fuente extra. No
-  hace falta configurarla.
 
 ### Actualizar los precios de lo ya publicado
 
