@@ -21,8 +21,6 @@ from typing import Optional
 
 import requests
 
-import descarga
-from descarga import configurada as scraperapi_configurada  # noqa: F401
 from marcas import limpiar_marca
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -339,20 +337,22 @@ def _parse_peso_kg(texto: str) -> Optional[float]:
     return round(val, 2)
 
 
-def _bajar(url: str, timeout: int, pais: str = "us",
-           usar_proxy: bool = True):
-    """La página de Amazon, por proxy si hay clave. Ver `descarga.bajar`.
+def _bajar(url: str, timeout: int):
+    """La página de Amazon, leída directo.
 
-    `pais` es desde dónde se pide. Con "ar" Amazon contesta si el producto
-    llega a Argentina, que es el dato que no se consigue desde EE.UU.
+    Amazon geolocaliza por IP y desde Argentina devuelve la ficha en pesos.
+    Estas cookies son las que usa su propio selector de moneda y país, y piden
+    la versión en dólares. No es garantía —Amazon a veces las ignora—, por eso
+    además se valida la moneda al parsear.
     """
-    return descarga.bajar(url, timeout, country=pais, usar_proxy=usar_proxy,
-                          headers={"User-Agent": _UA,
-                                   "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"})
+    return requests.get(
+        url, timeout=timeout,
+        headers={"User-Agent": _UA,
+                 "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"},
+        cookies={"i18n-prefs": "USD", "lc-main": "en_US"})
 
 
-def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
-                       usar_proxy: bool = True) -> dict:
+def importar_desde_url(url: str, timeout: int = 12) -> dict:
     """Devuelve los datos que se pudieron obtener del producto de Amazon.
     Siempre incluye asin (si está en el link) y amazon_link; `ok` indica si se
     pudo leer la página."""
@@ -370,13 +370,12 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
         datos["mensaje"] = "Pegá un link válido de Amazon."
         return datos
     try:
-        resp, por_proxy = _bajar(url, timeout, pais, usar_proxy)
+        resp = _bajar(url, timeout)
     except requests.RequestException as e:
         datos["mensaje"] = f"No se pudo leer la página ({e}). Completá a mano."
         return datos
 
     datos["status"] = resp.status_code
-    datos["via_proxy"] = por_proxy
     if resp.status_code == 200 and _es_muro_antibot(resp.text):
         datos["bloqueado"] = True
         datos["mensaje"] = ("Amazon devolvio su pantalla anti-bot en vez de la "
@@ -387,26 +386,14 @@ def importar_desde_url(url: str, timeout: int = 12, pais: str = "us",
         # 429/503 = nos está limitando; 403 = nos bloqueó. En esos casos la
         # cola tiene que parar, no insistir.
         datos["bloqueado"] = resp.status_code in (403, 429, 503)
-        if por_proxy:
-            # Por proxy el error es del proxy, no de Amazon, y se arregla
-            # distinto: 401 es clave mal puesta y 403 suele ser sin créditos.
-            datos["mensaje"] = {
-                401: "ScraperAPI rechazó la clave: revisá SCRAPER_API_KEY en Render.",
-                403: "ScraperAPI sin créditos este mes (el plan gratis da 1.000, "
-                     "y cada producto gasta 5). Se retoma el mes que viene o "
-                     "usando el bookmarklet desde tu navegador.",
-            }.get(resp.status_code,
-                  f"ScraperAPI respondió {resp.status_code}. El ASIN quedó "
-                  "cargado; completá el resto a mano.")
-        else:
-            # Amazon rechaza casi siempre a un servidor, y ésta es la salida
-            # que siempre funcionó: la página la lee el navegador del usuario,
-            # con su IP de casa, y manda los datos ya leídos.
-            datos["mensaje"] = (
-                f"Amazon respondió {resp.status_code} (le pasa a cualquier "
-                "servidor). El ASIN quedó cargado. Para traer el resto usá el "
-                "botón «Capturar producto» desde la página de inicio: la "
-                "lectura la hace tu navegador y Amazon no la rechaza.")
+        # Amazon rechaza casi siempre a un servidor, y ésta es la salida que
+        # siempre funcionó: la página la lee el navegador del usuario, con su
+        # IP de casa, y manda los datos ya leídos.
+        datos["mensaje"] = (
+            f"Amazon respondió {resp.status_code} (le pasa a cualquier "
+            "servidor). El ASIN quedó cargado. Para traer el resto usá el "
+            "botón «Capturar producto» desde la página de inicio: la lectura "
+            "la hace tu navegador y Amazon no la rechaza.")
         return datos
 
     texto = resp.text

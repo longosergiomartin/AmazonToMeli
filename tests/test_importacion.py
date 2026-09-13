@@ -1,6 +1,5 @@
 """Tests de los cálculos de costo de importación (no tocan la red)."""
 
-import descarga
 from arbitraje.config import Config
 from arbitraje.models import Producto
 from arbitraje.importacion import costo_courier, costo_general, calcular_costo
@@ -141,7 +140,7 @@ def test_las_barras_escapadas_del_json_se_deshacen():
     assert _parse_videos(html) == ["https://m.media-amazon.com/vse/tres.mp4"]
 
 
-# ---- lectura por proxy (ScraperAPI) -------------------------------------
+# ---- lectura de Amazon --------------------------------------------------
 
 class _RespFalsa:
     def __init__(self, status=200, text=""):
@@ -149,10 +148,10 @@ class _RespFalsa:
         self.text = text
 
 
-def test_sin_clave_lee_amazon_directo(monkeypatch):
-    """Es lo que sirve corriendo la herramienta desde tu PC."""
+def test_lee_amazon_directo(monkeypatch):
+    """Es lo que sirve corriendo la herramienta desde tu PC, y lo único que hay:
+    la lectura por proxy de pago se sacó."""
     import amazon_import
-    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
     pedidos = []
     monkeypatch.setattr(amazon_import.requests, "get",
                         lambda url, **kw: pedidos.append((url, kw)) or _RespFalsa())
@@ -161,47 +160,36 @@ def test_sin_clave_lee_amazon_directo(monkeypatch):
     assert pedidos[0][0].startswith("https://www.amazon.com/")
 
 
-def test_con_clave_va_por_el_proxy(monkeypatch):
-    """Amazon rechaza las IP de datacenter: desde Render hay que ir por proxy."""
+def test_una_clave_de_proxy_vieja_no_cambia_nada(monkeypatch):
+    """La clave quedó cargada en el servidor y el panel seguía mostrando los
+    carteles del proxy. Ahora se ignora: se lee directo igual."""
     import amazon_import
-    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
+    monkeypatch.setenv("SCRAPER_API_KEY", "clave-que-quedo-dando-vueltas")
     pedidos = []
     monkeypatch.setattr(amazon_import.requests, "get",
                         lambda url, **kw: pedidos.append((url, kw)) or _RespFalsa())
 
     d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
-    url, kw = pedidos[0]
-    assert url == descarga.SCRAPERAPI
-    assert kw["params"]["url"] == "https://www.amazon.com/dp/B0TESTAAAA"
-    assert kw["params"]["country_code"] == "us"
-    assert d["via_proxy"] is True
+    assert pedidos[0][0].startswith("https://www.amazon.com/")
+    assert "scraper" not in str(d).lower()
 
 
-def test_sin_creditos_lo_dice_claro(monkeypatch):
-    """Quedarse sin créditos no es que Amazon nos bloqueó: se arregla distinto."""
+def test_el_rechazo_de_amazon_manda_al_bookmarklet(monkeypatch):
+    """Desde un servidor Amazon rechaza casi siempre, y la salida que sí anda es
+    leer la ficha desde el navegador del usuario."""
     import amazon_import
-    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
+    monkeypatch.setenv("SCRAPER_API_KEY", "clave-que-quedo-dando-vueltas")
     monkeypatch.setattr(amazon_import.requests, "get",
                         lambda url, **kw: _RespFalsa(status=403))
 
     d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
-    assert "créditos" in d["mensaje"]
-    assert d["bloqueado"] is True          # la cola tiene que frenar igual
+    assert "Capturar producto" in d["mensaje"]
+    assert "créditos" not in d["mensaje"]   # el cartel del proxy ya no existe
+    assert d["bloqueado"] is True           # la cola tiene que frenar igual
 
 
-def test_clave_mal_puesta_lo_dice_claro(monkeypatch):
-    import amazon_import
-    monkeypatch.setenv("SCRAPER_API_KEY", "clave-mala")
-    monkeypatch.setattr(amazon_import.requests, "get",
-                        lambda url, **kw: _RespFalsa(status=401))
-
-    d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
-    assert "SCRAPER_API_KEY" in d["mensaje"]
-
-
-def test_la_clave_no_se_filtra_en_los_mensajes(monkeypatch):
-    """El mensaje se muestra en el panel y queda en el historial: la clave no
-    puede aparecer ahí."""
+def test_la_clave_vieja_no_se_filtra_en_los_mensajes(monkeypatch):
+    """El mensaje se muestra en el panel y queda en el historial."""
     import amazon_import
     monkeypatch.setenv("SCRAPER_API_KEY", "SECRETO-QUE-NO-DEBE-VERSE")
     for status in (401, 403, 500):
@@ -209,11 +197,3 @@ def test_la_clave_no_se_filtra_en_los_mensajes(monkeypatch):
                             lambda url, **kw: _RespFalsa(status=status))
         d = amazon_import.importar_desde_url("https://www.amazon.com/dp/B0TESTAAAA")
         assert "SECRETO-QUE-NO-DEBE-VERSE" not in str(d)
-
-
-def test_scraperapi_configurada_mira_el_entorno(monkeypatch):
-    import amazon_import
-    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
-    assert amazon_import.scraperapi_configurada() is False
-    monkeypatch.setenv("SCRAPER_API_KEY", "x")
-    assert amazon_import.scraperapi_configurada() is True

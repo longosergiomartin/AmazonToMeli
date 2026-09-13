@@ -296,9 +296,6 @@ navegador** en [Render](https://render.com) (plan gratis para probar).
    - `MELI_REDIRECT_URI` = `https://oauth.pstmn.io/v1/callback` (ya viene puesta).
    - `YOUTUBE_API_KEY` = clave de YouTube Data API v3 (*opcional*, para buscar
      el video del producto, ver abajo).
-   - `SCRAPER_API_KEY` = clave de [scraperapi.com](https://www.scraperapi.com/)
-     (*opcional*, para que la carga en lote funcione desde el servidor, ver
-     abajo).
 4. **Create Web Service** → esperá a que termine el build.
 5. Render te da una URL `https://arbitraje-meli.onrender.com`. Abrila desde
    donde quieras, ingresás la contraseña y usás el panel. Para conectar
@@ -368,29 +365,25 @@ Si MercadoLibre rechaza un precio, **no se guarda en el catálogo**: no puede
 figurar acá un precio que la publicación no tiene. El error se muestra con el
 nombre del producto.
 
-### Cargar en lote sin que Amazon frene (`SCRAPER_API_KEY`)
+### Cargar en lote sin que Amazon frene
 
 **La API oficial de Amazon no es una opción.** PA-API 5.0 dejó de aceptar
 clientes nuevos y se discontinúa en mayo de 2026; además exigía ser Amazon
 Associate **con ventas de afiliado hechas**. Comprar en Amazon para revender no
 califica. La SP-API es para vendedores *de* Amazon, tampoco aplica.
 
-Lo que sí funciona es leer la página a través de un proxy que ponga IP
-residencial. Con `SCRAPER_API_KEY` configurada, la importación va por
-[ScraperAPI](https://www.scraperapi.com/) en vez de ir directo, y **la cola deja
-de frenarse desde el servidor**. Sin la clave, todo sigue igual que antes: se
-lee directo, que es lo que sirve corriendo la herramienta en tu PC.
+**Amazon rechaza las IP de datacenter**, así que desde Render la lectura de
+fichas falla casi siempre (403), aunque encolar funcione bien. Hubo un tiempo
+un proxy de pago (ScraperAPI) que lo resolvía; se sacó porque no se usa más.
 
-El plan gratuito da **1.000 créditos por mes sin tarjeta**, y cada producto de
-Amazon gasta 5: **unos 200 productos mensuales gratis**.
+Lo que queda es lo que siempre funcionó: **la página la lee tu navegador**, con
+tu IP de casa, que Amazon no rechaza. Dos caminos, según lo que estés haciendo:
 
-Yendo por proxy, la pausa entre productos baja a 0,2 s: existía para no golpear
-a Amazon, y con proxy eso es trabajo del proxy. El lote termina mucho más
-rápido.
-
-Los errores se explican distinto según de dónde vengan: `401` es la clave mal
-puesta, `403` es haberse quedado sin créditos del mes. No es lo mismo que
-Amazon nos bloquee.
+- **Un producto suelto**: el botón *Capturar producto* de la página de inicio,
+  arrastrado a favoritos. Lo tocás estando en la ficha de Amazon.
+- **Muchos de una vez**: encolás desde donde quieras y **procesás la cola desde
+  tu PC** con `procesar_cola.py` (ver arriba). Los productos aparecen en el
+  panel de la nube al instante.
 
 ### El video de la publicación
 

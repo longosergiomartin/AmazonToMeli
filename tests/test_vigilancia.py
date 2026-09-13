@@ -110,9 +110,3 @@ def test_sin_exigir_envio_no_se_descarta_ni_el_que_no_manda():
                    envia_al_exterior=False, exigir_envio=False)
     assert ok is True
 
-
-def test_el_pais_de_lectura_solo_acepta_us_o_ar(cat):
-    cat.filtro = {"pais_lectura": "ar"}
-    assert cat.filtro["pais_lectura"] == "ar"
-    with pytest.raises(ValueError):
-        cat.filtro = {"pais_lectura": "brasil"}
