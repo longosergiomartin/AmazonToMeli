@@ -151,7 +151,7 @@ class ColaImportacion:
         # Desde qué país se lee: con "ar" Amazon contesta si el producto llega
         # a Argentina, que es lo que no se puede saber leyendo desde EE.UU.
         try:
-            datos = importador(url, pais=f.get("pais_lectura", "us"))
+            datos = importador(url)
         except TypeError:
             # Importadores viejos (y los de los tests) no reciben el país.
             datos = importador(url)
@@ -193,15 +193,7 @@ class ColaImportacion:
                       dormir: Callable[[float], None] = time.sleep) -> dict:
         """Procesa hasta `maximo` productos, con una pausa entre cada uno para
         no golpear el sitio. Corta apenas Amazon nos limita.
-
-        Yendo por proxy la pausa sobra: el proxy rota IPs y es su trabajo no
-        golpear a nadie. Esperar de más ahí solo hace que el lote tarde el
-        triple sin ganar nada.
         """
-        from amazon_import import scraperapi_configurada
-
-        if scraperapi_configurada():
-            pausa_seg = min(pausa_seg, 0.2)
         resultados = []
         detener = False
         motivo = "ok"

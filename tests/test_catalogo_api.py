@@ -864,9 +864,7 @@ def test_configurar_el_filtro_persiste(client):
     assert r.json() == {"marca": "Bosch", "precio_min_usd": 50.0,
                         "descartar_accesorios": False,
                         # Se descarta lo que Amazon dice que no manda afuera.
-                        "exigir_envio": True,
-                        # Y por defecto se lee desde EE.UU., como siempre.
-                        "pais_lectura": "us"}
+                        "exigir_envio": True}
     assert client.get("/api/filtro").json()["marca"] == "Bosch"
 
 
@@ -1203,27 +1201,6 @@ def test_preparar_no_busca_video_sin_clave(client, monkeypatch):
                 ml_category_id="MLA1157").json()["id"]
     assert client.post("/api/catalogo/lote/preparar",
                        json={"ids": [pid]}).status_code == 200
-
-
-def test_por_proxy_se_procesan_menos_por_llamada(client, monkeypatch):
-    """El proxy tarda mucho más que leer directo: varios seguidos harían la
-    petición eterna que este endpoint existe para evitar, y el servidor la
-    corta a mitad de camino."""
-    import api.catalogo_routes as rutas
-
-    pedidos = []
-    monkeypatch.setattr(rutas.ColaImportacion, "procesar_lote",
-                        lambda self, maximo, pausa_seg, **k:
-                        pedidos.append(maximo) or {"procesados": [],
-                                                   "detener": False,
-                                                   "motivo": "ok"})
-
-    monkeypatch.setattr(rutas, "scraperapi_configurada", lambda: True)
-    client.post("/api/importar/procesar", json={"maximo": 10})
-    monkeypatch.setattr(rutas, "scraperapi_configurada", lambda: False)
-    client.post("/api/importar/procesar", json={"maximo": 10})
-
-    assert pedidos == [2, 10]
 
 
 def test_el_video_marca_los_que_no_son_oficiales(client, monkeypatch):

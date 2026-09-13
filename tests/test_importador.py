@@ -257,23 +257,9 @@ def test_los_accesorios_se_descartan_aunque_no_haya_marca(cola):
     assert cola.procesar_uno(importador=lambda url: ficha)["hecho"] is False
 
 
-def test_por_proxy_no_pausa_entre_productos(cola, monkeypatch):
-    """La pausa existe para no golpear a Amazon. Con proxy es su trabajo, y
-    esperar de más hace que el lote tarde el triple sin ganar nada."""
-    monkeypatch.setenv("SCRAPER_API_KEY", "clave-de-prueba")
-    cola.encolar(["https://www.amazon.com/dp/B0PAUSA0001",
-                  "https://www.amazon.com/dp/B0PAUSA0002"])
-    esperas = []
-    cola.procesar_lote(maximo=2, pausa_seg=2.0,
-                       importador=lambda u: {"ok": True, "asin": "B0PAUSA0001",
-                                             "modelo": "Cosa", "precio_usd": 10.0,
-                                             "imagenes": [], "marca": "X"},
-                       dormir=esperas.append)
-    assert all(e <= 0.2 for e in esperas), esperas
-
-
-def test_sin_proxy_mantiene_la_pausa(cola, monkeypatch):
-    monkeypatch.delenv("SCRAPER_API_KEY", raising=False)
+def test_mantiene_la_pausa_entre_productos(cola):
+    """Existe para no golpear a Amazon: leer en ráfaga es lo que hace que nos
+    empiece a rechazar."""
     cola.encolar(["https://www.amazon.com/dp/B0PAUSA0003",
                   "https://www.amazon.com/dp/B0PAUSA0004"])
     esperas = []
@@ -354,17 +340,3 @@ def test_apagando_el_filtro_entra_igual_el_que_no_manda(cola):
     r = cola.procesar_uno(lambda url, **k: _ficha_envio("B0NOENVIA2", False))
     assert r["hecho"] is True
 
-
-def test_el_pais_de_lectura_llega_al_importador(cola):
-    """Con "ar" Amazon contesta si el producto llega acá: si el país no viaja
-    hasta la descarga, el filtro nunca puede saber nada."""
-    cola.cat.filtro = {"pais_lectura": "ar"}
-    cola.encolar(["B0PAIS0001"])
-    visto = {}
-
-    def _lector(url, pais="us"):
-        visto["pais"] = pais
-        return _ficha_envio("B0PAIS0001", None)
-
-    cola.procesar_uno(_lector)
-    assert visto["pais"] == "ar"
